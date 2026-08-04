@@ -1,10 +1,12 @@
-import React, { useState } from "react";
-import { SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import type { Session } from "@supabase/supabase-js";
 import { Role, squadPlayers as players } from "./squadData";
 import { completedMatchPoints, completedMatchStats } from "./completedMatchPoints";
 import { calculatePointDetails } from "./scoringRules";
 import { iplFixtures } from "./iplFixtures";
-import { ipl2026Members } from "./leagueMembers";
+import { findMemberByEmail, ipl2026Members } from "./leagueMembers";
+import { supabase } from "./supabase";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "League" | "History";
 type ImpactType = "BAI" | "BOI" | "";
@@ -29,7 +31,30 @@ const availableLeagues: Array<{ id: LeagueId; name: string; format: string; seas
 ];
 
 export default function App() {
-  const carriedForwardM5 = createTestXI("Pandiyan", "M5");
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthReady(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  if (!authReady) return <AuthLoading />;
+  if (!session) return <LoginScreen />;
+  const member = findMemberByEmail(session.user.email ?? "");
+  if (!member) return <AccessDenied email={session.user.email ?? ""} />;
+  return <FantasyApp memberName={member.name} />;
+}
+
+function FantasyApp({ memberName }: { memberName: string }) {
+  const carriedForwardM5 = createTestXI(memberName, "M5");
   const [tab, setTab] = useState<Tab>("Home");
   const [activeLeagueId, setActiveLeagueId] = useState<LeagueId | "">("");
   const [bid, setBid] = useState(13);
@@ -41,13 +66,51 @@ export default function App() {
   const [impactType, setImpactType] = useState<ImpactType>("");
   const activeLeague = availableLeagues.find(league => league.id === activeLeagueId);
   const selectLeague = (leagueId: LeagueId) => { setActiveLeagueId(leagueId); setTab("League"); };
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker activeLeagueId={activeLeagueId} onSelect={selectLeague} /> : activeLeague.id !== "ipl-2026" ? <LeagueSetupPending league={activeLeague} /> : tab === "Team" ? <TeamSelection selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} /> : tab === "Matches" ? <MatchesScreen /> : tab === "History" ? <ScrollView contentContainerStyle={s.content}><LockedHistoryTestData /></ScrollView> : <ScrollView contentContainerStyle={s.content}><Dashboard tab={tab} bid={bid} setBid={setBid} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker activeLeagueId={activeLeagueId} onSelect={selectLeague} /> : activeLeague.id !== "ipl-2026" ? <LeagueSetupPending league={activeLeague} /> : tab === "Team" ? <TeamSelection ownerName={memberName} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} /> : tab === "Matches" ? <MatchesScreen /> : tab === "History" ? <ScrollView contentContainerStyle={s.content}><LockedHistoryTestData /></ScrollView> : <ScrollView contentContainerStyle={s.content}><Dashboard memberName={memberName} tab={tab} bid={bid} setBid={setBid} openTeam={() => setTab("Team")} /></ScrollView>;
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle="light-content" />
-    <View style={s.header}><View style={s.logo}><Text style={s.logoText}>CP</Text></View><View style={{ flex: 1, marginLeft: 11 }}><Text style={s.eyebrow}>{activeLeague ? "SELECTED LEAGUE" : "PRIVATE FANTASY"}</Text><Text style={s.brand}>{activeLeague?.name ?? "Cricket Fantasy"}</Text></View>{activeLeague?.status === "Active" && <Text style={s.live}>● LIVE</Text>}</View>
+    <View style={s.header}><View style={s.logo}><Text style={s.logoText}>CP</Text></View><View style={{ flex: 1, marginLeft: 11 }}><Text style={s.eyebrow}>{activeLeague ? "SELECTED LEAGUE" : "PRIVATE FANTASY"}</Text><Text style={s.brand}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><Text style={s.signedInAs}>{memberName}</Text></View>{activeLeague?.status === "Active" && <Text style={s.live}>● LIVE</Text>}<TouchableOpacity style={s.signOutButton} onPress={() => supabase.auth.signOut()}><Text style={s.signOutText}>Sign out</Text></TouchableOpacity></View>
     {leagueContent}
     <View style={s.tabBar}>{tabs.map(item => <TouchableOpacity key={item} style={s.tab} onPress={() => setTab(item === "Home" || activeLeague ? item : "Home")}><View style={[s.tabIcon, tab === item && s.tabIconActive]} /><Text style={[s.tabText, tab === item && s.tabTextActive]}>{item}</Text></TouchableOpacity>)}</View>
   </SafeAreaView>;
+}
+
+function AuthLoading() {
+  return <SafeAreaView style={s.authSafe}><StatusBar barStyle="light-content" /><ActivityIndicator color="#DDFB72" size="large" /><Text style={s.authLoadingText}>Opening your league…</Text></SafeAreaView>;
+}
+
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const sendCode = async () => {
+    if (!findMemberByEmail(normalizedEmail)) {
+      setMessage("This email is not registered in the league. Ask a league admin for access.");
+      return;
+    }
+    setBusy(true); setMessage("");
+    const { error } = await supabase.auth.signInWithOtp({ email: normalizedEmail, options: { shouldCreateUser: true } });
+    setBusy(false);
+    if (error) setMessage(error.message);
+    else { setCodeSent(true); setMessage("A login code was sent to your email."); }
+  };
+  const verifyCode = async () => {
+    if (code.trim().length < 6) { setMessage("Enter the complete code from your email."); return; }
+    setBusy(true); setMessage("");
+    const { error } = await supabase.auth.verifyOtp({ email: normalizedEmail, token: code.trim(), type: "email" });
+    setBusy(false);
+    if (error) setMessage(error.message);
+  };
+
+  return <SafeAreaView style={s.authSafe}><StatusBar barStyle="light-content" /><View style={s.authCard}><View style={s.authLogo}><Text style={s.authLogoText}>CP</Text></View><Text style={s.authTitle}>Cricket Private Fantasy</Text><Text style={s.authSubtitle}>{codeSent ? `Enter the code sent to ${normalizedEmail}` : "Sign in with your registered league email"}</Text><TextInput value={email} onChangeText={value => { setEmail(value); setCodeSent(false); setCode(""); setMessage(""); }} editable={!busy} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" style={s.authInput} />{codeSent && <TextInput value={code} onChangeText={setCode} editable={!busy} keyboardType="number-pad" autoComplete="one-time-code" placeholder="Email code" placeholderTextColor="#8B9893" style={s.authInput} />}{message ? <Text style={[s.authMessage, message.startsWith("A login") && s.authSuccess]}>{message}</Text> : null}<TouchableOpacity disabled={busy} style={[s.authButton, busy && s.disabled]} onPress={codeSent ? verifyCode : sendCode}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.authButtonText}>{codeSent ? "Verify and sign in" : "Send login code"}</Text>}</TouchableOpacity>{codeSent && <TouchableOpacity disabled={busy} onPress={sendCode}><Text style={s.authLink}>Send a new code</Text></TouchableOpacity>}</View></SafeAreaView>;
+}
+
+function AccessDenied({ email }: { email: string }) {
+  return <SafeAreaView style={s.authSafe}><View style={s.authCard}><Text style={s.authTitle}>Access unavailable</Text><Text style={s.authSubtitle}>{email} is signed in but is not an active league member.</Text><TouchableOpacity style={s.authButton} onPress={() => supabase.auth.signOut()}><Text style={s.authButtonText}>Sign out</Text></TouchableOpacity></View></SafeAreaView>;
 }
 
 function LeaguePicker({ activeLeagueId, onSelect }: { activeLeagueId: LeagueId | ""; onSelect: (id: LeagueId) => void }) {
@@ -57,12 +120,12 @@ function LeagueSetupPending({ league }: { league: { name: string; format: string
   return <ScrollView contentContainerStyle={s.content}><View style={s.pendingLeague}><Text style={s.pendingLeagueEyebrow}>SELECTED LEAGUE</Text><Text style={s.pendingLeagueTitle}>{league.name}</Text><Text style={s.pendingLeagueMeta}>{league.format} · {league.season}</Text><Text style={s.pendingLeagueText}>This league workspace is ready to configure. Add its owners, squads, fixtures and scoring rules before team selection begins.</Text></View></ScrollView>;
 }
 
-function Dashboard({ tab, bid, setBid, openTeam }: { tab: Tab; bid: number; setBid: (n: number) => void; openTeam: () => void }) {
-  const pandiyanRank = standings.findIndex(([name]) => name === "Pandiyan") + 1;
+function Dashboard({ memberName, tab, bid, setBid, openTeam }: { memberName: string; tab: Tab; bid: number; setBid: (n: number) => void; openTeam: () => void }) {
+  const memberRank = standings.findIndex(([name]) => name === memberName) + 1;
   return <>
-    <Text style={s.greeting}>Good evening, Pandiyan</Text><Text style={s.subtitle}>IPL 2026 · Private league</Text>
+    <Text style={s.greeting}>Good evening, {memberName}</Text><Text style={s.subtitle}>IPL 2026 · Private league</Text>
     <View style={s.hero}><Text style={s.heroLabel}>NEXT MATCH · M6</Text><Text style={s.heroTitle}>KKR <Text style={s.vs}>vs</Text> SRH</Text><Text style={s.heroMeta}>Apr 2 · 7:30 PM · Lineup open</Text><TouchableOpacity style={s.primary} onPress={openTeam}><Text style={s.primaryText}>Set playing XI</Text></TouchableOpacity></View>
-    <View style={s.stats}><Stat label="RANK" value={`#${pandiyanRank}`} detail="after Match 5" /><Stat label="BUDGET" value="₹0m" detail="auction balance" /><Stat label="TRANSFERS" value="0/105" detail="league stage" /></View>
+    <View style={s.stats}><Stat label="RANK" value={memberRank > 0 ? `#${memberRank}` : "—"} detail="after Match 5" /><Stat label="BUDGET" value="₹0m" detail="auction balance" /><Stat label="TRANSFERS" value="0/105" detail="league stage" /></View>
     <View style={s.pointsReset}><Text style={s.pointsResetTitle}>Matches 1–5 calculated</Text><Text style={s.pointsResetText}>League standings use five final Cricinfo scorecards and the league's T20 scoring rules.</Text></View>
     <Text style={s.sectionTitle}>{tab === "Auction" ? "Live auction" : "League standings"}</Text>
     {tab === "Auction" ? <View style={s.auction}><Text style={s.timer}>08</Text><View style={s.avatar}><Text style={s.avatarText}>AS</Text></View><Text style={s.auctionName}>Abhishek Sharma</Text><Text style={s.meta}>ALL-ROUNDER · SRH</Text><Text style={s.bidLabel}>CURRENT BID</Text><Text style={s.bid}>₹{bid.toFixed(1)}m</Text><Text style={s.meta}>Pandiyan is leading</Text><TouchableOpacity style={s.primary} onPress={() => setBid(bid + 0.5)}><Text style={s.primaryText}>Bid ₹{(bid + 0.5).toFixed(1)}m</Text></TouchableOpacity></View> : <View style={s.card}>{standings.map(([name, pts], i) => <View key={name} style={s.standing}><Text style={s.position}>{i + 1}</Text><View style={s.badge}><Text style={s.badgeText}>{name[0]}</Text></View><Text style={s.owner}>{name}</Text><Text style={s.points}>{pts} pts</Text></View>)}</View>}
@@ -87,7 +150,7 @@ function MatchesScreen() {
       </TouchableOpacity>
       {expanded && (calculated ? <View style={s.pointsMatchBody}>
         <View style={s.pointsColumns}><Text style={s.pointsColumnPlayer}>PLAYER</Text><Text style={s.pointsColumn}>BAT</Text><Text style={s.pointsColumn}>BOWL</Text><Text style={s.pointsColumn}>FLD</Text><Text style={s.pointsColumn}>BON</Text><Text style={s.pointsColumnTotal}>TOTAL</Text></View>
-        {rankedPlayers.map(([name, points], index) => { const team = players.find(player => player.name === name)?.team ?? "—"; const previousName = index ? rankedPlayers[index - 1][0] : ""; const previousTeam = previousName ? players.find(player => player.name === previousName)?.team : ""; const playerKey = `${match.id}-${name}`; const playerExpanded = expandedPlayer === playerKey; const stats = completedMatchStats[match.id]?.[name]; const details = stats ? calculatePointDetails(stats) : null; return <View key={name}>{team !== previousTeam && <View style={s.pointsTeamHeader}><Text style={s.pointsTeamHeaderText}>{team}</Text><Text style={s.pointsTeamHeaderMeta}>Highest points first</Text></View>}<TouchableOpacity style={s.pointsPlayerRow} onPress={() => setExpandedPlayer(playerExpanded ? "" : playerKey)}><Text style={s.playerBreakChevron}>{playerExpanded ? "▲" : "▼"}</Text><View style={s.pointsPlayerIdentity}><Text style={s.pointsPlayerName}>{name}</Text><Text style={s.pointsPlayerTeam}>{team}</Text></View><Text style={s.pointsCell}>{points.batting}</Text><Text style={s.pointsCell}>{points.bowling}</Text><Text style={s.pointsCell}>{points.fielding}</Text><Text style={s.pointsCell}>{points.bonus}</Text><Text style={s.pointsCellTotal}>{points.total}</Text></TouchableOpacity>{playerExpanded && details && <View style={s.fullBreakdown}><PointDetailSection title="BATTING" rows={details.batting} total={points.batting} /><PointDetailSection title="BOWLING" rows={details.bowling} total={points.bowling} /><PointDetailSection title="FIELDING" rows={details.fielding} total={points.fielding} /><PointDetailSection title="BONUS" rows={details.bonus} total={points.bonus} /></View>}</View>; })}
+        {rankedPlayers.map(([name, points], index) => { const player = players.find(item => item.name === name); const team = player?.team ?? "—"; const ownership = player?.owner === "Available" ? "OpenPlayer" : player?.owner ? `Owned by ${player.owner}` : "Owner unavailable"; const previousName = index ? rankedPlayers[index - 1][0] : ""; const previousTeam = previousName ? players.find(item => item.name === previousName)?.team : ""; const playerKey = `${match.id}-${name}`; const playerExpanded = expandedPlayer === playerKey; const stats = completedMatchStats[match.id]?.[name]; const details = stats ? calculatePointDetails(stats) : null; return <View key={name}>{team !== previousTeam && <View style={s.pointsTeamHeader}><Text style={s.pointsTeamHeaderText}>{team}</Text><Text style={s.pointsTeamHeaderMeta}>Highest points first</Text></View>}<TouchableOpacity style={s.pointsPlayerRow} onPress={() => setExpandedPlayer(playerExpanded ? "" : playerKey)}><Text style={s.playerBreakChevron}>{playerExpanded ? "▲" : "▼"}</Text><View style={s.pointsPlayerIdentity}><Text style={s.pointsPlayerName}>{name}</Text><Text style={s.pointsPlayerTeam}>{team} · {ownership}</Text></View><Text style={s.pointsCell}>{points.batting}</Text><Text style={s.pointsCell}>{points.bowling}</Text><Text style={s.pointsCell}>{points.fielding}</Text><Text style={s.pointsCell}>{points.bonus}</Text><Text style={s.pointsCellTotal}>{points.total}</Text></TouchableOpacity>{playerExpanded && details && <View style={s.fullBreakdown}><PointDetailSection title="BATTING" rows={details.batting} total={points.batting} /><PointDetailSection title="BOWLING" rows={details.bowling} total={points.bowling} /><PointDetailSection title="FIELDING" rows={details.fielding} total={points.fielding} /><PointDetailSection title="BONUS" rows={details.bonus} total={points.bonus} /></View>}</View>; })}
       </View> : <View style={s.pointsEmpty}><Text style={s.pointsEmptyTitle}>Team selection available before lock</Text><Text style={s.pointsEmptyText}>Points will appear after this match is marked complete and its Cricinfo scorecard is processed.</Text></View>)}
     </View>;
   })}</ScrollView>;
@@ -97,7 +160,7 @@ function PointDetailSection({ title, rows, total }: { title: string; rows: Array
   return <View style={s.detailSection}><View style={s.detailHeading}><Text style={s.detailTitle}>{title}</Text><Text style={s.detailTotal}>{total}</Text></View>{visible.length ? visible.map(([label, value]) => <View key={label} style={s.detailRow}><Text style={s.detailLabel}>{label}</Text><Text style={s.detailValue}>{value > 0 ? `+${value}` : value}</Text></View>) : <Text style={s.detailEmpty}>No points</Text>}</View>;
 }
 
-function TeamSelection({ selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType }: { selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void }) {
+function TeamSelection({ ownerName, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType }: { ownerName: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void }) {
   const [activeMatchId, setActiveMatchId] = useState("M6");
   const [showIssues, setShowIssues] = useState(false);
   const [expandedTeams, setExpandedTeams] = useState<string[]>(["PBKS", "GT"]);
@@ -110,9 +173,9 @@ function TeamSelection({ selected, setSelected, captain, setCaptain, vice, setVi
   const teams = Array.from(new Set(chosen.map(p => p.team)));
   const maxTeam = Math.max(0, ...teams.map(team => chosen.filter(p => p.team === team).length));
   const transfers = chosen.filter(p => p.owner !== "Pandiyan").length;
-  const myPlayers = chosen.filter(p => p.owner === "Pandiyan").length;
+  const myPlayers = chosen.filter(p => p.owner === ownerName).length;
   const openPlayers = chosen.filter(p => p.owner === "Available").length;
-  const otherOwnerPlayers = chosen.filter(p => p.owner !== "Pandiyan" && p.owner !== "Available").length;
+  const otherOwnerPlayers = chosen.filter(p => p.owner !== ownerName && p.owner !== "Available").length;
   const currentMatchPlayers = chosen.filter(p => matchTeams.includes(p.team)).length;
   const impactSelectedPlayer = chosen.find(p => p.name === impactPlayer);
   const impactWarnings = [impactType === "BOI" && impactSelectedPlayer && ["BA", "WK"].includes(impactSelectedPlayer.role) && `BOI warning: ${impactSelectedPlayer.name} is a ${impactSelectedPlayer.role === "BA" ? "batter" : "wicketkeeper"}. Only bowling points will count.`, impactType === "BAI" && impactSelectedPlayer?.role === "BO" && `BAI warning: ${impactSelectedPlayer.name} is a bowler. Only batting points will count.`].filter(Boolean) as string[];
@@ -127,7 +190,7 @@ function TeamSelection({ selected, setSelected, captain, setCaptain, vice, setVi
     const selectedFromTeam = selected.filter(name => teamPlayers.some(player => player.name === name)).length;
     return <View key={team} style={s.teamGroup}>
       <TouchableOpacity style={[s.teamHeader, expanded && s.teamHeaderExpanded]} onPress={() => toggleTeam(team)}><Text style={s.teamHeaderName}>{team}</Text><Text style={s.teamHeaderCount}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{teamPlayers.length} players</Text><Text style={s.teamChevron}>{expanded ? "▲" : "▼"}</Text></TouchableOpacity>
-      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === "Pandiyan" ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; return <View key={p.name} style={[s.playerRow, active && s.playerActive]}><TouchableOpacity style={s.playerMain} onPress={() => toggle(p.name)}><View style={[s.checkbox, active && s.checkboxActive]}><Text style={s.check}>{active ? "✓" : ""}</Text></View><View style={{ flex: 1, marginLeft: 10 }}><Text style={s.playerName}>{p.name}</Text><Text style={s.meta}>{p.role} · {ownership}</Text></View><Text style={s.price}>₹{p.price}m</Text></TouchableOpacity>{active && <View style={s.markers}><Marker text="C" active={captain === p.name} onPress={() => { setCaptain(p.name); setSubmitted(false); }} /><Marker text="VC" active={vice === p.name} onPress={() => { setVice(p.name); setSubmitted(false); }} /><Marker text="BAI" active={impactPlayer === p.name && impactType === "BAI"} onPress={() => { setImpactPlayer(p.name); setImpactType("BAI"); setSubmitted(false); }} /><Marker text="BOI" active={impactPlayer === p.name && impactType === "BOI"} onPress={() => { setImpactPlayer(p.name); setImpactType("BOI"); setSubmitted(false); }} /></View>}</View>; })}
+      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; return <View key={p.name} style={[s.playerRow, active && s.playerActive]}><TouchableOpacity style={s.playerMain} onPress={() => toggle(p.name)}><View style={[s.checkbox, active && s.checkboxActive]}><Text style={s.check}>{active ? "✓" : ""}</Text></View><View style={{ flex: 1, marginLeft: 10 }}><Text style={s.playerName}>{p.name}</Text><Text style={s.meta}>{p.role} · {ownership}</Text></View><Text style={s.price}>₹{p.price}m</Text></TouchableOpacity>{active && <View style={s.markers}><Marker text="C" active={captain === p.name} onPress={() => { setCaptain(p.name); setSubmitted(false); }} /><Marker text="VC" active={vice === p.name} onPress={() => { setVice(p.name); setSubmitted(false); }} /><Marker text="BAI" active={impactPlayer === p.name && impactType === "BAI"} onPress={() => { setImpactPlayer(p.name); setImpactType("BAI"); setSubmitted(false); }} /><Marker text="BOI" active={impactPlayer === p.name && impactType === "BOI"} onPress={() => { setImpactPlayer(p.name); setImpactType("BOI"); setSubmitted(false); }} /></View>}</View>; })}
     </View>;
   };
   return <View style={s.teamScreen}><ScrollView contentContainerStyle={s.teamContent}>
@@ -208,6 +271,22 @@ function Marker({ text, active, onPress }: { text: string; active: boolean; onPr
 function MarkerBadge({ marker }: { marker: string }) { return <View style={[s.markerBadge, marker === "C" ? s.badgeCaptain : marker === "VC" ? s.badgeVice : marker === "BAI" ? s.badgeBai : s.badgeBoi]}><Text style={s.markerBadgeText}>{marker}</Text></View>; }
 
 const s = StyleSheet.create({
+  authSafe: { flex: 1, backgroundColor: "#071D17", alignItems: "center", justifyContent: "center", padding: 22 },
+  authCard: { width: "100%", maxWidth: 430, backgroundColor: "#F4F5EF", borderRadius: 24, padding: 24 },
+  authLogo: { width: 54, height: 54, borderRadius: 17, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center", marginBottom: 20 },
+  authLogoText: { color: "#071D17", fontSize: 18, fontWeight: "900" },
+  authTitle: { color: "#10251F", fontSize: 25, fontWeight: "900" },
+  authSubtitle: { color: "#718079", fontSize: 13, lineHeight: 19, marginTop: 7, marginBottom: 19 },
+  authInput: { backgroundColor: "white", borderWidth: 1, borderColor: "#D7DFDA", borderRadius: 12, color: "#10251F", fontSize: 15, paddingHorizontal: 14, paddingVertical: 13, marginBottom: 11 },
+  authButton: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 5 },
+  authButtonText: { color: "#10251F", fontWeight: "900" },
+  authLink: { color: "#416158", textAlign: "center", fontSize: 12, fontWeight: "800", marginTop: 17 },
+  authMessage: { color: "#8A3E32", fontSize: 11, lineHeight: 16, marginBottom: 8 },
+  authSuccess: { color: "#35643B" },
+  authLoadingText: { color: "#B7CDC6", fontSize: 12, marginTop: 12 },
+  signedInAs: { color: "#9BC1B6", fontSize: 9, marginTop: 2 },
+  signOutButton: { borderWidth: 1, borderColor: "#40675C", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, marginLeft: 8 },
+  signOutText: { color: "#B7CDC6", fontSize: 8, fontWeight: "800" },
   leagueCard: { backgroundColor: "white", borderRadius: 17, borderWidth: 1, borderColor: "#DEE5E1", padding: 14, marginBottom: 10, flexDirection: "row", alignItems: "center" },
   leagueCardSelected: { borderColor: "#88A938", backgroundColor: "#FBFDEF" },
   leagueMark: { width: 48, height: 48, borderRadius: 15, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center", marginRight: 12 },
