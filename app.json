@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Cricket Private Fantasy League",
+    "slug": "cricket-private-fantasy-league",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#071D17"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cpfl.mobile"
+    },
+    "android": {
+      "package": "com.cpfl.mobile"
+    }
+  }
+}
