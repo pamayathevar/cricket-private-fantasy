@@ -51,9 +51,25 @@ const { data: lineupId, error } = await supabase.rpc("submit_lineup", {
 
 Direct owner inserts into lineup tables are intentionally blocked. Admins retain direct access for corrections, with sensitive operations expected to write an `audit_events` record.
 
-## Remaining imports
+After applying `202608040004_boosters.sql`, booster-enabled submissions use `submit_lineup_with_booster`. The server enforces one booster per lineup, player targeting, total and per-phase usage limits, and the confirmed multiplier combinations. A null booster removes any previously selected booster from that unlocked lineup.
 
-This first migration intentionally does not invent fixture timestamps or external player IDs. The next migration should import the verified IPL 2026 fixtures in UTC and the current squad snapshot from `squadData.ts`, then activate the app's Supabase reads.
+Booster selections belong to one fixture-specific lineup and must never be copied by carry-forward logic. Carry forward only the XI and its ordinary player markers; every new fixture begins with no booster selected.
+
+Apply `202608040005_optional_player_markers.sql` to allow owners to skip Captain and Vice-Captain. BAI and BOI were already nullable. The client passes null for every optional marker that the owner leaves unselected.
+
+## Squad and fixture import
+
+After the initial schema, run `migrations/202608040002_import_ipl2026_squad_fixtures.sql`. It imports the 268-player Squad snapshot, auction prices, owner assignments, 76 open players and all 70 IPL 2026 league fixtures, including the 50 Phase 2 matches. Then run `migrations/202608040003_import_ipl2026_playoffs.sql` to add Qualifier 1, Eliminator, Qualifier 2 and the Final. Fixture timestamps are stored in UTC; verification displays them in `Asia/Kolkata`. Lineups lock at the scheduled start.
+
+The import is repeatable: players, league ownership and fixtures are upserted by their natural unique keys. The first five fixtures are marked completed with scoring still pending; points must be imported and reviewed before changing `scoring_status` to `published`.
+
+The SQL is generated from `squadData.ts` and `iplFixtures.ts`. After changing either source snapshot, regenerate it with:
+
+```sh
+node scripts/generate-supabase-import.mjs
+```
+
+Commit the regenerated migration, review its diff and apply it through the Supabase SQL Editor. Then run `verify.sql`; expected import totals are 268 players, 192 owned players, 76 open players and 74 fixtures.
 
 ## Authentication hardening
 

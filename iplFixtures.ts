@@ -15,4 +15,20 @@ const rows: Array<[string, string]> = [
   ["May 17","RCB vs PBKS"],["May 17","RR vs DC"],["May 18","CSK vs SRH"],["May 19","LSG vs RR"],["May 20","MI vs KKR"],
   ["May 21","GT vs CSK"],["May 22","SRH vs RCB"],["May 23","LSG vs PBKS"],["May 24","RR vs MI"],["May 24","DC vs KKR"],
 ];
-export const iplFixtures = rows.map(([date, teams], index) => ({ id: `M${index + 1}`, number: index + 1, date, teams, status: (index < 5 ? "Calculated" : "Upcoming") as FixtureStatus }));
+const leagueFixtures = rows.map(([date, teams], index) => ({
+  id: `M${index + 1}`,
+  number: index + 1,
+  date,
+  teams,
+  stage: "League" as const,
+  status: (index < 5 ? "Calculated" : "Upcoming") as FixtureStatus,
+}));
+
+const playoffFixtures = [
+  { id: "Q1", number: 71, date: "May 26", teams: "RCB vs GT", stage: "Qualifier 1" as const, status: "Upcoming" as const },
+  { id: "EL", number: 72, date: "May 27", teams: "SRH vs RR", stage: "Eliminator" as const, status: "Upcoming" as const },
+  { id: "Q2", number: 73, date: "May 29", teams: "GT vs RR", stage: "Qualifier 2" as const, status: "Upcoming" as const },
+  { id: "F", number: 74, date: "May 31", teams: "RCB vs GT", stage: "Final" as const, status: "Upcoming" as const },
+];
+
+export const iplFixtures = [...leagueFixtures, ...playoffFixtures];
