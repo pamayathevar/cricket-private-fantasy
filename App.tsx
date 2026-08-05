@@ -89,7 +89,7 @@ const upcomingMatches = [
   { id: "M11", home: "RCB", away: "CSK", day: "Apr 5", time: "7:30 PM" },
   { id: "M12", home: "KKR", away: "PBKS", day: "Apr 6", time: "7:30 PM" },
 ];
-type UpcomingMatch = typeof upcomingMatches[number] & { databaseId?: string; stage?: "league" | "playoff" | "final" };
+type UpcomingMatch = typeof upcomingMatches[number] & { databaseId?: string; stage?: "league" | "playoff" | "final"; lineupLockAt?: string };
 const leagueOwners = ipl2026Members.filter(member => member.status === "active" && member.role !== "viewer").map(member => member.name);
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -173,12 +173,17 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     if (!leagueDatabaseId) return;
     let cancelled = false;
     setTeamFixtures([]);
-    supabase.from("fixtures").select("id,match_number,stage,scheduled_start,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueDatabaseId).eq("status", "scheduled").order("match_number").limit(7).then(({ data, error }) => {
-      if (cancelled) return;
-      if (error || !data?.length) { setTeamFixtures([]); return; }
-      setTeamFixtures((data as any[]).map(row => { const start = new Date(row.scheduled_start); return { id: `M${row.match_number}`, databaseId: row.id, stage: row.stage, home: row.home?.code ?? "TBD", away: row.away?.code ?? "TBD", day: start.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Kolkata" }), time: start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) }; }));
-    });
-    return () => { cancelled = true; };
+    const loadOpenFixtures = () => {
+      const now = new Date().toISOString();
+      supabase.from("fixtures").select("id,match_number,stage,scheduled_start,lineup_lock_at,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueDatabaseId).eq("status", "scheduled").gt("lineup_lock_at", now).order("match_number").limit(7).then(({ data, error }) => {
+        if (cancelled) return;
+        if (error || !data?.length) { setTeamFixtures([]); return; }
+        setTeamFixtures((data as any[]).map(row => { const start = new Date(row.scheduled_start); return { id: `M${row.match_number}`, databaseId: row.id, stage: row.stage, lineupLockAt: row.lineup_lock_at, home: row.home?.code ?? "TBD", away: row.away?.code ?? "TBD", day: start.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Kolkata" }), time: start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) }; }));
+      });
+    };
+    loadOpenFixtures();
+    const refreshTimer = setInterval(loadOpenFixtures, 30_000);
+    return () => { cancelled = true; clearInterval(refreshTimer); };
   }, [leagueDatabaseId]);
   useEffect(() => {
     if (!leagueDatabaseId) return;
@@ -736,22 +741,37 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
   const teamScrollRef = useRef<ScrollView>(null);
   const teamPositions = useRef<Record<string, number>>({});
   const playerPositions = useRef<Record<string, number>>({});
-  const [activeMatchId, setActiveMatchId] = useState("M6");
+  const [activeMatchId, setActiveMatchId] = useState("");
   const [showIssues, setShowIssues] = useState(false);
   const [expandedTeams, setExpandedTeams] = useState<string[]>(["PBKS", "GT"]);
   const [focusedPlayer, setFocusedPlayer] = useState("");
   const [submitBusy, setSubmitBusy] = useState(false);
   const [submitMessage, setSubmitMessage] = useState("");
   const [lineupLoadBusy, setLineupLoadBusy] = useState(false);
+  const [firstMissingPriorMatch, setFirstMissingPriorMatch] = useState<number | null>(null);
   const [carriedForwardNames, setCarriedForwardNames] = useState<Set<string>>(new Set());
   const [boosterUses, setBoosterUses] = useState<Array<{ code: Exclude<BoosterCode, "">; matchNumber: number }>>([]);
   const [leaguePhases, setLeaguePhases] = useState<LeaguePhase[]>([]);
   const [boosterRuleSettings, setBoosterRuleSettings] = useState<BoosterRuleSetting[]>([]);
   const [transferPeriods, setTransferPeriods] = useState<TransferPeriod[]>([]);
   const [transferUsage, setTransferUsage] = useState<Record<string, number>>({});
+  const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const submittedSnapshots = useRef<Record<string, { players: string[]; captain: string; vice: string; impactPlayer: string; impactType: ImpactType }>>({});
   const fixture = fixtures.find(match => match.id === activeMatchId) ?? fixtures[0] ?? { id: "M0", home: "TBD", away: "TBD", day: "—", time: "—" };
+  const immediateNextFixture = fixtures[0];
+  const nextLockMilliseconds = immediateNextFixture?.lineupLockAt ? Math.max(0, new Date(immediateNextFixture.lineupLockAt).getTime() - countdownNow) : 0;
+  const nextLockSeconds = Math.floor(nextLockMilliseconds / 1000);
+  const nextLockDays = Math.floor(nextLockSeconds / 86_400);
+  const nextLockHours = Math.floor((nextLockSeconds % 86_400) / 3_600);
+  const nextLockMinutes = Math.floor((nextLockSeconds % 3_600) / 60);
+  const nextLockRemainder = nextLockSeconds % 60;
+  const nextLockCountdown = `${nextLockDays ? `${nextLockDays}d ` : ""}${String(nextLockHours).padStart(2, "0")}:${String(nextLockMinutes).padStart(2, "0")}:${String(nextLockRemainder).padStart(2, "0")}`;
+  const nextLockIsFarAway = nextLockMilliseconds > 7 * 86_400_000;
+  const nextLockDisplay = nextLockIsFarAway && immediateNextFixture?.lineupLockAt
+    ? new Date(immediateNextFixture.lineupLockAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })
+    : nextLockCountdown;
   const activeMatchNumber = Number(activeMatchId.replace("M", ""));
+  const fixtureLocked = !!fixture.lineupLockAt && Date.now() >= new Date(fixture.lineupLockAt).getTime();
   const rules = [...ruleVersions].filter(rule => rule.effective_from_match_number <= activeMatchNumber).sort((a, b) => b.effective_from_match_number - a.effective_from_match_number || b.version - a.version)[0] ?? defaultSelectionRules;
   const matchTeams = [fixture.home, fixture.away];
   const otherTeams = allTeams.filter(team => !matchTeams.includes(team));
@@ -784,7 +804,7 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
   const selectionScopeWarnings = ownershipEnabled ? chosen.filter(player => player.owner !== ownerName && !matchTeams.includes(player.team) && !carriedForwardNames.has(player.name)).map(player => `${player.name} is not your player and is not playing in ${fixture.home} vs ${fixture.away}.`) : [];
   const optionalMarkerWarnings = [!captain && `Captain not selected. You may still submit without the ${rules.captain_multiplier}× Captain bonus.`, !vice && `Vice-Captain not selected. You may still submit without the ${rules.vice_captain_multiplier}× VC bonus.`, !impactPlayer && "BAI/BOI not selected. Impact is optional for this match."].filter(Boolean) as string[];
   const submissionWarnings = [...selectionScopeWarnings, ...impactWarnings, ...optionalMarkerWarnings];
-  const errors = [!activeTransferPeriod && `No transfer period is configured for Match ${activeMatchNumber}`, selected.length !== rules.lineup_size && `Select exactly ${rules.lineup_size} players (${selected.length}/${rules.lineup_size})`, count("BA") < rules.min_batters && `At least ${rules.min_batters} batters required`, count("BO") < rules.min_bowlers && `At least ${rules.min_bowlers} bowlers required`, count("WK") < rules.min_wicketkeepers && `At least ${rules.min_wicketkeepers} wicketkeeper${rules.min_wicketkeepers === 1 ? "" : "s"} required`, count("AL") < rules.min_all_rounders && `At least ${rules.min_all_rounders} all-rounder${rules.min_all_rounders === 1 ? "" : "s"} required`, maxTeam > rules.max_from_one_team && `Maximum ${rules.max_from_one_team} from one IPL team`, total > rules.lineup_budget && `₹${(total - rules.lineup_budget).toFixed(1)}m over budget`, activeTransferPeriod && boosterCode !== "SUP-TR" && alreadyUsedTransfers + transfers > transferLimit && `${activeTransferPeriod.name} transfer limit of ${transferLimit} exceeded`, captain && vice && captain === vice && "Captain and vice-captain must differ", impactPlayer && !impactType && "Choose BAI or BOI for the Impact player", impactPlayer && (impactPlayer === captain || impactPlayer === vice) && "Impact player cannot be captain or vice-captain", boosterCode === "3X" && !boosterPlayer && "Select the player who receives 3X", boosterCode === "3X" && boosterPlayer && !selected.includes(boosterPlayer) && "The 3X player must be in your XI"].filter(Boolean) as string[];
+  const errors = [fixtureLocked && "Lineup is locked", firstMissingPriorMatch && `Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`, !activeTransferPeriod && `No transfer period is configured for Match ${activeMatchNumber}`, selected.length !== rules.lineup_size && `Select exactly ${rules.lineup_size} players (${selected.length}/${rules.lineup_size})`, count("BA") < rules.min_batters && `At least ${rules.min_batters} batters required`, count("BO") < rules.min_bowlers && `At least ${rules.min_bowlers} bowlers required`, count("WK") < rules.min_wicketkeepers && `At least ${rules.min_wicketkeepers} wicketkeeper${rules.min_wicketkeepers === 1 ? "" : "s"} required`, count("AL") < rules.min_all_rounders && `At least ${rules.min_all_rounders} all-rounder${rules.min_all_rounders === 1 ? "" : "s"} required`, maxTeam > rules.max_from_one_team && `Maximum ${rules.max_from_one_team} from one IPL team`, total > rules.lineup_budget && `₹${(total - rules.lineup_budget).toFixed(1)}m over budget`, activeTransferPeriod && boosterCode !== "SUP-TR" && alreadyUsedTransfers + transfers > transferLimit && `${activeTransferPeriod.name} transfer limit of ${transferLimit} exceeded`, captain && vice && captain === vice && "Captain and vice-captain must differ", impactPlayer && !impactType && "Choose BAI or BOI for the Impact player", impactPlayer && (impactPlayer === captain || impactPlayer === vice) && "Impact player cannot be captain or vice-captain", boosterCode === "3X" && !boosterPlayer && "Select the player who receives 3X", boosterCode === "3X" && boosterPlayer && !selected.includes(boosterPlayer) && "The 3X player must be in your XI"].filter(Boolean) as string[];
   const toggle = (name: string) => {
     const player = roster.find(item => item.name === name);
     const freshExternalPlayer = player && (ownershipEnabled ? player.owner !== ownerName : true) && !carriedForwardNames.has(name);
@@ -800,6 +820,7 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
   const clearXI = () => { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(false); setShowIssues(false); };
   const submitXI = async () => {
     setSubmitBusy(true); setSubmitMessage("");
+    if (firstMissingPriorMatch) { setSubmitMessage(`Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`); setSubmitBusy(false); return; }
     const matchNumber = Number(activeMatchId.replace("M", ""));
     const fixtureResult = await supabase.from("fixtures").select("id").eq("league_id", leagueId).eq("match_number", matchNumber).single();
     if (fixtureResult.error) { setSubmitMessage(fixtureResult.error.message); setSubmitBusy(false); return; }
@@ -818,10 +839,14 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
     if (fixtures.length && !fixtures.some(match => match.id === activeMatchId)) setActiveMatchId(fixtures[0].id);
   }, [fixtures, activeMatchId]);
   useEffect(() => {
+    const timer = setInterval(() => setCountdownNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
     if (!fixture.databaseId) return;
     let cancelled = false;
     const loadLineup = async () => {
-      setLineupLoadBusy(true); setSubmitMessage("");
+      setLineupLoadBusy(true); setFirstMissingPriorMatch(null); setSubmitMessage("");
       const memberResult = await supabase.from("league_members").select("id").eq("league_id", leagueId).eq("display_name", ownerName).eq("status", "active").single();
       if (memberResult.error) { if (!cancelled) { setSubmitMessage(memberResult.error.message); setLineupLoadBusy(false); } return; }
       const [periodResult, transferResult, phaseResult, boosterRuleResult] = await Promise.all([
@@ -836,6 +861,16 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
       if (!cancelled && boosterRuleResult.data) setBoosterRuleSettings(boosterRuleResult.data as BoosterRuleSetting[]);
       const boosterUsageResult = await supabase.from("lineup_boosters").select("booster:booster_rules(code),fixture:fixtures(match_number)").eq("member_id", memberResult.data.id);
       if (!boosterUsageResult.error && !cancelled) setBoosterUses((boosterUsageResult.data ?? []).map((row: any) => ({ code: row.booster?.code, matchNumber: row.fixture?.match_number })).filter(use => use.code && use.matchNumber));
+      const earlierFixturesResult = await supabase.from("fixtures").select("id,match_number").eq("league_id", leagueId).lt("match_number", activeMatchNumber).order("match_number");
+      if (earlierFixturesResult.error) { if (!cancelled) { setSubmitMessage(earlierFixturesResult.error.message); setLineupLoadBusy(false); } return; }
+      const earlierFixtureIds = (earlierFixturesResult.data ?? []).map(row => row.id);
+      const earlierLineupsResult = earlierFixtureIds.length
+        ? await supabase.from("lineup_submissions").select("fixture_id,status").eq("member_id", memberResult.data.id).in("fixture_id", earlierFixtureIds).in("status", ["submitted", "locked"])
+        : { data: [], error: null };
+      if (earlierLineupsResult.error) { if (!cancelled) { setSubmitMessage(earlierLineupsResult.error.message); setLineupLoadBusy(false); } return; }
+      const submittedFixtureIds = new Set((earlierLineupsResult.data ?? []).map(row => row.fixture_id));
+      const missingPriorMatch = (earlierFixturesResult.data ?? []).find(row => !submittedFixtureIds.has(row.id))?.match_number ?? null;
+      if (!cancelled) setFirstMissingPriorMatch(missingPriorMatch);
       const currentResult = await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type").eq("fixture_id", fixture.databaseId).eq("member_id", memberResult.data.id).maybeSingle();
       if (currentResult.error) { if (!cancelled) { setSubmitMessage(currentResult.error.message); setLineupLoadBusy(false); } return; }
       let source = currentResult.data;
@@ -907,13 +942,14 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
   };
   return <View style={s.teamScreen}><ScrollView ref={teamScrollRef} contentContainerStyle={s.teamContent}>
     <Text style={s.greeting}>Plan next 7 matches</Text><Text style={s.subtitle}>Select a fixture, prepare its XI, and submit before its own lock.</Text>
+    {immediateNextFixture ? <View style={s.lockCountdown}><View><Text style={s.lockCountdownLabel}>{nextLockIsFarAway ? "NEXT LINEUP LOCKS ON" : "NEXT LINEUP LOCKS IN"}</Text><Text style={s.lockCountdownMatch}>Match {immediateNextFixture.id.replace("M", "")} · {immediateNextFixture.home} vs {immediateNextFixture.away}</Text></View><Text style={[s.lockCountdownTime, nextLockIsFarAway && s.lockCountdownDate]}>{nextLockDisplay}</Text></View> : null}
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; return <TouchableOpacity key={match.id} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, active && submitted ? s.statusSubmitted : null]}>{active && submitted ? "Submitted" : "XI carried · booster empty"}</Text></TouchableOpacity>; })}</ScrollView>
-    <View style={s.selectionTitleRow}><View style={{ flex: 1 }}><Text style={s.greeting}>{submitted && activeMatchId === "M6" ? "Your submitted XI" : "Select your XI"}</Text><View style={s.titleTeamRow}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away} /><Text style={s.titleLock}>Locks {fixture.day} at {fixture.time}</Text></View></View><View style={s.selectionActions}><TouchableOpacity style={s.resetButton} onPress={resetXI}><Text style={s.resetButtonText}>Reset XI</Text></TouchableOpacity><TouchableOpacity style={s.clearButton} onPress={clearXI}><Text style={s.clearButtonText}>Clear XI</Text></TouchableOpacity></View></View>
+    <View style={s.selectionTitleRow}><View style={{ flex: 1 }}><Text style={s.greeting}>{submitted ? "Your submitted XI" : "Select your XI"}</Text><View style={s.titleTeamRow}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away} /><Text style={s.titleLock}>Locks {fixture.day} at {fixture.time}</Text></View></View><View style={s.selectionActions}><TouchableOpacity style={s.resetButton} onPress={resetXI}><Text style={s.resetButtonText}>Reset XI</Text></TouchableOpacity><TouchableOpacity style={s.clearButton} onPress={clearXI}><Text style={s.clearButtonText}>Clear XI</Text></TouchableOpacity></View></View>
     <View style={s.activeRulesBanner}><Text style={s.activeRulesTitle}>Playing Rules v{rules.version}</Text><Text style={s.activeRulesText}>Minimum {rules.min_bowlers} bowlers · {rules.lineup_size} players · ₹{rules.lineup_budget}m budget</Text></View>
     {lineupLoadBusy ? <View style={s.carryForward}><ActivityIndicator color="#174D3D" /><Text style={s.carryForwardText}>Loading saved or carried-forward XI…</Text></View> : null}
     {rulesLoadMessage ? <View style={s.warningCard}><Text style={s.warningText}>⚠ {rulesLoadMessage}</Text></View> : null}
     {submitted && <View style={s.carryForward}><Text style={s.carryForwardText}>✓ This XI will carry forward to the next match automatically.</Text></View>}
-    {!submitted && activeMatchId === "M6" && selected.length === rules.lineup_size && <View style={s.carryForward}><Text style={s.carryForwardText}>↳ Match 5 XI carried forward. You can alter and submit it for Match 6.</Text></View>}
+    {!submitted && selected.length === rules.lineup_size && <View style={s.carryForward}><Text style={s.carryForwardText}>↳ Your latest submitted XI was carried forward. You can alter it before submitting this match.</Text></View>}
     <View style={s.selectionSummary}><Summary label="PLAYERS" value={`${selected.length}/${rules.lineup_size}`} bad={selected.length !== rules.lineup_size} /><Summary label="COST" value={`₹${total.toFixed(1)}m`} bad={total > rules.lineup_budget} /><Summary label="TRANSFERS" value={displayedTransfers} bad={false} /></View>
     <View style={s.ownershipSummary}><OwnershipSummary label="MY PLAYERS" value={myPlayers} tone="mine" /><OwnershipSummary label="OPENPLAYERS" value={openPlayers} tone="open" /><OwnershipSummary label="OTHER OWNERS" value={otherOwnerPlayers} tone="other" /><OwnershipSummary label={`${fixture.home} + ${fixture.away}`} value={currentMatchPlayers} tone="match" /></View>
     <View style={s.roles}>{(["WK", "BA", "AL", "BO"] as Role[]).map(r => <Text key={r} style={s.roleChip}>{r} {count(r)}</Text>)}</View>
@@ -948,8 +984,8 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
 <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
 <Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {transfers} transfers</Text>
 </TouchableOpacity>
-<TouchableOpacity disabled={!!errors.length || submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={submitXI}>
-{submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{submitted ? "Submitted ✓" : "Submit XI"}</Text>}
+<TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : submitXI()}>
+{submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : submitted ? "Submitted ✓" : "Submit XI"}</Text>}
 </TouchableOpacity>
 </View>
 </View>;
@@ -1118,6 +1154,11 @@ const s = StyleSheet.create({
   stickyMeta: { color: "#7D8B85", fontSize: 10, marginTop: 3 },
   stickyButton: { marginLeft: "auto", backgroundColor: "#174D3D", borderRadius: 12, paddingHorizontal: 20, paddingVertical: 13 },
   fixtureStrip: { marginHorizontal: -20, marginBottom: 18 },
+  lockCountdown: { backgroundColor: "#102D25", borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  lockCountdownLabel: { color: "#D8FF63", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  lockCountdownMatch: { color: "#FFFFFF", fontSize: 11, fontWeight: "800", marginTop: 4 },
+  lockCountdownTime: { color: "#D8FF63", fontSize: 19, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  lockCountdownDate: { fontSize: 12, maxWidth: 145, textAlign: "right" },
   fixtureStripContent: { paddingHorizontal: 20, gap: 9 },
   fixtureCard: { width: 142, backgroundColor: "white", borderWidth: 1, borderColor: "#DCE4DF", borderRadius: 14, padding: 12 },
   fixtureCardActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" },
