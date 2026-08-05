@@ -8,7 +8,7 @@ Audit date: 2026-08-05. This compares `SPEC.md` with commit `da1ad2e` plus the u
 |---|---|---|
 | Authentication | Partial | Auth works; server-side invitation lifecycle and allowlist hook need completion |
 | Multi-league data scoping | Partial | Core tables use `league_id`; Home/configuration still has IPL-oriented client assumptions |
-| Owner opt-in per league | Missing | Existing statuses only cover invited/active/disabled |
+| Owner opt-in per league | Partial | Migration and mobile invitation/admin activation flows exist; multi-account and RLS testing remains |
 | Playing/scoring versions | Implemented | Needs automated integration tests and cleaner admin UX |
 | Configurable phases/transfers/boosters | Implemented | Needs draft-league wizard and cross-configuration tests |
 | Auction ownership | Partial/deferred | Imported ownership exists; production realtime auction is disabled |
@@ -31,7 +31,7 @@ Audit date: 2026-08-05. This compares `SPEC.md` with commit `da1ad2e` plus the u
 ## Concrete client findings
 
 - `App.tsx` still defines a fixed IPL 2026 database UUID and a static league catalog. Home must query the signed-in user's `leagues`/`league_members` rows instead.
-- `leagueMembers.ts` is a local IPL allowlist with only invited/active/disabled semantics. It should become temporary fallback data and then be removed after server invitation UI is live.
+- `leagueMembers.ts` remains for legacy prototype/test owner data, but authentication and Home membership now use Supabase. Remove the file's access-control role when remaining prototypes are retired.
 - `App.tsx` retains prototype-only Dashboard, Matches and History components with fixed IPL labels, phase ranges, transfer text and seeded booster history. Production routes already use several Supabase-backed screens, but these legacy components should be removed to prevent accidental reuse.
 - `SupabaseScreens.tsx` computes ownership deductions again in the client for display. Published calculation breakdown from the server should be authoritative, especially for all-open and future royalty modes.
 - `SupabaseScreens.tsx` labels every roster as an auction squad. Owner UI and terminology must depend on acquisition mode.

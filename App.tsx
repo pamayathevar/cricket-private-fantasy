@@ -1,24 +1,83 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, ImageBackground, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import type { Session } from "@supabase/supabase-js";
 import { Player, Role, squadPlayers as players } from "./squadData";
 import { completedMatchPoints, completedMatchStats } from "./completedMatchPoints";
 import { calculatePlayerPoints, calculatePointDetails, defaultScoringRules, ScoringRulesDocument } from "./scoringRules";
 import { iplFixtures } from "./iplFixtures";
-import { canManageLeague, findMemberByEmail, ipl2026Members, LeagueMember } from "./leagueMembers";
+import { ipl2026Members } from "./leagueMembers";
 import { supabase } from "./supabase";
-import { IplTeamBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
+import { IplTeamBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
 
-type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "Squads" | "History" | "Admin";
+type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
 type BoosterCode = "3X" | "2UP" | "SUP-TR" | "";
-type LeagueId = "ipl-2026" | "world-cup-2026" | "ipl-2027";
+type MembershipStatus = "invited" | "accepted" | "declined" | "active" | "suspended" | "withdrawn" | "disabled";
+type DatabaseMembership = {
+  id: string;
+  league_id: string;
+  display_name: string;
+  email: string;
+  role: "league_admin" | "owner" | "viewer";
+  status: MembershipStatus;
+  league: { id: string; slug: string; name: string; competition: string; season_year: number; status: "setup" | "active" | "completed" | "archived"; timezone: string };
+};
 type SelectionRules = { version: number; effective_from_match_number: number; lineup_size: number; lineup_budget: number; min_batters: number; min_bowlers: number; min_wicketkeepers: number; min_all_rounders: number; max_from_one_team: number; captain_multiplier: number; vice_captain_multiplier: number };
 
-const standardTabs: Tab[] = ["Ranking", "Team", "Matches", "Squads", "History", "Admin"];
-const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Ranking: "Ranking", Squads: "Owner", Admin: "Rules" };
+const standardTabs: Tab[] = ["Ranking", "Team", "Matches", "PlayerSquad", "Squads", "History", "Admin"];
+const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Matches: "Fixtures", Ranking: "Ranking", PlayerSquad: "Squad", Squads: "Owner", Admin: "Rules" };
 const IPL_2026_DATABASE_ID = "10000000-0000-4000-8000-000000002026";
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
+const LEAGUE_BADGE_COLORS = [
+  { primary: "#5B2AA8", dark: "#26104D", accent: "#F5C84B" },
+  { primary: "#C93648", dark: "#5E1221", accent: "#FFD166" },
+  { primary: "#087F8C", dark: "#063F46", accent: "#7EF0D2" },
+  { primary: "#D56B16", dark: "#6B2E06", accent: "#FFE08A" },
+  { primary: "#1769AA", dark: "#082F57", accent: "#78D5FF" },
+  { primary: "#9A3565", dark: "#49152F", accent: "#FF9BCB" },
+  { primary: "#358447", dark: "#153E22", accent: "#B9ED72" },
+  { primary: "#75631B", dark: "#3B310A", accent: "#F2DA61" },
+];
+const leagueBadge = (league: DatabaseMembership["league"]) => {
+  const year = String(league.season_year).slice(-2);
+  const identity = `${league.slug}:${league.season_year}`;
+  const colorIndex = [...identity].reduce((sum, character) => sum + character.charCodeAt(0), 0) % LEAGUE_BADGE_COLORS.length;
+  const source = `${league.name} ${league.competition}`;
+  const competitionCode = /world\s*cup/i.test(source) ? "WC" : /\bipl\b/i.test(source) ? "IPL" : league.competition.split(/\s+/).filter(Boolean).map(word => word[0]).join("").slice(0, 3).toUpperCase();
+  return { competitionCode, year, ...LEAGUE_BADGE_COLORS[colorIndex] };
+};
+
+function LeagueEmblem({ league }: { league: DatabaseMembership["league"] }) {
+  const badge = leagueBadge(league);
+  return <View style={[s.leagueEmblemShadow, { shadowColor: badge.dark }]}>
+    <View style={[s.leagueEmblem, { backgroundColor: badge.dark, borderColor: badge.accent }]}>
+      <View style={[s.leagueEmblemStripe, { backgroundColor: badge.primary }]} />
+      <View style={[s.leagueEmblemGlow, { backgroundColor: badge.accent }]} />
+      <View style={s.leagueBall}>
+        <View style={s.leagueBallSeam} />
+        <View style={[s.leagueBallStitch, s.leagueBallStitchOne]} />
+        <View style={[s.leagueBallStitch, s.leagueBallStitchTwo]} />
+      </View>
+      <Text style={[s.leagueEmblemCode, { color: badge.accent }]}>{badge.competitionCode}</Text>
+      <View style={[s.leagueEmblemYearRibbon, { backgroundColor: badge.accent }]}>
+        <Text style={[s.leagueEmblemYear, { color: badge.dark }]}>{badge.year}</Text>
+      </View>
+    </View>
+  </View>;
+}
+
+function CricketTabIcon({ item, active }: { item: Tab; active: boolean }) {
+  const usesBall = item === "Ranking" || item === "Matches" || item === "History" || item === "PlayerSquad";
+  if (usesBall) return <View style={[s.cricketBallIcon, active && s.cricketBallIconActive]}>
+    <View style={[s.cricketBallIconSeam, active && s.cricketBallIconSeamActive]} />
+    <View style={[s.cricketBallIconStitch, s.cricketBallIconStitchTop, active && s.cricketBallIconStitchActive]} />
+    <View style={[s.cricketBallIconStitch, s.cricketBallIconStitchBottom, active && s.cricketBallIconStitchActive]} />
+  </View>;
+  return <View style={s.cricketBatIcon}>
+    <View style={[s.cricketBatHandle, active && s.cricketBatHandleActive]} />
+    <View style={[s.cricketBatBlade, active && s.cricketBatBladeActive]} />
+  </View>;
+}
 const defaultSelectionRules: SelectionRules = { version: 1, effective_from_match_number: 1, lineup_size: 11, lineup_budget: 100, min_batters: 2, min_bowlers: 2, min_wicketkeepers: 1, min_all_rounders: 1, max_from_one_team: 7, captain_multiplier: 2, vice_captain_multiplier: 1.5 };
 const allTeams = ["CSK", "DC", "GT", "KKR", "LSG", "MI", "PBKS", "RCB", "RR", "SRH"];
 const upcomingMatches = [
@@ -32,12 +91,6 @@ const upcomingMatches = [
 ];
 type UpcomingMatch = typeof upcomingMatches[number] & { databaseId?: string; stage?: "league" | "playoff" | "final" };
 const leagueOwners = ipl2026Members.filter(member => member.status === "active" && member.role !== "viewer").map(member => member.name);
-const availableLeagues: Array<{ id: LeagueId; databaseId?: string; name: string; format: string; season: string; status: "Active" | "Setup pending" }> = [
-  { id: "ipl-2026", databaseId: IPL_2026_DATABASE_ID, name: "IPL 2026", format: "T20 · 10 IPL teams", season: "Mar–May 2026", status: "Active" },
-  { id: "world-cup-2026", name: "World Cup 2026", format: "International tournament", season: "2026 season", status: "Setup pending" },
-  { id: "ipl-2027", name: "IPL 2027", format: "T20 · New season", season: "2027 season", status: "Setup pending" },
-];
-
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -56,15 +109,32 @@ export default function App() {
 
   if (!authReady) return <AuthLoading />;
   if (!session) return <LoginScreen />;
-  const member = findMemberByEmail(session.user.email ?? "");
-  if (!member) return <AccessDenied email={session.user.email ?? ""} />;
-  return <FantasyApp member={member} />;
+  return <MembershipGate session={session} />;
 }
 
-function FantasyApp({ member }: { member: LeagueMember }) {
-  const memberName = member.name;
+function MembershipGate({ session }: { session: Session }) {
+  const [memberships, setMemberships] = useState<DatabaseMembership[]>([]);
+  const [busy, setBusy] = useState(true);
+  const [message, setMessage] = useState("");
+  const loadMemberships = async () => {
+    setBusy(true); setMessage("");
+    const { data, error } = await supabase.from("league_members")
+      .select("id,league_id,display_name,email,role,status,league:leagues(id,slug,name,competition,season_year,status,timezone)")
+      .eq("user_id", session.user.id).order("created_at");
+    if (error) setMessage(error.message);
+    else setMemberships((data ?? []) as unknown as DatabaseMembership[]);
+    setBusy(false);
+  };
+  useEffect(() => { loadMemberships(); }, [session.user.id]);
+  if (busy) return <AuthLoading />;
+  if (message) return <AccessDenied email={session.user.email ?? ""} detail={message} />;
+  if (!memberships.length) return <AccessDenied email={session.user.email ?? ""} />;
+  return <FantasyApp session={session} memberships={memberships} refreshMemberships={loadMemberships} />;
+}
+
+function FantasyApp({ session, memberships, refreshMemberships }: { session: Session; memberships: DatabaseMembership[]; refreshMemberships: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("Home");
-  const [activeLeagueId, setActiveLeagueId] = useState<LeagueId | "">("");
+  const [activeLeagueId, setActiveLeagueId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [captain, setCaptain] = useState("");
   const [vice, setVice] = useState("");
@@ -75,26 +145,52 @@ function FantasyApp({ member }: { member: LeagueMember }) {
   const [boosterPlayer, setBoosterPlayer] = useState("");
   const [selectionRuleVersions, setSelectionRuleVersions] = useState<SelectionRules[]>([defaultSelectionRules]);
   const [rulesLoadMessage, setRulesLoadMessage] = useState("");
-  const [teamFixtures, setTeamFixtures] = useState<UpcomingMatch[]>(upcomingMatches);
-  const [leagueRoster, setLeagueRoster] = useState<Player[]>(players);
-  const activeLeague = availableLeagues.find(league => league.id === activeLeagueId);
-  const leagueDatabaseId = activeLeague?.databaseId;
-  const tabs = standardTabs;
-  const selectLeague = (leagueId: LeagueId) => { setActiveLeagueId(leagueId); setTab("Ranking"); };
+  const [teamFixtures, setTeamFixtures] = useState<UpcomingMatch[]>([]);
+  const [leagueRoster, setLeagueRoster] = useState<Player[]>([]);
+  const [rosterRefreshVersion, setRosterRefreshVersion] = useState(0);
+  const [ownershipEnabled, setOwnershipEnabled] = useState<boolean | null>(null);
+  const activeMembership = memberships.find(item => item.league_id === activeLeagueId && item.status === "active");
+  const activeLeague = activeMembership?.league;
+  const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
+  const leagueDatabaseId = activeLeague?.id ?? "";
+  const tabs = ownershipEnabled === true ? standardTabs : standardTabs.filter(item => item !== "Squads");
+  const selectLeague = (leagueId: string) => { setOwnershipEnabled(null); setActiveLeagueId(leagueId); setTab("Ranking"); };
   useEffect(() => {
     if (!leagueDatabaseId) return;
+    let cancelled = false;
+    setOwnershipEnabled(null);
+    supabase.from("league_format_configs").select("ownership_enabled").eq("league_id", leagueDatabaseId).maybeSingle().then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !data) { setOwnershipEnabled(true); return; }
+      setOwnershipEnabled(data.ownership_enabled !== false);
+    });
+    return () => { cancelled = true; };
+  }, [leagueDatabaseId]);
+  useEffect(() => {
+    if (!ownershipEnabled && tab === "Squads") setTab("Ranking");
+  }, [ownershipEnabled, tab]);
+  useEffect(() => {
+    if (!leagueDatabaseId) return;
+    let cancelled = false;
+    setTeamFixtures([]);
     supabase.from("fixtures").select("id,match_number,stage,scheduled_start,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueDatabaseId).eq("status", "scheduled").order("match_number").limit(7).then(({ data, error }) => {
-      if (error || !data?.length) return;
+      if (cancelled) return;
+      if (error || !data?.length) { setTeamFixtures([]); return; }
       setTeamFixtures((data as any[]).map(row => { const start = new Date(row.scheduled_start); return { id: `M${row.match_number}`, databaseId: row.id, stage: row.stage, home: row.home?.code ?? "TBD", away: row.away?.code ?? "TBD", day: start.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Kolkata" }), time: start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) }; }));
     });
+    return () => { cancelled = true; };
   }, [leagueDatabaseId]);
   useEffect(() => {
     if (!leagueDatabaseId) return;
-    supabase.from("league_players").select("acquisition_price,owner:league_members(display_name),player:players(full_name,role,team:cricket_teams(code))").eq("league_id", leagueDatabaseId).eq("active", true).then(({ data, error }) => {
-      if (error || !data?.length) return;
-      setLeagueRoster((data as any[]).map(row => ({ name: row.player.full_name, team: row.player.team?.code ?? "—", role: row.player.role as Role, price: Number(row.acquisition_price), owner: row.owner?.display_name ?? "Available" })).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name)));
+    let cancelled = false;
+    setLeagueRoster([]);
+    supabase.from("league_players").select("acquisition_price,bid_price,owner:league_members(display_name),player:players(full_name,role,team:cricket_teams(code))").eq("league_id", leagueDatabaseId).eq("active", true).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !data?.length) { setLeagueRoster([]); return; }
+      setLeagueRoster((data as any[]).map(row => ({ name: row.player.full_name, team: row.player.team?.code ?? "—", role: row.player.role as Role, price: Number(row.acquisition_price), bidPrice: row.bid_price == null ? null : Number(row.bid_price), owner: row.owner?.display_name ?? "Available" })).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name)));
     });
-  }, [leagueDatabaseId]);
+    return () => { cancelled = true; };
+  }, [leagueDatabaseId, rosterRefreshVersion]);
   useEffect(() => {
     if (tab !== "Team" || !leagueDatabaseId) return;
     setRulesLoadMessage("");
@@ -103,12 +199,12 @@ function FantasyApp({ member }: { member: LeagueMember }) {
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker activeLeagueId={activeLeagueId} onSelect={selectLeague} /> : !leagueDatabaseId ? <LeagueSetupPending league={activeLeague} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} leagueId={leagueDatabaseId} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} roster={leagueRoster} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={canManageLeague(member)} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><ProductionSquads leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} leagueId={leagueDatabaseId} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} roster={leagueRoster} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><ProductionSquads leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle="light-content" />
-    <View style={s.header}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><Text style={s.logoText}>⌂</Text></TouchableOpacity><View style={{ flex: 1, marginLeft: 11 }}><Text style={s.eyebrow}>{activeLeague ? "SELECTED LEAGUE" : "PRIVATE FANTASY"}</Text><Text style={s.brand}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><Text style={s.signedInAs}>{memberName}</Text></View>{activeLeague?.status === "Active" && <Text style={s.live}>● LIVE</Text>}<TouchableOpacity style={s.signOutButton} onPress={() => supabase.auth.signOut()}><Text style={s.signOutText}>Sign out</Text></TouchableOpacity></View>
+    <View style={s.header}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><Text style={s.logoText}>⌂</Text></TouchableOpacity><View style={{ flex: 1, marginLeft: 11 }}><Text style={s.eyebrow}>{activeLeague ? "SELECTED LEAGUE" : "PRIVATE FANTASY"}</Text><Text style={s.brand}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><Text style={s.signedInAs}>{memberName}</Text></View>{activeLeague?.status === "active" && <Text style={s.live}>● LIVE</Text>}<TouchableOpacity style={s.signOutButton} onPress={() => supabase.auth.signOut()}><Text style={s.signOutText}>Sign out</Text></TouchableOpacity></View>
     {leagueContent}
-    <View style={s.tabBar}>{tabs.map(item => <TouchableOpacity key={item} style={s.tab} onPress={() => setTab(item === "Home" || activeLeague ? item : "Home")}><View style={[s.tabIcon, tab === item && s.tabIconActive]} /><Text style={[s.tabText, tab === item && s.tabTextActive]}>{tabLabels[item] ?? item}</Text></TouchableOpacity>)}</View>
+    <View style={s.tabBar}>{tabs.map(item => <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={tabLabels[item] ?? item} accessibilityState={{ selected: tab === item }} style={s.tab} onPress={() => setTab(item === "Home" || activeLeague ? item : "Home")}><CricketTabIcon item={item} active={tab === item} /><Text style={[s.tabText, tab === item && s.tabTextActive]}>{tabLabels[item] ?? item}</Text></TouchableOpacity>)}</View>
   </SafeAreaView>;
 }
 
@@ -125,10 +221,7 @@ function LoginScreen() {
 
   const normalizedEmail = email.trim().toLowerCase();
   const sendCode = async () => {
-    if (!findMemberByEmail(normalizedEmail)) {
-      setMessage("This email is not registered in the league. Ask a league admin for access.");
-      return;
-    }
+    if (!normalizedEmail.includes("@")) { setMessage("Enter a valid email address."); return; }
     setBusy(true); setMessage("");
     const { error } = await supabase.auth.signInWithOtp({ email: normalizedEmail, options: { shouldCreateUser: true } });
     setBusy(false);
@@ -146,18 +239,34 @@ function LoginScreen() {
   return <SafeAreaView style={s.authSafe}><StatusBar barStyle="light-content" /><View style={s.authCard}><View style={s.authLogo}><Text style={s.authLogoText}>CP</Text></View><Text style={s.authTitle}>Cricket Private Fantasy</Text><Text style={s.authSubtitle}>{codeSent ? `Enter the code sent to ${normalizedEmail}` : "Sign in with your registered league email"}</Text><TextInput value={email} onChangeText={value => { setEmail(value); setCodeSent(false); setCode(""); setMessage(""); }} editable={!busy} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" style={s.authInput} />{codeSent && <TextInput value={code} onChangeText={setCode} editable={!busy} keyboardType="number-pad" autoComplete="one-time-code" placeholder="Email code" placeholderTextColor="#8B9893" style={s.authInput} />}{message ? <Text style={[s.authMessage, message.startsWith("A login") && s.authSuccess]}>{message}</Text> : null}<TouchableOpacity disabled={busy} style={[s.authButton, busy && s.disabled]} onPress={codeSent ? verifyCode : sendCode}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.authButtonText}>{codeSent ? "Verify and sign in" : "Send login code"}</Text>}</TouchableOpacity>{codeSent && <TouchableOpacity disabled={busy} onPress={sendCode}><Text style={s.authLink}>Send a new code</Text></TouchableOpacity>}</View></SafeAreaView>;
 }
 
-function AccessDenied({ email }: { email: string }) {
-  return <SafeAreaView style={s.authSafe}><View style={s.authCard}><Text style={s.authTitle}>Access unavailable</Text><Text style={s.authSubtitle}>{email} is signed in but is not an active league member.</Text><TouchableOpacity style={s.authButton} onPress={() => supabase.auth.signOut()}><Text style={s.authButtonText}>Sign out</Text></TouchableOpacity></View></SafeAreaView>;
+function AccessDenied({ email, detail }: { email: string; detail?: string }) {
+  return <SafeAreaView style={s.authSafe}><View style={s.authCard}><Text style={s.authTitle}>Access unavailable</Text><Text style={s.authSubtitle}>{detail ?? `${email} has no league invitation. Ask a league administrator to invite this email.`}</Text><TouchableOpacity style={s.authButton} onPress={() => supabase.auth.signOut()}><Text style={s.authButtonText}>Sign out</Text></TouchableOpacity></View></SafeAreaView>;
 }
 
-function LeaguePicker({ activeLeagueId, onSelect }: { activeLeagueId: LeagueId | ""; onSelect: (id: LeagueId) => void }) {
-  return <ScrollView contentContainerStyle={s.content}><Text style={s.greeting}>Your leagues</Text><Text style={s.subtitle}>Choose a competition to open its teams, fixtures, points and standings.</Text>{availableLeagues.map(league => <TouchableOpacity key={league.id} style={[s.leagueCard, activeLeagueId === league.id && s.leagueCardSelected]} onPress={() => onSelect(league.id)}><View style={s.leagueMark}><Text style={s.leagueMarkText}>{league.name.split(" ").map(word => word[0]).join("")}</Text></View><View style={{ flex: 1 }}><Text style={s.leagueName}>{league.name}</Text><Text style={s.leagueMeta}>{league.format} · {league.season}</Text><Text style={[s.leagueStatus, league.status === "Active" ? s.leagueStatusActive : s.leagueStatusPending]}>{league.status}</Text></View><Text style={s.leagueArrow}>›</Text></TouchableOpacity>)}</ScrollView>;
+function LeaguePicker({ memberships, activeLeagueId, onSelect, onChanged }: { memberships: DatabaseMembership[]; activeLeagueId: string; onSelect: (id: string) => void; onChanged: () => Promise<void> }) {
+  const [responding, setResponding] = useState("");
+  const [message, setMessage] = useState("");
+  const respond = async (membership: DatabaseMembership, accept: boolean) => {
+    setResponding(membership.id); setMessage("");
+    const { error } = await supabase.rpc("respond_to_league_invitation", { p_league_id: membership.league_id, p_accept: accept });
+    if (error) setMessage(error.message);
+    else { setMessage(accept ? `Accepted ${membership.league.name}. Waiting for administrator activation.` : `Declined ${membership.league.name}.`); await onChanged(); }
+    setResponding("");
+  };
+  const ordered = [...memberships].sort((a, b) => {
+    const order: Record<MembershipStatus, number> = { invited: 0, accepted: 1, active: 2, suspended: 3, declined: 4, withdrawn: 5, disabled: 6 };
+    return order[a.status] - order[b.status] || a.league.name.localeCompare(b.league.name);
+  });
+  return <ImageBackground source={require("./assets/cricket-home-background-v2.png")} resizeMode="cover" style={s.homeBackground} imageStyle={s.homeBackgroundImage}>
+    <View pointerEvents="none" style={s.homeBackgroundShade} />
+    <ScrollView contentContainerStyle={[s.content, s.homeContent]}><Text style={s.homeGreeting}>Your leagues</Text><Text style={s.homeSubtitle}>Accept invitations or open a league where your participation is active.</Text>{message ? <View style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}{ordered.map(membership => { const league = membership.league; const active = membership.status === "active"; const statusLabel = membership.status === "accepted" ? "Accepted · waiting for activation" : membership.status === "suspended" ? "Deactivated" : membership.status.charAt(0).toUpperCase() + membership.status.slice(1); return <View key={membership.id} style={[s.leagueCard, s.homeLeagueCard, activeLeagueId === league.id && s.leagueCardSelected]}><TouchableOpacity disabled={!active} style={s.leagueCardMain} onPress={() => onSelect(league.id)}><LeagueEmblem league={league} /><View style={{ flex: 1 }}><Text style={s.leagueName}>{league.name}</Text><Text style={s.leagueMeta}>{league.competition} · {league.season_year} · {membership.role === "league_admin" ? "Admin" : "Owner"}</Text><Text style={[s.leagueStatus, active ? s.leagueStatusActive : s.leagueStatusPending]}>{statusLabel}</Text></View>{active ? <Text style={s.leagueArrow}>›</Text> : null}</TouchableOpacity>{membership.status === "invited" ? <View style={s.invitationActions}><TouchableOpacity disabled={responding === membership.id} style={s.invitationDecline} onPress={() => respond(membership, false)}><Text style={s.invitationDeclineText}>Decline</Text></TouchableOpacity><TouchableOpacity disabled={responding === membership.id} style={s.invitationAccept} onPress={() => respond(membership, true)}>{responding === membership.id ? <ActivityIndicator color="#10251F" /> : <Text style={s.invitationAcceptText}>Accept invitation</Text>}</TouchableOpacity></View> : null}</View>; })}</ScrollView>
+  </ImageBackground>;
 }
 function LeagueSetupPending({ league }: { league: { name: string; format: string; season: string } }) {
   return <ScrollView contentContainerStyle={s.content}><View style={s.pendingLeague}><Text style={s.pendingLeagueEyebrow}>SELECTED LEAGUE</Text><Text style={s.pendingLeagueTitle}>{league.name}</Text><Text style={s.pendingLeagueMeta}>{league.format} · {league.season}</Text><Text style={s.pendingLeagueText}>This league workspace is ready to configure. Add its owners, squads, fixtures and scoring rules before team selection begins.</Text></View></ScrollView>;
 }
 
-type AdminSection = "playing" | "points" | "phases" | "transfers" | "scoring";
+type AdminSection = "format" | "playing" | "points" | "phases" | "transfers" | "owners" | "templates" | "scoring";
 type PhaseForm = { id?: string; code: string; name: string; start: string; end: string };
 type TransferPeriodForm = { id?: string; code: string; name: string; start: string; end: string; limit: string; firstMatchFree: boolean };
 type TransferPeriod = { id: string; code: string; name: string; start_match_number: number; end_match_number: number; transfer_limit: number; first_match_free: boolean };
@@ -165,17 +274,126 @@ type LeaguePhase = { code: string; name: string; start_match_number: number; end
 type BoosterRuleSetting = { code: Exclude<BoosterCode, "">; total_usage_limit: number; phase_usage_limits: Record<string, number> };
 type PlayingRuleForm = Record<"lineup_size" | "lineup_budget" | "min_batters" | "min_bowlers" | "min_wicketkeepers" | "min_all_rounders" | "max_from_one_team" | "captain_multiplier" | "vice_captain_multiplier" | "impact_multiplier" | "other_owner_penalty_percent" | "other_owner_minimum_penalty", string>;
 type PointRuleForm = Record<"run" | "four_bonus" | "six_bonus" | "duck" | "golden_duck" | "bowler_wicket" | "non_bowler_wicket" | "maiden" | "dot_ball" | "catch" | "stumping" | "run_out" | "player_of_match" | "winning_participant", string>;
+type LeagueFormatForm = { acquisition_mode: "auction" | "all_open"; bidding_enabled: boolean; other_owner_deductions_enabled: boolean; marquee_enabled: boolean; unique_players_enabled: boolean; unique_scope: "match" | "phase" | "league"; royalty_enabled: boolean };
 const defaultPlayingRules: PlayingRuleForm = { lineup_size: "11", lineup_budget: "100", min_batters: "2", min_bowlers: "2", min_wicketkeepers: "1", min_all_rounders: "1", max_from_one_team: "7", captain_multiplier: "2", vice_captain_multiplier: "1.5", impact_multiplier: "2", other_owner_penalty_percent: "30", other_owner_minimum_penalty: "15" };
 const defaultPointRules: PointRuleForm = { run: "1", four_bonus: "1", six_bonus: "2", duck: "-2", golden_duck: "-4", bowler_wicket: "15", non_bowler_wicket: "20", maiden: "10", dot_ball: "2", catch: "10", stumping: "10", run_out: "10", player_of_match: "15", winning_participant: "2" };
 const AdminEditContext = React.createContext(true);
+
+type ManagedLeagueMember = { id: string; display_name: string; email: string; role: "league_admin" | "owner" | "viewer"; status: MembershipStatus };
+
+function OwnerManagement({ leagueId, canEdit }: { leagueId: string; canEdit: boolean }) {
+  const [members, setMembers] = useState<ManagedLeagueMember[]>([]);
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<"owner" | "league_admin">("owner");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const load = async () => {
+    const { data, error } = await supabase.from("league_members")
+      .select("id,display_name,email,role,status").eq("league_id", leagueId).order("display_name");
+    if (error) setMessage(error.message);
+    else setMembers((data ?? []) as ManagedLeagueMember[]);
+  };
+  useEffect(() => {
+    load();
+    const channel = supabase.channel(`league-members:${leagueId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "league_members", filter: `league_id=eq.${leagueId}` }, () => { load(); })
+      .subscribe();
+    const appStateSubscription = AppState.addEventListener("change", state => { if (state === "active") load(); });
+    return () => { appStateSubscription.remove(); supabase.removeChannel(channel); };
+  }, [leagueId]);
+  const invite = async () => {
+    if (!email.trim().includes("@") || !name.trim()) { const detail = "Enter the owner's name and valid email."; setMessage(detail); Alert.alert("Invitation not created", detail); return; }
+    const normalizedName = name.trim().toLocaleLowerCase();
+    const sameName = members.find(member => member.display_name.trim().toLocaleLowerCase() === normalizedName && member.email.trim().toLocaleLowerCase() !== email.trim().toLocaleLowerCase());
+    if (sameName) { const detail = `Owner name “${name.trim()}” is already used by ${sameName.email}. Choose a different name.`; setMessage(detail); Alert.alert("Duplicate owner name", detail); return; }
+    setBusy(true); setMessage("");
+    const { error } = await supabase.rpc("invite_league_member", {
+      p_league_id: leagueId, p_email: email.trim().toLowerCase(), p_display_name: name.trim(),
+      p_role: role, p_invitation_expires_at: null,
+    });
+    if (error) { setMessage(error.message); Alert.alert("Invitation not created", error.message); }
+    else { setEmail(""); setName(""); setMessage(`Invitation created for ${name.trim()}.`); await load(); }
+    setBusy(false);
+  };
+  const changeStatus = async (member: ManagedLeagueMember, status: "active" | "suspended" | "withdrawn") => {
+    setBusy(true); setMessage("");
+    const { error } = await supabase.rpc("set_league_member_participation", { p_league_id: leagueId, p_member_id: member.id, p_status: status });
+    if (error) setMessage(error.message);
+    else { setMessage(status === "suspended" ? `${member.display_name} has been deactivated.` : status === "active" ? `${member.display_name} has been activated.` : `${member.display_name} is now ${status}.`); await load(); }
+    setBusy(false);
+  };
+  return <View>
+    {canEdit ? <View style={s.adminCard}><Text style={s.adminGroupTitle}>Invite owner</Text><TextInput style={s.ownerAdminInput} value={name} onChangeText={value => { setName(value); setMessage(""); }} placeholder="Owner name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={email} onChangeText={value => { setEmail(value); setMessage(""); }} autoCapitalize="none" keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" /><View style={s.ownerRoleRow}><TouchableOpacity style={[s.ownerRoleButton, role === "owner" && s.ownerRoleButtonActive]} onPress={() => setRole("owner")}><Text style={s.ownerRoleText}>Owner</Text></TouchableOpacity><TouchableOpacity style={[s.ownerRoleButton, role === "league_admin" && s.ownerRoleButtonActive]} onPress={() => setRole("league_admin")}><Text style={s.ownerRoleText}>League admin</Text></TouchableOpacity></View><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={invite}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create invitation</Text>}</TouchableOpacity>{message ? <View style={[s.ownerInviteMessage, message.startsWith("Invitation created") && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}</View> : null}
+    <View style={s.adminPhaseHeader}><Text style={s.adminGroupTitle}>League participants</Text><TouchableOpacity style={s.resetButton} onPress={load}><Text style={s.resetButtonText}>Refresh</Text></TouchableOpacity></View>
+    {members.map(member => <View key={member.id} style={s.ownerAdminRow}><View style={s.badge}><Text style={s.badgeText}>{member.display_name[0]}</Text></View><View style={{ flex: 1, marginLeft: 9 }}><Text style={s.ownerDisplayName}>{member.display_name}</Text><Text style={s.meta}>{member.email} · {member.role === "league_admin" ? "Admin" : "Owner"}</Text><Text style={[s.leagueStatus, member.status === "active" ? s.leagueStatusActive : s.leagueStatusPending]}>{member.status === "suspended" ? "deactivated" : member.status}</Text></View>{canEdit && member.status === "accepted" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => changeStatus(member, "active")}><Text style={s.ownerActivateText}>Activate</Text></TouchableOpacity> : canEdit && member.status === "active" && member.role !== "league_admin" ? <TouchableOpacity disabled={busy} style={s.ownerSuspend} onPress={() => changeStatus(member, "suspended")}><Text style={s.ownerSuspendText}>Deactivate</Text></TouchableOpacity> : canEdit && member.status === "suspended" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => changeStatus(member, "active")}><Text style={s.ownerActivateText}>Reactivate</Text></TouchableOpacity> : null}</View>)}
+    {!canEdit && message ? <View style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}
+  </View>;
+}
+
+type LeagueTemplateSummary = { id: string; name: string; description: string | null; version: number; source_league_id: string | null; created_at: string };
+
+function LeagueTemplateManagement({ leagueId, leagueName, canEdit, onLeaguesChanged }: { leagueId: string; leagueName: string; canEdit: boolean; onLeaguesChanged: () => Promise<void> }) {
+  const [templates, setTemplates] = useState<LeagueTemplateSummary[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [templateName, setTemplateName] = useState(`${leagueName} rules`);
+  const [templateDescription, setTemplateDescription] = useState("");
+  const [newLeagueName, setNewLeagueName] = useState("");
+  const [newLeagueSlug, setNewLeagueSlug] = useState("");
+  const [newSeason, setNewSeason] = useState(String(new Date().getFullYear() + 1));
+  const [copyOwners, setCopyOwners] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const load = async () => {
+    const { data, error } = await supabase.from("league_templates")
+      .select("id,name,description,version,source_league_id,created_at").eq("active", true).order("created_at", { ascending: false });
+    if (error) setMessage(error.message);
+    else { const rows = (data ?? []) as LeagueTemplateSummary[]; setTemplates(rows); setSelectedTemplateId(current => current || rows[0]?.id || ""); }
+  };
+  useEffect(() => { load(); }, [leagueId]);
+  const saveTemplate = async () => {
+    if (!templateName.trim()) { setMessage("Template name is required."); return; }
+    setBusy(true); setMessage("");
+    const { error } = await supabase.rpc("save_league_template", { p_source_league_id: leagueId, p_name: templateName.trim(), p_description: templateDescription.trim() || null, p_is_public: false });
+    if (error) { setMessage(error.message); Alert.alert("Template not saved", error.message); }
+    else { setMessage(`Saved a configuration snapshot of ${leagueName}.`); await load(); }
+    setBusy(false);
+  };
+  const updateNewLeagueName = (value: string) => {
+    setNewLeagueName(value);
+    setNewLeagueSlug(value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""));
+  };
+  const cloneTemplate = async () => {
+    if (!selectedTemplateId) { setMessage("Select a template."); return; }
+    if (!newLeagueName.trim() || !newLeagueSlug.trim()) { setMessage("New league name and slug are required."); return; }
+    const season = Number(newSeason);
+    if (!Number.isInteger(season) || season < 2000 || season > 2200) { setMessage("Enter a valid four-digit season year."); return; }
+    setBusy(true); setMessage("");
+    const { data, error } = await supabase.rpc("create_league_from_template", { p_template_id: selectedTemplateId, p_slug: newLeagueSlug.trim().toLowerCase(), p_name: newLeagueName.trim(), p_season_year: season, p_copy_owner_invitations: copyOwners });
+    if (error) { setMessage(error.message); Alert.alert("League not created", error.message); }
+    else { setMessage(`Created ${newLeagueName.trim()} as a clean draft. No ownership or history was copied.`); setNewLeagueName(""); setNewLeagueSlug(""); await onLeaguesChanged(); Alert.alert("Draft league created", "Open Home to see the new league."); }
+    setBusy(false);
+  };
+  if (!canEdit) return <View style={s.adminCard}><Text style={s.adminNoticeText}>Only a league administrator can save or import league templates.</Text></View>;
+  return <View>
+    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Save this league as a template</Text><Text style={s.adminNoticeText}>Copies configuration only. Ownership, bids, fixtures, lineups, points, rankings and usage history are excluded.</Text><TextInput style={s.ownerAdminInput} value={templateName} onChangeText={setTemplateName} placeholder="Template name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={templateDescription} onChangeText={setTemplateDescription} placeholder="Description (optional)" placeholderTextColor="#8B9893" /><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={saveTemplate}><Text style={s.primaryText}>Save configuration template</Text></TouchableOpacity></View>
+    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Create a new league from template</Text>{templates.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.templateChoices}>{templates.map(template => <TouchableOpacity key={template.id} style={[s.templateChoice, selectedTemplateId === template.id && s.templateChoiceActive]} onPress={() => setSelectedTemplateId(template.id)}><Text style={s.templateChoiceName}>{template.name}</Text><Text style={s.meta}>v{template.version}{template.source_league_id === leagueId ? " · this league" : ""}</Text></TouchableOpacity>)}</ScrollView> : <Text style={s.adminNoticeText}>Save a template first.</Text>}<TextInput style={s.ownerAdminInput} value={newLeagueName} onChangeText={updateNewLeagueName} placeholder="New league name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newLeagueSlug} onChangeText={value => setNewLeagueSlug(value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} autoCapitalize="none" placeholder="new-league-slug" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newSeason} onChangeText={setNewSeason} keyboardType="number-pad" placeholder="Season year" placeholderTextColor="#8B9893" /><TouchableOpacity style={s.adminNotice} onPress={() => setCopyOwners(value => !value)}><Text style={s.adminNoticeTitle}>{copyOwners ? "✓" : "○"} Copy owner emails as new invitations</Text><Text style={s.adminNoticeText}>Owners must opt in again. Squads and bidding never carry over.</Text></TouchableOpacity><TouchableOpacity disabled={busy || !templates.length} style={[s.primary, (busy || !templates.length) && s.disabled]} onPress={cloneTemplate}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create clean draft league</Text>}</TouchableOpacity></View>
+    {message ? <View style={[s.adminMessage, (message.startsWith("Saved") || message.startsWith("Created")) && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}
+  </View>;
+}
 
 function AdminNumberField({ label, value, onChange, detail }: { label: string; value: string; onChange: (value: string) => void; detail?: string }) {
   const canEdit = React.useContext(AdminEditContext);
   return <View style={s.adminField}><View style={{ flex: 1 }}><Text style={s.adminFieldLabel}>{label}</Text>{detail ? <Text style={s.adminFieldDetail}>{detail}</Text> : null}</View><TextInput editable={canEdit} style={[s.adminInput, !canEdit && s.adminInputReadOnly]} value={value} onChangeText={onChange} keyboardType="numbers-and-punctuation" selectTextOnFocus /></View>;
 }
 
-function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string; leagueName: string; canEdit: boolean }) {
-  const [section, setSection] = useState<AdminSection>("playing");
+function FormatToggle({ label, detail, value, disabled, onPress }: { label: string; detail: string; value: boolean; disabled: boolean; onPress: () => void }) {
+  return <TouchableOpacity disabled={disabled} style={[s.adminField, disabled && { opacity: 0.55 }]} onPress={onPress}><View style={{ flex: 1 }}><Text style={s.adminFieldLabel}>{label}</Text><Text style={s.adminFieldDetail}>{detail}</Text></View><View style={[s.formatToggle, value && s.formatToggleActive]}><Text style={[s.formatToggleText, value && s.formatToggleTextActive]}>{value ? "ON" : "OFF"}</Text></View></TouchableOpacity>;
+}
+
+function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: { leagueId: string; leagueName: string; canEdit: boolean; onLeaguesChanged: () => Promise<void> }) {
+  const [section, setSection] = useState<AdminSection>("format");
+  const [leagueFormat, setLeagueFormat] = useState<LeagueFormatForm>({ acquisition_mode: "auction", bidding_enabled: true, other_owner_deductions_enabled: true, marquee_enabled: false, unique_players_enabled: false, unique_scope: "league", royalty_enabled: false });
   const [playing, setPlaying] = useState<PlayingRuleForm>(defaultPlayingRules);
   const [points, setPoints] = useState<PointRuleForm>(defaultPointRules);
   const [scoringDocument, setScoringDocument] = useState<any>(null);
@@ -195,7 +413,8 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string
       supabase.from("scoring_rule_sets").select("*").eq("league_id", leagueId).eq("active", true).single(),
       supabase.from("league_phases").select("id,code,name,start_match_number,end_match_number,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
       supabase.from("league_transfer_periods").select("id,code,name,start_match_number,end_match_number,transfer_limit,first_match_free,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
-    ]).then(([playingResult, scoringResult, phaseResult, transferPeriodResult]) => {
+      supabase.from("league_format_configs").select("acquisition_mode,bidding_enabled,other_owner_deductions_enabled,marquee_enabled,unique_players_enabled,unique_scope,royalty_enabled").eq("league_id", leagueId).single(),
+    ]).then(([playingResult, scoringResult, phaseResult, transferPeriodResult, formatResult]) => {
       if (!mounted) return;
       if (playingResult.error || scoringResult.error) {
         setMessage(playingResult.error?.message ?? scoringResult.error?.message ?? "Unable to load rules");
@@ -210,8 +429,10 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string
         setPointsEffectiveMatch(String((scoringResult.data as any).effective_from_match_number ?? 1));
         setPhases(((phaseResult.data ?? []) as any[]).map(phase => ({ id: phase.id, code: phase.code, name: phase.name, start: String(phase.start_match_number), end: String(phase.end_match_number) })));
         setTransferPeriods(((transferPeriodResult.data ?? []) as any[]).map(period => ({ id: period.id, code: period.code, name: period.name, start: String(period.start_match_number), end: String(period.end_match_number), limit: String(period.transfer_limit), firstMatchFree: period.first_match_free })));
+        const format = formatResult.data as any;
+        if (format) setLeagueFormat({ acquisition_mode: format.acquisition_mode, bidding_enabled: format.bidding_enabled, other_owner_deductions_enabled: format.other_owner_deductions_enabled, marquee_enabled: format.marquee_enabled, unique_players_enabled: format.unique_players_enabled, unique_scope: format.unique_scope ?? "league", royalty_enabled: format.royalty_enabled });
       }
-      if (phaseResult.error || transferPeriodResult.error) setMessage(phaseResult.error?.message ?? transferPeriodResult.error?.message ?? "Unable to load league settings");
+      if (phaseResult.error || transferPeriodResult.error || formatResult.error) setMessage(phaseResult.error?.message ?? transferPeriodResult.error?.message ?? formatResult.error?.message ?? "Unable to load league settings");
       setBusy(false);
     });
     return () => { mounted = false; };
@@ -221,6 +442,15 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string
     else setScoringFixtures(data ?? []);
   });
   useEffect(() => { if (section === "scoring") loadScoringFixtures(); }, [section]);
+
+  const selectAcquisitionMode = (mode: "auction" | "all_open") => setLeagueFormat(current => mode === "all_open" ? { ...current, acquisition_mode: mode, bidding_enabled: false, other_owner_deductions_enabled: false } : { ...current, acquisition_mode: mode });
+  const publishFormat = async () => {
+    setBusy(true); setMessage("");
+    const { data, error } = await supabase.rpc("publish_league_format", { p_league_id: leagueId, p_acquisition_mode: leagueFormat.acquisition_mode, p_bidding_enabled: leagueFormat.bidding_enabled, p_other_owner_deductions_enabled: leagueFormat.other_owner_deductions_enabled, p_marquee_enabled: leagueFormat.marquee_enabled, p_unique_players_enabled: leagueFormat.unique_players_enabled, p_unique_scope: leagueFormat.unique_players_enabled ? leagueFormat.unique_scope : null, p_royalty_enabled: leagueFormat.royalty_enabled });
+    if (error) setMessage(error.message);
+    else { const result = data as any; setLeagueFormat(current => ({ ...current, acquisition_mode: result.acquisition_mode, bidding_enabled: result.bidding_enabled, other_owner_deductions_enabled: result.other_owner_deductions_enabled })); setMessage("Published league format configuration."); }
+    setBusy(false);
+  };
 
   const updatePlaying = (key: keyof PlayingRuleForm, value: string) => setPlaying(current => ({ ...current, [key]: value }));
   const updatePoints = (key: keyof PointRuleForm, value: string) => setPoints(current => ({ ...current, [key]: value }));
@@ -255,7 +485,10 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string
     if (!transferPeriods.length) { setMessage("At least one transfer period is required."); return; }
     if (transferPeriods.some(period => !period.name.trim() || !Number.isInteger(Number(period.start)) || !Number.isInteger(Number(period.end)) || !Number.isInteger(Number(period.limit)) || Number(period.start) < 1 || Number(period.end) < Number(period.start) || Number(period.limit) < 0)) { setMessage("Every transfer period needs a name, valid match range, and a whole-number limit."); return; }
     const sorted = transferPeriods.map(period => ({ ...period, startNumber: Number(period.start), endNumber: Number(period.end) })).sort((a, b) => a.startNumber - b.startNumber);
+    if (sorted[0].startNumber !== 1) { setMessage("The first transfer period must start at Match 1."); return; }
     if (sorted.some((period, index) => index > 0 && period.startNumber <= sorted[index - 1].endNumber)) { setMessage("Transfer period match ranges cannot overlap."); return; }
+    const gap = sorted.find((period, index) => index > 0 && period.startNumber !== sorted[index - 1].endNumber + 1);
+    if (gap) { const previous = sorted[sorted.indexOf(gap) - 1]; setMessage(`Transfer periods cannot have a gap. Match ${previous.endNumber + 1} is not covered.`); return; }
     setBusy(true); setMessage("");
     const { data, error } = await supabase.rpc("publish_league_transfer_periods", { p_league_id: leagueId, p_periods: transferPeriods.map((period, index) => ({ code: period.code, name: period.name.trim(), start_match_number: Number(period.start), end_match_number: Number(period.end), transfer_limit: Number(period.limit), first_match_free: period.firstMatchFree, sort_order: index + 1 })) });
     if (error) setMessage(error.message);
@@ -286,6 +519,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string
 <Text style={s.adminNoticeText}>{canEdit ? "You can publish rule changes. Published match calculations keep their original rule version." : "Only a league administrator can publish changes. You can review every active rule and scoring status."}</Text>
 </View>
 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.adminTabs}>
+<TouchableOpacity style={[s.adminTab, section === "format" && s.adminTabActive]} onPress={() => setSection("format")}>
+<Text style={[s.adminTabText, section === "format" && s.adminTabTextActive]}>League Format</Text>
+</TouchableOpacity>
 <TouchableOpacity style={[s.adminTab, section === "playing" && s.adminTabActive]} onPress={() => setSection("playing")}>
 <Text style={[s.adminTabText, section === "playing" && s.adminTabTextActive]}>Playing · v{versions.playing}</Text>
 </TouchableOpacity>
@@ -298,10 +534,20 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string
 <TouchableOpacity style={[s.adminTab, section === "transfers" && s.adminTabActive]} onPress={() => setSection("transfers")}>
 <Text style={[s.adminTabText, section === "transfers" && s.adminTabTextActive]}>Transfers</Text>
 </TouchableOpacity>
+<TouchableOpacity style={[s.adminTab, section === "owners" && s.adminTabActive]} onPress={() => setSection("owners")}>
+<Text style={[s.adminTabText, section === "owners" && s.adminTabTextActive]}>Owners</Text>
+</TouchableOpacity>
+<TouchableOpacity style={[s.adminTab, section === "templates" && s.adminTabActive]} onPress={() => setSection("templates")}>
+<Text style={[s.adminTabText, section === "templates" && s.adminTabTextActive]}>Templates</Text>
+</TouchableOpacity>
 <TouchableOpacity style={[s.adminTab, section === "scoring" && s.adminTabActive]} onPress={() => setSection("scoring")}>
 <Text style={[s.adminTabText, section === "scoring" && s.adminTabTextActive]}>Match Scoring</Text>
 </TouchableOpacity>
-</ScrollView>{section === "playing" ? <View style={s.adminCard}>
+</ScrollView>{section === "format" ? <View>
+<View style={s.adminCard}><Text style={s.adminGroupTitle}>Player acquisition</Text><Text style={s.adminNoticeText}>Choose this before the league starts. The format is locked after setup.</Text><View style={s.ownerRoleRow}><TouchableOpacity disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.acquisition_mode === "auction" && s.ownerRoleButtonActive]} onPress={() => selectAcquisitionMode("auction")}><Text style={s.ownerRoleText}>Auction / Owned</Text></TouchableOpacity><TouchableOpacity disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.acquisition_mode === "all_open" && s.ownerRoleButtonActive]} onPress={() => selectAcquisitionMode("all_open")}><Text style={s.ownerRoleText}>All Open Players</Text></TouchableOpacity></View></View>
+<View style={s.adminCard}><Text style={s.adminGroupTitle}>Ownership features</Text><FormatToggle label="Bidding enabled" detail="Used only for auction/owned leagues" value={leagueFormat.bidding_enabled} disabled={!canEdit || leagueFormat.acquisition_mode === "all_open"} onPress={() => setLeagueFormat(current => ({ ...current, bidding_enabled: !current.bidding_enabled }))} /><FormatToggle label="Other-owner deductions" detail="Apply borrowing deductions and transfer rules" value={leagueFormat.other_owner_deductions_enabled} disabled={!canEdit || leagueFormat.acquisition_mode === "all_open"} onPress={() => setLeagueFormat(current => ({ ...current, other_owner_deductions_enabled: !current.other_owner_deductions_enabled }))} /></View>
+<View style={s.adminCard}><Text style={s.adminGroupTitle}>Optional competition features</Text><FormatToggle label="Marquee players" detail="Enable marquee classification for royalty rules" value={leagueFormat.marquee_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, marquee_enabled: !current.marquee_enabled }))} /><FormatToggle label="Unique players" detail="Restrict unique-player usage by match, phase or league" value={leagueFormat.unique_players_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, unique_players_enabled: !current.unique_players_enabled }))} />{leagueFormat.unique_players_enabled ? <View><Text style={s.adminFieldDetail}>UNIQUE SCOPE</Text><View style={s.ownerRoleRow}>{(["match", "phase", "league"] as const).map(scope => <TouchableOpacity key={scope} disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.unique_scope === scope && s.ownerRoleButtonActive]} onPress={() => setLeagueFormat(current => ({ ...current, unique_scope: scope }))}><Text style={s.ownerRoleText}>{scope.charAt(0).toUpperCase() + scope.slice(1)}</Text></TouchableOpacity>)}</View></View> : null}<FormatToggle label="Royalty points" detail="Enable configured marquee and unique royalty scoring" value={leagueFormat.royalty_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, royalty_enabled: !current.royalty_enabled }))} /></View>
+</View> : section === "playing" ? <View style={s.adminCard}>
 <Text style={s.adminGroupTitle}>Rule schedule</Text>
 <AdminNumberField label="Effective from match" detail="Applies from this match onward" value={playingEffectiveMatch} onChange={setPlayingEffectiveMatch} />
 <Text style={s.adminGroupTitle}>Team selection</Text>
@@ -371,9 +617,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit }: { leagueId: string
 <AdminNumberField label="Transfer allowance" detail={`Shared across Matches ${period.firstMatchFree ? Number(period.start) + 1 : period.start}–${period.end}`} value={period.limit} onChange={value => updateTransferPeriod(index, "limit", value)} />
 <TouchableOpacity disabled={!canEdit} style={[s.adminNotice, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.map((item, periodIndex) => periodIndex === index ? { ...item, firstMatchFree: !item.firstMatchFree } : item))}><Text style={s.adminNoticeTitle}>{period.firstMatchFree ? "✓" : "○"} First match is unlimited/free</Text><Text style={s.adminNoticeText}>{period.firstMatchFree ? `Match ${period.start || "—"} resets this period's balance.` : "The first match can consume this period's allowance."}</Text></TouchableOpacity>
 </View>)}<TouchableOpacity disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
-</View> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => settleAbandoned(fixture.id)}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => publishScores(fixture.id)}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
+</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => settleAbandoned(fixture.id)}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => publishScores(fixture.id)}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
 <Text style={s.adminMessageText}>{message}</Text>
-</View> : null}{canEdit && section !== "scoring" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={section === "phases" ? publishPhases : section === "transfers" ? publishTransfers : publish}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
+</View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={section === "format" ? publishFormat : section === "phases" ? publishPhases : section === "transfers" ? publishTransfers : publish}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
 <Text style={s.adminFootnote}>{section === "phases" ? "Changing phases updates fixture assignments and phase-wise ranking." : section === "transfers" ? "Transfer periods apply immediately to future submissions; recorded usage is regrouped by the published match ranges." : "Milestone, strike-rate and economy tables remain preserved when these headline values are updated."}</Text>
 </ScrollView></AdminEditContext.Provider>;
 }
@@ -486,7 +732,7 @@ function PointDetailSection({ title, rows, total }: { title: string; rows: Array
   return <View style={s.detailSection}><View style={s.detailHeading}><Text style={s.detailTitle}>{title}</Text><Text style={s.detailTotal}>{total}</Text></View>{visible.length ? visible.map(([label, value]) => <View key={label} style={s.detailRow}><Text style={s.detailLabel}>{label}</Text><Text style={s.detailValue}>{value > 0 ? `+${value}` : value}</Text></View>) : <Text style={s.detailEmpty}>No points</Text>}</View>;
 }
 
-function TeamSelection({ leagueId, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { leagueId: string; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
+function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { leagueId: string; ownershipEnabled: boolean; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
   const teamScrollRef = useRef<ScrollView>(null);
   const teamPositions = useRef<Record<string, number>>({});
   const playerPositions = useRef<Record<string, number>>({});
@@ -504,7 +750,7 @@ function TeamSelection({ leagueId, ownerName, roster, fixtures, ruleVersions, ru
   const [transferPeriods, setTransferPeriods] = useState<TransferPeriod[]>([]);
   const [transferUsage, setTransferUsage] = useState<Record<string, number>>({});
   const submittedSnapshots = useRef<Record<string, { players: string[]; captain: string; vice: string; impactPlayer: string; impactType: ImpactType }>>({});
-  const fixture = fixtures.find(match => match.id === activeMatchId) ?? fixtures[0] ?? upcomingMatches[0];
+  const fixture = fixtures.find(match => match.id === activeMatchId) ?? fixtures[0] ?? { id: "M0", home: "TBD", away: "TBD", day: "—", time: "—" };
   const activeMatchNumber = Number(activeMatchId.replace("M", ""));
   const rules = [...ruleVersions].filter(rule => rule.effective_from_match_number <= activeMatchNumber).sort((a, b) => b.effective_from_match_number - a.effective_from_match_number || b.version - a.version)[0] ?? defaultSelectionRules;
   const matchTeams = [fixture.home, fixture.away];
@@ -516,7 +762,7 @@ function TeamSelection({ leagueId, ownerName, roster, fixtures, ruleVersions, ru
   const maxTeam = Math.max(0, ...teams.map(team => chosen.filter(p => p.team === team).length));
   const activeTransferPeriod = transferPeriods.find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
   const initialLineupFree = !!activeTransferPeriod?.first_match_free && activeMatchNumber === activeTransferPeriod.start_match_number;
-  const transfers = initialLineupFree ? 0 : chosen.filter(p => p.owner !== ownerName && !carriedForwardNames.has(p.name)).length;
+  const transfers = initialLineupFree ? 0 : chosen.filter(p => (ownershipEnabled ? p.owner !== ownerName : true) && !carriedForwardNames.has(p.name)).length;
   const transferLimit = activeTransferPeriod?.transfer_limit ?? 0;
   const alreadyUsedTransfers = activeTransferPeriod ? transferUsage[activeTransferPeriod.id] ?? 0 : 0;
   const displayedTransfers = boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + transfers}/${transferLimit}`;
@@ -535,15 +781,15 @@ function TeamSelection({ leagueId, ownerName, roster, fixtures, ruleVersions, ru
   const currentMatchPlayers = chosen.filter(p => matchTeams.includes(p.team)).length;
   const impactSelectedPlayer = chosen.find(p => p.name === impactPlayer);
   const impactWarnings = [impactType === "BOI" && impactSelectedPlayer && ["BA", "WK"].includes(impactSelectedPlayer.role) && `BOI warning: ${impactSelectedPlayer.name} is a ${impactSelectedPlayer.role === "BA" ? "batter" : "wicketkeeper"}. Only bowling points will count.`, impactType === "BAI" && impactSelectedPlayer?.role === "BO" && `BAI warning: ${impactSelectedPlayer.name} is a bowler. Only batting points will count.`].filter(Boolean) as string[];
-  const selectionScopeWarnings = chosen.filter(player => player.owner !== ownerName && !matchTeams.includes(player.team) && !carriedForwardNames.has(player.name)).map(player => `${player.name} is not your player and is not playing in ${fixture.home} vs ${fixture.away}.`);
+  const selectionScopeWarnings = ownershipEnabled ? chosen.filter(player => player.owner !== ownerName && !matchTeams.includes(player.team) && !carriedForwardNames.has(player.name)).map(player => `${player.name} is not your player and is not playing in ${fixture.home} vs ${fixture.away}.`) : [];
   const optionalMarkerWarnings = [!captain && `Captain not selected. You may still submit without the ${rules.captain_multiplier}× Captain bonus.`, !vice && `Vice-Captain not selected. You may still submit without the ${rules.vice_captain_multiplier}× VC bonus.`, !impactPlayer && "BAI/BOI not selected. Impact is optional for this match."].filter(Boolean) as string[];
   const submissionWarnings = [...selectionScopeWarnings, ...impactWarnings, ...optionalMarkerWarnings];
   const errors = [!activeTransferPeriod && `No transfer period is configured for Match ${activeMatchNumber}`, selected.length !== rules.lineup_size && `Select exactly ${rules.lineup_size} players (${selected.length}/${rules.lineup_size})`, count("BA") < rules.min_batters && `At least ${rules.min_batters} batters required`, count("BO") < rules.min_bowlers && `At least ${rules.min_bowlers} bowlers required`, count("WK") < rules.min_wicketkeepers && `At least ${rules.min_wicketkeepers} wicketkeeper${rules.min_wicketkeepers === 1 ? "" : "s"} required`, count("AL") < rules.min_all_rounders && `At least ${rules.min_all_rounders} all-rounder${rules.min_all_rounders === 1 ? "" : "s"} required`, maxTeam > rules.max_from_one_team && `Maximum ${rules.max_from_one_team} from one IPL team`, total > rules.lineup_budget && `₹${(total - rules.lineup_budget).toFixed(1)}m over budget`, activeTransferPeriod && boosterCode !== "SUP-TR" && alreadyUsedTransfers + transfers > transferLimit && `${activeTransferPeriod.name} transfer limit of ${transferLimit} exceeded`, captain && vice && captain === vice && "Captain and vice-captain must differ", impactPlayer && !impactType && "Choose BAI or BOI for the Impact player", impactPlayer && (impactPlayer === captain || impactPlayer === vice) && "Impact player cannot be captain or vice-captain", boosterCode === "3X" && !boosterPlayer && "Select the player who receives 3X", boosterCode === "3X" && boosterPlayer && !selected.includes(boosterPlayer) && "The 3X player must be in your XI"].filter(Boolean) as string[];
   const toggle = (name: string) => {
     const player = roster.find(item => item.name === name);
-    const freshExternalPlayer = player && player.owner !== ownerName && !carriedForwardNames.has(name);
+    const freshExternalPlayer = player && (ownershipEnabled ? player.owner !== ownerName : true) && !carriedForwardNames.has(name);
     if (!selected.includes(name) && !initialLineupFree && boosterCode !== "SUP-TR" && freshExternalPlayer && alreadyUsedTransfers + transfers >= transferLimit) {
-      setSubmitMessage(`No ${activeTransferPeriod?.name ?? "period"} transfers remain. Select one of your own players or use SUP-TR.`);
+      setSubmitMessage(`No ${activeTransferPeriod?.name ?? "period"} transfers remain. Retain a carried-forward player or use SUP-TR.`);
       return;
     }
     setSubmitted(false);
@@ -623,6 +869,7 @@ function TeamSelection({ leagueId, ownerName, roster, fixtures, ruleVersions, ru
     loadLineup();
     return () => { cancelled = true; };
   }, [fixture.databaseId, activeMatchId, activeMatchNumber, leagueId, ownerName]);
+  if (!fixtures.length) return <ScrollView contentContainerStyle={s.content}><View style={s.pendingLeague}><Text style={s.pendingLeagueEyebrow}>FIXTURES REQUIRED</Text><Text style={s.pendingLeagueTitle}>No fixtures imported</Text><Text style={s.pendingLeagueText}>This league does not have scheduled fixtures yet. A league administrator must import or configure its fixtures before owners can select a team.</Text></View></ScrollView>;
   const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(false); setShowIssues(false); };
   const focusPlayerInTeamList = (name: string, team: string) => {
     setFocusedPlayer(name);
@@ -806,16 +1053,39 @@ const s = StyleSheet.create({
   signedInAs: { color: "#9BC1B6", fontSize: 9, marginTop: 2 },
   signOutButton: { borderWidth: 1, borderColor: "#40675C", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, marginLeft: 8 },
   signOutText: { color: "#B7CDC6", fontSize: 8, fontWeight: "800" },
-  leagueCard: { backgroundColor: "white", borderRadius: 17, borderWidth: 1, borderColor: "#DEE5E1", padding: 14, marginBottom: 10, flexDirection: "row", alignItems: "center" },
+  homeBackground: { flex: 1, borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: "hidden" },
+  homeBackgroundImage: { borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  homeBackgroundShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(2, 18, 15, 0.34)" },
+  homeContent: { backgroundColor: "transparent", minHeight: 780 },
+  homeGreeting: { color: "#FFFFFF", fontSize: 27, fontWeight: "900", textShadowColor: "rgba(0,0,0,0.65)", textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 5 },
+  homeSubtitle: { color: "#D8E8E1", fontSize: 13, lineHeight: 19, marginTop: 4, marginBottom: 18, textShadowColor: "rgba(0,0,0,0.7)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  leagueCard: { backgroundColor: "white", borderRadius: 17, borderWidth: 1, borderColor: "#DEE5E1", padding: 14, marginBottom: 10 },
+  homeLeagueCard: { backgroundColor: "rgba(255,255,255,0.94)", borderColor: "rgba(255,255,255,0.72)", shadowColor: "#001A12", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.22, shadowRadius: 9, elevation: 5 },
+  leagueCardMain: { flexDirection: "row", alignItems: "center" },
   leagueCardSelected: { borderColor: "#88A938", backgroundColor: "#FBFDEF" },
-  leagueMark: { width: 48, height: 48, borderRadius: 15, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center", marginRight: 12 },
-  leagueMarkText: { color: "#DDFB72", fontSize: 14, fontWeight: "900" },
+  leagueEmblemShadow: { width: 62, height: 68, marginRight: 13, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.28, shadowRadius: 5, elevation: 6 },
+  leagueEmblem: { width: 62, height: 64, borderRadius: 18, borderWidth: 2, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  leagueEmblemStripe: { position: "absolute", width: 95, height: 24, top: 7, left: -17, transform: [{ rotate: "-18deg" }], opacity: 0.95 },
+  leagueEmblemGlow: { position: "absolute", width: 34, height: 34, borderRadius: 17, top: -19, right: -9, opacity: 0.18 },
+  leagueBall: { position: "absolute", width: 14, height: 14, borderRadius: 7, backgroundColor: "#F7F3E8", top: 5, right: 6, transform: [{ rotate: "-20deg" }] },
+  leagueBallSeam: { position: "absolute", width: 1, height: 12, backgroundColor: "#C43C3C", left: 6.5, top: 1 },
+  leagueBallStitch: { position: "absolute", width: 4, height: 1, backgroundColor: "#C43C3C", left: 5 },
+  leagueBallStitchOne: { top: 4 },
+  leagueBallStitchTwo: { top: 8 },
+  leagueEmblemCode: { fontSize: 17, lineHeight: 20, fontWeight: "900", letterSpacing: 0.8, marginTop: 5, textShadowColor: "rgba(0,0,0,0.35)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  leagueEmblemYearRibbon: { position: "absolute", bottom: 5, minWidth: 31, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2, alignItems: "center" },
+  leagueEmblemYear: { fontSize: 10, lineHeight: 12, fontWeight: "900", letterSpacing: 1.2 },
   leagueName: { color: "#173028", fontSize: 16, fontWeight: "900" },
   leagueMeta: { color: "#7D8B85", fontSize: 9, marginTop: 3 },
   leagueStatus: { alignSelf: "flex-start", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, fontWeight: "900", marginTop: 8 },
   leagueStatusActive: { color: "#285F39", backgroundColor: "#E2F1DF" },
   leagueStatusPending: { color: "#735F22", backgroundColor: "#F5EFD5" },
   leagueArrow: { color: "#809089", fontSize: 27, marginLeft: 7 },
+  invitationActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: "#EDF0ED" },
+  invitationDecline: { borderWidth: 1, borderColor: "#C4CEC9", borderRadius: 10, paddingHorizontal: 15, paddingVertical: 10 },
+  invitationDeclineText: { color: "#53665E", fontSize: 11, fontWeight: "800" },
+  invitationAccept: { minWidth: 128, alignItems: "center", backgroundColor: "#DDFB72", borderRadius: 10, paddingHorizontal: 15, paddingVertical: 10 },
+  invitationAcceptText: { color: "#10251F", fontSize: 11, fontWeight: "900" },
   pendingLeague: { backgroundColor: "white", borderRadius: 20, padding: 24, alignItems: "center" },
   pendingLeagueEyebrow: { color: "#829089", fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
   pendingLeagueTitle: { color: "#173028", fontSize: 25, fontWeight: "900", marginTop: 8 },
@@ -989,10 +1259,30 @@ const s = StyleSheet.create({
   adminTabText: { color: "#60736B", fontSize: 9, fontWeight: "900" },
   adminTabTextActive: { color: "#DDFB72" },
   adminCard: { backgroundColor: "white", borderRadius: 14, paddingHorizontal: 12, paddingBottom: 5, marginTop: 10 },
+  ownerAdminInput: { height: 46, backgroundColor: "#F4F7F5", borderWidth: 1, borderColor: "#DCE5E0", borderRadius: 10, paddingHorizontal: 12, color: "#173028", marginBottom: 9 },
+  ownerInviteMessage: { backgroundColor: "#FFF0EC", borderRadius: 10, padding: 11, marginTop: 9 },
+  ownerRoleRow: { flexDirection: "row", gap: 8, marginBottom: 2 },
+  ownerRoleButton: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: "#C9D3CE", borderRadius: 10, paddingVertical: 10 },
+  ownerRoleButtonActive: { backgroundColor: "#EAF6C7", borderColor: "#9BB73E" },
+  ownerRoleText: { color: "#263B34", fontSize: 11, fontWeight: "800" },
+  ownerAdminRow: { minHeight: 68, flexDirection: "row", alignItems: "center", backgroundColor: "white", borderRadius: 13, padding: 11, marginBottom: 8 },
+  ownerDisplayName: { color: "#173028", fontSize: 13, fontWeight: "900", fontFamily: OWNER_FONT },
+  ownerActivate: { backgroundColor: "#DDFB72", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 },
+  ownerActivateText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
+  ownerSuspend: { borderWidth: 1, borderColor: "#D5A59B", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 },
+  ownerSuspendText: { color: "#8B3D31", fontSize: 10, fontWeight: "900" },
+  templateChoices: { gap: 8, paddingVertical: 10 },
+  templateChoice: { minWidth: 135, borderWidth: 1, borderColor: "#D3DDD8", backgroundColor: "#F5F8F6", borderRadius: 11, padding: 11 },
+  templateChoiceActive: { borderColor: "#88A938", backgroundColor: "#F0F8D8" },
+  templateChoiceName: { color: "#173028", fontSize: 11, fontWeight: "900" },
   adminGroupTitle: { color: "#174D3D", fontSize: 11, fontWeight: "900", paddingTop: 14, paddingBottom: 5 },
   adminField: { minHeight: 55, borderTopWidth: 1, borderTopColor: "#E8ECE9", flexDirection: "row", alignItems: "center", gap: 10 },
   adminFieldLabel: { color: "#2C433A", fontSize: 10, fontWeight: "800" },
   adminFieldDetail: { color: "#89958F", fontSize: 8, marginTop: 2 },
+  formatToggle: { minWidth: 47, borderRadius: 9, backgroundColor: "#E5EAE7", paddingHorizontal: 10, paddingVertical: 8, alignItems: "center" },
+  formatToggleActive: { backgroundColor: "#174D3D" },
+  formatToggleText: { color: "#718079", fontSize: 8, fontWeight: "900" },
+  formatToggleTextActive: { color: "#DDFB72" },
   adminInput: { width: 78, height: 38, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#F8FAF9", borderRadius: 9, paddingHorizontal: 9, color: "#173028", fontSize: 12, fontWeight: "900", textAlign: "right" },
   adminInputReadOnly: { backgroundColor: "#EEF1EF", color: "#66766F" },
   adminMessage: { backgroundColor: "#FFF1ED", borderRadius: 10, padding: 10, marginTop: 10 },
@@ -1076,5 +1366,5 @@ const s = StyleSheet.create({
   detailLabel: { flex: 1, color: "#63756E", fontSize: 8 },
   detailValue: { color: "#213A31", fontSize: 8, fontWeight: "900" },
   detailEmpty: { color: "#9AA49F", fontSize: 8, paddingVertical: 3 },
-  safe: { flex: 1, backgroundColor: "#071D17" }, header: { flexDirection: "row", alignItems: "center", padding: 16 }, logo: { width: 42, height: 42, borderRadius: 13, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center" }, logoHomeActive: { borderWidth: 2, borderColor: "white" }, logoText: { fontSize: 26, lineHeight: 28, fontWeight: "900", color: "#071D17", marginTop: -2 }, eyebrow: { color: "#80A399", fontSize: 9, fontWeight: "800", letterSpacing: 1.5 }, brand: { color: "white", fontSize: 18, fontWeight: "900" }, live: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, content: { backgroundColor: "#F4F5EF", borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 110, minHeight: 750 }, greeting: { color: "#10251F", fontSize: 25, fontWeight: "900" }, subtitle: { color: "#718079", fontSize: 13, marginTop: 4, marginBottom: 18 }, hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 31, fontWeight: "900", marginTop: 10 }, vs: { color: "#DDFB72", fontSize: 18 }, heroMeta: { color: "#B7CDC6", fontSize: 12, marginTop: 6 }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" }, stats: { flexDirection: "row", gap: 8, marginTop: 12 }, stat: { flex: 1, backgroundColor: "white", borderRadius: 14, padding: 12 }, statLabel: { color: "#87938E", fontSize: 8, fontWeight: "900" }, statValue: { color: "#10251F", fontSize: 17, fontWeight: "900", marginTop: 5 }, sectionTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 10 }, card: { backgroundColor: "white", borderRadius: 18, paddingHorizontal: 14 }, standing: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#EDF0EA" }, position: { width: 23, color: "#819089", fontWeight: "800" }, badge: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#E8F4EF", alignItems: "center", justifyContent: "center" }, badgeText: { color: "#174D3D", fontWeight: "900" }, owner: { flex: 1, marginLeft: 9, fontWeight: "800", color: "#1B3029" }, points: { color: "#51665F", fontSize: 11 }, auction: { backgroundColor: "white", borderRadius: 20, alignItems: "center", padding: 20 }, timer: { alignSelf: "flex-end", color: "#496209", fontWeight: "900" }, avatar: { width: 66, height: 66, borderRadius: 22, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center" }, avatarText: { color: "#DDFB72", fontSize: 22, fontWeight: "900" }, auctionName: { fontSize: 20, fontWeight: "900", marginTop: 10 }, bidLabel: { color: "#87938E", fontSize: 9, fontWeight: "900", marginTop: 16 }, bid: { fontSize: 30, fontWeight: "900" }, meta: { color: "#7D8B85", fontSize: 9, marginTop: 3 }, selectionSummary: { flexDirection: "row", backgroundColor: "#123C31", borderRadius: 17, paddingVertical: 14 }, summary: { flex: 1, alignItems: "center" }, summaryLabel: { color: "#9BC1B6", fontSize: 8, fontWeight: "900" }, summaryValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900", marginTop: 4 }, roles: { flexDirection: "row", gap: 7, marginTop: 9 }, roleChip: { backgroundColor: "#E4ECE7", color: "#35554B", borderRadius: 9, padding: 7, fontSize: 10, fontWeight: "800" }, helper: { color: "#7D8984", fontSize: 11, marginBottom: 10 }, otherTeamsTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 4 }, teamGroup: { marginBottom: 12 }, teamHeader: { flexDirection: "row", alignItems: "center", backgroundColor: "#E3ECE7", borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 7 }, teamHeaderName: { flex: 1, color: "#174D3D", fontSize: 13, fontWeight: "900" }, teamHeaderCount: { color: "#71827B", fontSize: 10, fontWeight: "700" }, playerRow: { backgroundColor: "white", borderRadius: 13, marginBottom: 8, borderWidth: 1, borderColor: "transparent" }, playerActive: { borderColor: "#9AB64B", backgroundColor: "#FBFDEF" }, playerFocused: { borderColor: "#6A3FB5", borderWidth: 2, backgroundColor: "#F8F1FF" }, playerMain: { flexDirection: "row", alignItems: "center", padding: 11 }, checkbox: { width: 23, height: 23, borderRadius: 7, borderWidth: 1, borderColor: "#B8C3BD", alignItems: "center", justifyContent: "center" }, checkboxActive: { backgroundColor: "#174D3D" }, check: { color: "white", fontWeight: "900" }, playerName: { color: "#173028", fontSize: 13, fontWeight: "800" }, price: { color: "#173028", fontSize: 12, fontWeight: "900" }, markers: { flexDirection: "row", gap: 7, paddingLeft: 44, paddingBottom: 9 }, marker: { borderWidth: 1, borderColor: "#B9C5BF", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 }, markerActive: { backgroundColor: "#DDFB72", borderColor: "#9BB73E" }, markerText: { color: "#253A32", fontSize: 10, fontWeight: "900" }, validation: { borderRadius: 14, padding: 14, marginTop: 12 }, invalid: { backgroundColor: "#FFF0EC" }, valid: { backgroundColor: "#EAF6E5" }, validationTitle: { fontWeight: "900", color: "#263B34" }, validationText: { color: "#5E6D67", fontSize: 11, marginTop: 3 }, submit: { backgroundColor: "#174D3D", borderRadius: 14, padding: 15, alignItems: "center", marginTop: 11 }, disabled: { backgroundColor: "#AAB5B0" }, submitText: { color: "white", fontWeight: "900" }, success: { color: "#2F6B37", textAlign: "center", fontWeight: "800", marginTop: 10 }, tabBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 82, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E9E4", flexDirection: "row", paddingTop: 11 }, tab: { flex: 1, alignItems: "center" }, tabIcon: { width: 18, height: 18, borderRadius: 6, backgroundColor: "#C6CFCA", marginBottom: 5 }, tabIconActive: { backgroundColor: "#174D3D" }, tabText: { color: "#8A9691", fontSize: 10, fontWeight: "700" }, tabTextActive: { color: "#174D3D", fontWeight: "900" }
+  safe: { flex: 1, backgroundColor: "#071D17" }, header: { flexDirection: "row", alignItems: "center", padding: 16 }, logo: { width: 42, height: 42, borderRadius: 13, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center" }, logoHomeActive: { borderWidth: 2, borderColor: "white" }, logoText: { fontSize: 26, lineHeight: 28, fontWeight: "900", color: "#071D17", marginTop: -2 }, eyebrow: { color: "#80A399", fontSize: 9, fontWeight: "800", letterSpacing: 1.5 }, brand: { color: "white", fontSize: 18, fontWeight: "900" }, live: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, content: { backgroundColor: "#F4F5EF", borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 110, minHeight: 750 }, greeting: { color: "#10251F", fontSize: 25, fontWeight: "900" }, subtitle: { color: "#718079", fontSize: 13, marginTop: 4, marginBottom: 18 }, hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 31, fontWeight: "900", marginTop: 10 }, vs: { color: "#DDFB72", fontSize: 18 }, heroMeta: { color: "#B7CDC6", fontSize: 12, marginTop: 6 }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" }, stats: { flexDirection: "row", gap: 8, marginTop: 12 }, stat: { flex: 1, backgroundColor: "white", borderRadius: 14, padding: 12 }, statLabel: { color: "#87938E", fontSize: 8, fontWeight: "900" }, statValue: { color: "#10251F", fontSize: 17, fontWeight: "900", marginTop: 5 }, sectionTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 10 }, card: { backgroundColor: "white", borderRadius: 18, paddingHorizontal: 14 }, standing: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#EDF0EA" }, position: { width: 23, color: "#819089", fontWeight: "800" }, badge: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#E8F4EF", alignItems: "center", justifyContent: "center" }, badgeText: { color: "#174D3D", fontWeight: "900" }, owner: { flex: 1, marginLeft: 9, fontWeight: "800", color: "#1B3029" }, points: { color: "#51665F", fontSize: 11 }, auction: { backgroundColor: "white", borderRadius: 20, alignItems: "center", padding: 20 }, timer: { alignSelf: "flex-end", color: "#496209", fontWeight: "900" }, avatar: { width: 66, height: 66, borderRadius: 22, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center" }, avatarText: { color: "#DDFB72", fontSize: 22, fontWeight: "900" }, auctionName: { fontSize: 20, fontWeight: "900", marginTop: 10 }, bidLabel: { color: "#87938E", fontSize: 9, fontWeight: "900", marginTop: 16 }, bid: { fontSize: 30, fontWeight: "900" }, meta: { color: "#7D8B85", fontSize: 9, marginTop: 3 }, selectionSummary: { flexDirection: "row", backgroundColor: "#123C31", borderRadius: 17, paddingVertical: 14 }, summary: { flex: 1, alignItems: "center" }, summaryLabel: { color: "#9BC1B6", fontSize: 8, fontWeight: "900" }, summaryValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900", marginTop: 4 }, roles: { flexDirection: "row", gap: 7, marginTop: 9 }, roleChip: { backgroundColor: "#E4ECE7", color: "#35554B", borderRadius: 9, padding: 7, fontSize: 10, fontWeight: "800" }, helper: { color: "#7D8984", fontSize: 11, marginBottom: 10 }, otherTeamsTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 4 }, teamGroup: { marginBottom: 12 }, teamHeader: { flexDirection: "row", alignItems: "center", backgroundColor: "#E3ECE7", borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 7 }, teamHeaderName: { flex: 1, color: "#174D3D", fontSize: 13, fontWeight: "900" }, teamHeaderCount: { color: "#71827B", fontSize: 10, fontWeight: "700" }, playerRow: { backgroundColor: "white", borderRadius: 13, marginBottom: 8, borderWidth: 1, borderColor: "transparent" }, playerActive: { borderColor: "#9AB64B", backgroundColor: "#FBFDEF" }, playerFocused: { borderColor: "#6A3FB5", borderWidth: 2, backgroundColor: "#F8F1FF" }, playerMain: { flexDirection: "row", alignItems: "center", padding: 11 }, checkbox: { width: 23, height: 23, borderRadius: 7, borderWidth: 1, borderColor: "#B8C3BD", alignItems: "center", justifyContent: "center" }, checkboxActive: { backgroundColor: "#174D3D" }, check: { color: "white", fontWeight: "900" }, playerName: { color: "#173028", fontSize: 13, fontWeight: "800" }, price: { color: "#173028", fontSize: 12, fontWeight: "900" }, markers: { flexDirection: "row", gap: 7, paddingLeft: 44, paddingBottom: 9 }, marker: { borderWidth: 1, borderColor: "#B9C5BF", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 }, markerActive: { backgroundColor: "#DDFB72", borderColor: "#9BB73E" }, markerText: { color: "#253A32", fontSize: 10, fontWeight: "900" }, validation: { borderRadius: 14, padding: 14, marginTop: 12 }, invalid: { backgroundColor: "#FFF0EC" }, valid: { backgroundColor: "#EAF6E5" }, validationTitle: { fontWeight: "900", color: "#263B34" }, validationText: { color: "#5E6D67", fontSize: 11, marginTop: 3 }, submit: { backgroundColor: "#174D3D", borderRadius: 14, padding: 15, alignItems: "center", marginTop: 11 }, disabled: { backgroundColor: "#AAB5B0" }, submitText: { color: "white", fontWeight: "900" }, success: { color: "#2F6B37", textAlign: "center", fontWeight: "800", marginTop: 10 }, tabBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 82, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E9E4", flexDirection: "row", paddingTop: 9 }, tab: { flex: 1, alignItems: "center" }, cricketBallIcon: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#BFC8C4", marginBottom: 5, position: "relative" }, cricketBallIconActive: { backgroundColor: "#C53A45" }, cricketBallIconSeam: { position: "absolute", width: 1.5, height: 17, backgroundColor: "#FFFFFF", left: 9.25, top: 1.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconSeamActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBallIconStitch: { position: "absolute", width: 5, height: 1, backgroundColor: "#FFFFFF", left: 7.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconStitchTop: { top: 6 }, cricketBallIconStitchBottom: { top: 12 }, cricketBallIconStitchActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBatIcon: { width: 20, height: 20, marginBottom: 5, position: "relative", transform: [{ rotate: "-38deg" }] }, cricketBatHandle: { position: "absolute", width: 4, height: 8, borderRadius: 2, backgroundColor: "#8D9A95", top: 0, left: 8 }, cricketBatHandleActive: { backgroundColor: "#174D3D" }, cricketBatBlade: { position: "absolute", width: 9, height: 14, borderRadius: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: "#C7CECA", top: 6, left: 5.5 }, cricketBatBladeActive: { backgroundColor: "#D5A558" }, tabText: { color: "#8A9691", fontSize: 10, fontWeight: "700" }, tabTextActive: { color: "#174D3D", fontWeight: "900" }
 });

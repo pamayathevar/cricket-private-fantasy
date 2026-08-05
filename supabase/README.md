@@ -88,6 +88,8 @@ Apply `202608040016_configurable_transfer_periods.sql` to replace the fixed leag
 
 Apply `202608040018_league_formats_membership_templates.sql` to add the multi-league configuration foundation. It adds auction/all-open format settings, independent marquee/unique/royalty configuration, per-league invitation responses and admin activation, plus versioned league-template snapshots and safe draft cloning. Cloning copies rules, phases, transfer periods and boosters but never ownership, bids, fixtures, lineups, scores or usage history. Run `verify_migration_018.sql`, then run `tests/league_configuration_constraints.sql` in staging; the test script rolls back all test data.
 
+Before migration 019, run the first query in `verify_migration_019.sql`. It must return no rows. Resolve any duplicate owner display names explicitly, then apply `202608040019_unique_owner_names.sql`. It enforces a case-insensitive, trimmed unique owner/admin name per league and provides a readable error to the Owners UI. Run the full verification afterward; both installed values must be `true`.
+
 ## Squad and fixture import
 
 After the initial schema, run `migrations/202608040002_import_ipl2026_squad_fixtures.sql`. It imports the 268-player Squad snapshot, auction prices, owner assignments, 76 open players and all 70 IPL 2026 league fixtures, including the 50 Phase 2 matches. Then run `migrations/202608040003_import_ipl2026_playoffs.sql` to add Qualifier 1, Eliminator, Qualifier 2 and the Final. Fixture timestamps are stored in UTC; verification displays them in `Asia/Kolkata`. Lineups lock at the scheduled start.
@@ -105,3 +107,4 @@ Commit the regenerated migration, review its diff and apply it through the Supab
 ## Authentication hardening
 
 RLS protects league data even if someone creates an unapproved Supabase Auth account. Before public release, also configure a Supabase before-user-created Auth Hook to reject emails that do not exist in `league_members`; the local allowlist in `leagueMembers.ts` is only a temporary client-side convenience.
+20. `202608040020_import_ipl2025_fixture_template_into_ipl2027.sql` imports the actual IPL 2025 fixture order as clean, scheduled IPL 2027 test fixtures, without copying competitive state.

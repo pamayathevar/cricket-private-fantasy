@@ -40,6 +40,19 @@ Install Node.js 20.19 or newer, then run `npm install` and `npm start` in this d
 
 The detailed lineup workflow is documented in [team-selection-flow.md](team-selection-flow.md).
 
+## IPL 2027 test-data imports
+
+- Migration `020` imports the 74-match IPL 2025 fixture schedule with dates shifted to 2027.
+- Migration `021` imports the final IPL 2025 squads into IPL 2027 as open players. It includes season replacement players but never copies bids, ownership, prices, lineups, points, transfers, or booster usage.
+- Migration `022` adds audited, league-specific player deactivation/reactivation. Inactive players remain in history but cannot be selected in a new valid lineup.
+- Migration `023` lets a league administrator add an audited injury replacement with a team, role, selection cost and optional league owner. It does not add that player to other leagues.
+- Migration `024` keeps M$ selection cost in `acquisition_price`, adds a separate nullable `bid_price`, and imports completed IPL 2026 B$ values from the read-only Bid Summary sheet.
+- Migration `024` is safe to rerun and imports only the 180 nonblank completed bids; blank B$ cells remain null. The existing league-player read policy covers the new field. Roll back the app before removing the column; if only the imported values must be undone, set IPL 2026 `bid_price` values to null instead of deleting roster rows.
+- Migration `025` adds an audited admin-only player editor for name, role, selection cost, league owner and active status. It deliberately preserves the completed auction `bid_price`.
+- Migration `026` exposes audited draft league-format publishing. All-open mode always disables ownership, bidding and other-owner deductions; started leagues remain protected by the existing format lock.
+- Run each matching `supabase/verify_migration_*.sql` file after applying its migration.
+- Both imports refuse to run after an IPL 2027 lineup exists. Rollback before league play consists of deleting IPL 2027 `league_players`/fixtures only; shared `players` records should be retained because another league may reference them.
+
 ## Recommended implementation
 
 - Mobile: React Native with Expo and TypeScript

@@ -1,5 +1,5 @@
 export type Role = "BA" | "BO" | "WK" | "AL";
-export type Player = { name: string; team: string; role: Role; price: number; owner: string };
+export type Player = { name: string; team: string; role: Role; price: number; owner: string; bidPrice?: number | null };
 
 // Snapshot imported read-only from the Google Sheet Squad tab.
 export const squadPlayers: Player[] = [
@@ -1880,4 +1880,3 @@ export const squadPlayers: Player[] = [
     "owner": "Saravana"
   }
 ];
-
