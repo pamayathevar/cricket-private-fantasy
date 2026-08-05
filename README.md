@@ -2,6 +2,16 @@
 
 A private, 10-owner IPL fantasy league mobile app.
 
+## Project documentation
+
+- [Product specification](SPEC.md)
+- [Confirmed detailed rules](confirmed-rules.md)
+- [Production readiness plan](PRODUCTION_READINESS.md)
+- [Coding-agent steering guide](AGENTS.md)
+- [Implementation audit](IMPLEMENTATION_AUDIT.md)
+- [Prioritized implementation plan](IMPLEMENTATION_PLAN.md)
+- [Configurable data model](DATA_MODEL.md)
+
 ## Run the prototype
 
 Install Node.js 20.19 or newer, then run `npm install` and `npm start` in this directory. Use the Expo Go app or an iOS/Android simulator to open it. The prototype targets Expo SDK 54.
@@ -13,7 +23,7 @@ Install Node.js 20.19 or newer, then run `npm install` and `npm start` in this d
 - ₹100 million starting budget per owner
 - Up to 30 unique players per squad
 - Playing XI selected for each IPL match
-- 105 transfers during the league stage and 6 during the playoffs
+- 105 transfers during the league stage and 4 during the playoffs
 - Sheet-derived T20 scoring, configurable by the commissioner
 - Captain scores 2× and vice-captain scores 1.5×
 - Boosters are included; royalty points are excluded from the MVP

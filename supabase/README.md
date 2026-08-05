@@ -86,6 +86,8 @@ Apply `202608040015_initial_lineup_free_transfers.sql` so a member's initial lea
 
 Apply `202608040016_configurable_transfer_periods.sql` to replace the fixed league/playoff transfer buckets with any number of admin-configured periods. Each period defines its match range, allowance, and whether its first match is a free reset. Existing IPL 2026 limits are migrated to League stage (Matches 1–70, 105, Match 1 free) and Playoffs (Matches 71–74, 4, Match 71 free). Historical transfer events are assigned to the matching period, and team submission resolves and enforces the period containing the selected fixture.
 
+Apply `202608040018_league_formats_membership_templates.sql` to add the multi-league configuration foundation. It adds auction/all-open format settings, independent marquee/unique/royalty configuration, per-league invitation responses and admin activation, plus versioned league-template snapshots and safe draft cloning. Cloning copies rules, phases, transfer periods and boosters but never ownership, bids, fixtures, lineups, scores or usage history. Run `verify_migration_018.sql`, then run `tests/league_configuration_constraints.sql` in staging; the test script rolls back all test data.
+
 ## Squad and fixture import
 
 After the initial schema, run `migrations/202608040002_import_ipl2026_squad_fixtures.sql`. It imports the 268-player Squad snapshot, auction prices, owner assignments, 76 open players and all 70 IPL 2026 league fixtures, including the 50 Phase 2 matches. Then run `migrations/202608040003_import_ipl2026_playoffs.sql` to add Qualifier 1, Eliminator, Qualifier 2 and the Final. Fixture timestamps are stored in UTC; verification displays them in `Asia/Kolkata`. Lineups lock at the scheduled start.
