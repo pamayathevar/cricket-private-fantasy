@@ -9,6 +9,7 @@ The initial migration creates the production database foundation for IPL 2026:
 - transfer events;
 - versioned playing rules and scoring rules, player points and owner match totals;
 - standings and administrative audit events;
+- configurable league phases with overall and phase-wise standings;
 - Row Level Security for every application table.
 
 ## Apply the migration
@@ -21,6 +22,12 @@ The initial migration creates the production database foundation for IPL 2026:
 6. Run `verify.sql` as a separate query. It is read-only and should show one league, nine members, ten teams, the active playing/scoring rule versions, RLS enabled on all fourteen tables, and the installed policy count.
 
 The migration is committed as a versioned file so the database definition stays with the application code. Do not edit a production database manually without adding a matching migration.
+
+To confirm migrations 001–008 without changing data, run `verify_migrations_001_008.sql`. It reports each migration as `OK` or `MISSING` and finishes with the IPL 2026 member, player, fixture, booster and phase counts. Do not rerun all historical migrations as a combined script against an existing project; apply only the migrations reported missing, in numerical order.
+
+After applying the newer rule and lineup protections, run `verify_migrations_009_012.sql`. Every row should report `installed = true`.
+
+After applying migration 013, run `verify_migration_013.sql`. All three result columns should be `true`.
 
 ## Seeded records
 
@@ -56,6 +63,28 @@ After applying `202608040004_boosters.sql`, booster-enabled submissions use `sub
 Booster selections belong to one fixture-specific lineup and must never be copied by carry-forward logic. Carry forward only the XI and its ordinary player markers; every new fixture begins with no booster selected.
 
 Apply `202608040005_optional_player_markers.sql` to allow owners to skip Captain and Vice-Captain. BAI and BOI were already nullable. The client passes null for every optional marker that the owner leaves unselected.
+
+Apply `202608040006_configurable_league_phases.sql` to configure each league's phase names and match ranges. IPL 2026 is seeded with Phase 1 (1–35), Phase 2 (36–70), and Phase 3 · Playoffs (71–74). The migration links every fixture to its phase and creates `league_phase_standings`; `league_standings` remains the overall table. Admins can change future league phase definitions in `league_phases` before fixtures or scores are published. Overlapping active ranges are rejected.
+
+Apply `202608040007_admin_rule_publishing.sql` before using the mobile League Admin screen. Its `publish_league_rules` RPC verifies the signed-in user is a league admin, validates headline playing rules, deactivates the previous active versions, creates new playing and points versions, and records an audit event in one transaction. Existing published match scores retain the rule-set version used for their calculation.
+
+Apply `202608040008_admin_phase_publishing.sql` to enable the League Admin → League Phases editor. It validates names and ranges, rejects overlaps, requires every imported fixture to remain covered, updates fixture phase assignments and records an audit event transactionally.
+
+Apply `202608040009_effective_rule_matches.sql` to schedule Playing and Points versions independently from a selected scheduled match. Team Selection resolves the newest playing-rule version whose effective match is not later than the selected fixture. Started matches retain their earlier version.
+
+Apply `202608040010_match_specific_rule_enforcement.sql` so server-side lineup submission resolves Playing Rules from the submitted fixture's match number. It also adds `scoring_rule_set_for_fixture`, which the score processor must use to pin every calculation to the applicable Points Rules version.
+
+Apply `202608040011_transfer_enforcement.sql` before testing production lineup submissions. The app then submits through `submit_lineup_with_transfer_enforcement`, which compares the XI with the latest earlier submission, charges only fresh non-owned additions, applies the configured transfer allowance, allows SUP-TR to waive that match's charge, replaces transfer records safely when an unlocked XI is edited, and writes an audit event. Migration 016 later upgrades these fixed stage allowances to configurable transfer periods.
+
+Apply `202608040012_future_lineup_revalidation.sql` so a newly scheduled Playing Rules version revalidates existing submissions for scheduled fixtures at or after its effective match. Invalid XIs are changed to drafts, retain their players for editing, and store readable validation errors; started and completed matches are never changed.
+
+Apply `202608040013_score_review_publish.sql` to enable the controlled scoring workflow. A trusted score processor or league admin stages a complete player-points array with `stage_match_player_points`; the fixture moves to `review`. An admin then calls `publish_match_scores`, which applies fixture-effective Playing Rules, optional C/VC and BAI/BOI, 3X/2UP boosters, and the greater-of-percentage-or-minimum other-owner deduction before publishing match ranks and updating overall/phase standings. Owners cannot read staged points.
+
+Apply `202608040014_scoring_safeguards.sql` after migration 013. The admin UI publishes through the safe wrapper, which rejects incomplete lineup-player calculations. It also adds abandoned-match settlement: every submitted owner receives zero, match transfers and boosters are returned, and the action is audited.
+
+Apply `202608040015_initial_lineup_free_transfers.sql` so a member's initial league-stage XI and initial playoff XI are transfer-free, while later fresh external additions consume the applicable balance.
+
+Apply `202608040016_configurable_transfer_periods.sql` to replace the fixed league/playoff transfer buckets with any number of admin-configured periods. Each period defines its match range, allowance, and whether its first match is a free reset. Existing IPL 2026 limits are migrated to League stage (Matches 1–70, 105, Match 1 free) and Playoffs (Matches 71–74, 4, Match 71 free). Historical transfer events are assigned to the matching period, and team submission resolves and enforces the period containing the selected fixture.
 
 ## Squad and fixture import
 

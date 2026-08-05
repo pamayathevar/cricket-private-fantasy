@@ -7,7 +7,7 @@ The live-auction module is temporarily disabled in the mobile navigation and def
 ## Owner decisions overriding the sheet or earlier prototype
 
 - Squad capacity: maximum 30 players.
-- Transfers: 105 during the league stage and 6 during playoffs.
+- Transfers are configured as match-range periods. IPL 2026 currently uses 105 for Matches 1–70 (Match 1 free) and 4 for Matches 71–74 (Match 71 free).
 - Include boosters.
 - Exclude royalty points from the MVP.
 
@@ -35,6 +35,22 @@ The live-auction module is temporarily disabled in the mobile navigation and def
 - `SUP-TR` Super Transfer may be used once across all phases. It permits unlimited player transfers for that match, and the resulting submitted XI carries forward.
 - Phase 3 consists of matches 71–74 and does not permit `2UP`.
 - Boosters never carry forward. A submitted booster applies only to that fixture; the XI may carry forward, but the next fixture always starts with no booster selected.
+
+## League phases and rankings
+
+- Phase definitions are configurable for each league; they are not fixed globally in application code.
+- IPL 2026 has Phase 1 for matches 1–35, Phase 2 for matches 36–70, and Phase 3 / Playoffs for matches 71–74.
+- Active phase match ranges cannot overlap.
+- League Ranking shows an Overall ranking across every published match and a separate ranking for each configured phase.
+- Future competitions can use different phase names, counts and match ranges by configuring `league_phases` before importing fixtures.
+
+## League administration
+
+- Only active `league_admin` members can see the League Admin tab or publish rule changes.
+- Rule edits publish new playing-rule and points-rule versions; previously published match calculations retain their original version.
+- Publishing both rule sets is transactional and writes an administrative audit event.
+- Playing and Points rule versions each have an independently configurable Effective from match. Started matches retain the version already applicable to them.
+- Client and server lineup validation resolve the same fixture-effective Playing Rules version. Point processing resolves and stores the fixture-effective Points Rules version.
 
 ## Implementation assumption requiring later confirmation
 

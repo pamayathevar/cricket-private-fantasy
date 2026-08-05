@@ -24,6 +24,16 @@ select version, name, active, rules
 from public.scoring_rule_sets
 where league_id = '10000000-0000-4000-8000-000000002026';
 
+select version, name, active, created_at
+from public.lineup_rule_sets
+where league_id = '10000000-0000-4000-8000-000000002026'
+order by version desc;
+
+select version, name, active, created_at
+from public.scoring_rule_sets
+where league_id = '10000000-0000-4000-8000-000000002026'
+order by version desc;
+
 select tablename, rowsecurity
 from pg_tables
 where schemaname = 'public'
@@ -37,6 +47,16 @@ order by tablename;
 select count(*) as policy_count
 from pg_policies
 where schemaname = 'public';
+
+select code, name, sort_order, start_match_number, end_match_number, active
+from public.league_phases
+where league_id = '10000000-0000-4000-8000-000000002026'
+order by sort_order;
+
+select phase_name, display_name, total_points, matches_scored, rank
+from public.league_phase_standings
+where league_id = '10000000-0000-4000-8000-000000002026'
+order by phase_order, rank, display_name;
 
 select code, name, usage_level, total_usage_limit, phase_usage_limits,
        player_multiplier, match_multiplier, unlimited_transfers,
@@ -80,6 +100,7 @@ from public.fixtures
 where league_id = '10000000-0000-4000-8000-000000002026';
 
 select f.match_number,
+       phase.name as phase,
        home.code as team_1,
        away.code as team_2,
        f.scheduled_start at time zone 'Asia/Kolkata' as scheduled_start_ist,
@@ -87,6 +108,7 @@ select f.match_number,
        f.status,
        f.scoring_status
 from public.fixtures f
+join public.league_phases phase on phase.id = f.phase_id
 join public.cricket_teams home on home.id = f.home_team_id
 join public.cricket_teams away on away.id = f.away_team_id
 where f.league_id = '10000000-0000-4000-8000-000000002026'
