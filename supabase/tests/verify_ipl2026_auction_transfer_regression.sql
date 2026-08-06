@@ -15,6 +15,16 @@ with target_league as (
     previous.lineup_id as previous_lineup_id,
     exists (
       select 1
+      from public.lineup_submissions period_lineup
+      join public.fixtures period_fixture on period_fixture.id = period_lineup.fixture_id
+      where period_lineup.league_id = league.id
+        and period_lineup.member_id = lineup.member_id
+        and period_lineup.status in ('submitted', 'locked')
+        and period_fixture.match_number between period.start_match_number and period.end_match_number
+        and period_fixture.match_number < fixture.match_number
+    ) as has_prior_period_lineup,
+    exists (
+      select 1
       from public.lineup_boosters lineup_booster
       join public.booster_rules booster on booster.id = lineup_booster.booster_rule_id
       where lineup_booster.lineup_id = lineup.id and booster.code = 'SUP-TR'
@@ -43,7 +53,7 @@ with target_league as (
   select
     context.*,
     case
-      when context.first_match_free and context.match_number = context.start_match_number then 0
+      when context.first_match_free and not context.has_prior_period_lineup then 0
       when context.used_super_transfer then 0
       else count(*) filter (
         where league_player.owner_member_id is distinct from context.member_id
@@ -66,7 +76,8 @@ with target_league as (
     context.lineup_id, context.member_id, context.display_name,
     context.fixture_id, context.match_number, context.transfer_period_id,
     context.start_match_number, context.first_match_free,
-    context.previous_lineup_id, context.used_super_transfer
+    context.previous_lineup_id, context.has_prior_period_lineup,
+    context.used_super_transfer
 ), comparison as (
   select
     expected.match_number,

@@ -21,6 +21,8 @@ For the existing IPL 2027 test, run `verify_template_clone_ipl2027.sql`. It expe
 
 Record the Supabase project, migration commit SHA, tester, timestamp and result for release evidence. Delete disposable cloned leagues after verification.
 
+Run `verify_lineup_integrity.sql` after lineup-related migrations and before a release. It is read-only; every row must report `PASS`. It checks duplicate authenticated owner mappings, duplicate active player names within a league, saved XI size, active-player membership, power-marker membership and 3X target membership.
+
 ## Migrations 032–034
 
 1. Run verification files 032, 033 and 034 after applying each migration.

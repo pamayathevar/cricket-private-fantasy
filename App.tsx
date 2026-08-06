@@ -1052,7 +1052,7 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     if (playerResult.error) { setSubmitMessage(playerResult.error.message); setSubmitBusy(false); return; }
     const playerIdByName = new Map((playerResult.data ?? []).map((leaguePlayer: any) => [leaguePlayer.player.full_name, leaguePlayer.player_id] as [string, string]));
     const playerIds = selected.map(name => playerIdByName.get(name)).filter((id): id is string => !!id);
-    if (playerIds.length !== selected.length) { setSubmitMessage("Some selected players could not be matched to the Supabase squad."); setSubmitBusy(false); return; }
+    if (playerIds.length !== selected.length) { setSubmitMessage("Some selected players could not be matched to the active league squad."); setSubmitBusy(false); return; }
     const { data: savedLineupId, error } = await supabase.rpc("submit_lineup_with_transfer_enforcement", { p_fixture_id: fixtureResult.data.id, p_player_ids: playerIds, p_captain_player_id: captain ? playerIdByName.get(captain) ?? null : null, p_vice_captain_player_id: vice ? playerIdByName.get(vice) ?? null : null, p_impact_player_id: impactPlayer ? playerIdByName.get(impactPlayer) ?? null : null, p_impact_type: impactType || null, p_booster_code: boosterCode || null, p_booster_player_id: boosterPlayer ? playerIdByName.get(boosterPlayer) ?? null : null });
     if (error) { setSubmitMessage(error.message); Alert.alert("Team not submitted", error.message); }
     else if (!savedLineupId) { const message = "The lineup could not be confirmed. Please submit again."; setSubmitMessage(message); Alert.alert("Team not submitted", message); }

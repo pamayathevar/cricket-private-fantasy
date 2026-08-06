@@ -49,7 +49,7 @@ function useLeagueSpecialLabels(leagueId: string) {
   return fixtureId ? labels[fixtureId] ?? {} : {};
 }
 const Empty = ({ text }: { text: string }) => <View style={x.empty}><Text style={x.emptyText}>{text}</Text></View>;
-const Loading = () => <View style={x.empty}><ActivityIndicator color="#174D3D" /><Text style={x.emptyText}>Loading from Supabase…</Text></View>;
+const Loading = () => <View style={x.empty}><ActivityIndicator color="#174D3D" /><Text style={x.emptyText}>Loading league data…</Text></View>;
 
 export function ProductionDashboard({ leagueId, leagueName, memberName, openTeam }: { leagueId: string; leagueName: string; memberName: string; openTeam: () => void }) {
   const [data, setData] = useState<any>(null);
