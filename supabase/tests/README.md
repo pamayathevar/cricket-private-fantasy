@@ -41,6 +41,9 @@ Record the Supabase project, migration commit SHA, tester, timestamp and result 
 1. Apply migration 040 and run `../verify_migration_040.sql`. Active template transfer periods must begin at Match 1 and have no gaps.
 2. Apply migration 041 and run `../verify_migration_041.sql`. Both triggers must be installed and every active template with source special-player rules must contain a `special_player_rules` object.
 3. Create a disposable league from the updated template. Confirm its active special-player rule values match the snapshot while `phase_special_players`, ownership, bids, lineups, transfer events, special-player usage and score adjustments remain empty.
+4. Apply migration 042 after the royalty test publication. Run `../verify_migration_042.sql` and confirm both installed/backfill checks are `true`; regular rows must show minimum 5 and Marquee rows minimum 15 under the default rules.
+5. Apply migration 043 and run `../verify_migration_043.sql`. Publish one test where the owning member selected the borrowed player and one where they did not. The first must create royalty; the second must create no royalty adjustment or owner credit.
+6. Apply migration 044 and run `../verify_migration_044.sql`. Verify an unlocked missing earlier match blocks a later submission, a locked/started missed match does not, and the member's first actual submission in every transfer period records zero transfers even when it is not the period's first fixture.
 
 ## Migration 019
 

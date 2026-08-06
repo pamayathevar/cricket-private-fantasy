@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, ImageBackground, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, ImageBackground, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import type { Session } from "@supabase/supabase-js";
 import { Player, Role, squadPlayers as players } from "./squadData";
 import { completedMatchPoints, completedMatchStats } from "./completedMatchPoints";
@@ -154,7 +154,11 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
   const leagueDatabaseId = activeLeague?.id ?? "";
   const tabs = ownershipEnabled === true ? standardTabs : standardTabs.filter(item => item !== "Squads");
-  const selectLeague = (leagueId: string) => { setOwnershipEnabled(null); setActiveLeagueId(leagueId); setTab("Ranking"); };
+  const resetLineupState = () => {
+    setSelected([]); setCaptain(""); setVice(""); setLineupSubmitted(false);
+    setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer("");
+  };
+  const selectLeague = (leagueId: string) => { resetLineupState(); setOwnershipEnabled(null); setActiveLeagueId(leagueId); setTab("Ranking"); };
   useEffect(() => {
     if (!leagueDatabaseId) return;
     let cancelled = false;
@@ -204,7 +208,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} leagueId={leagueDatabaseId} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} roster={leagueRoster} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} roster={leagueRoster} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle="light-content" />
     <View style={s.header}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><Text style={s.logoText}>⌂</Text></TouchableOpacity><View style={{ flex: 1, marginLeft: 11 }}><Text style={s.eyebrow}>{activeLeague ? "SELECTED LEAGUE" : "PRIVATE FANTASY"}</Text><Text style={s.brand}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><Text style={s.signedInAs}>{memberName}</Text></View>{activeLeague?.status === "active" && <Text style={s.live}>● LIVE</Text>}<TouchableOpacity style={s.signOutButton} onPress={() => supabase.auth.signOut()}><Text style={s.signOutText}>Sign out</Text></TouchableOpacity></View>
@@ -719,7 +723,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <View style={s.adminCard}>
 <Text style={s.adminGroupTitle}>Royalty-driven league</Text>
 <Text style={s.adminNoticeText}>Each owner declares owned Marquee Players. Borrowers retain all their points, while the owning owner earns additional rounded royalty. Players become automatically Unique after the configured league-wide usage threshold.</Text>
-<FormatToggle label="Use Royalty-driven rules" detail={leagueFormat.acquisition_mode === "all_open" ? "Unavailable: this league has no player ownership" : "Turns Unique-player-driven rules off"} value={specialRules.marquee_mode_enabled} disabled={!canEdit || leagueFormat.acquisition_mode === "all_open"} onPress={() => setSpecialRules(current => ({ ...current, marquee_mode_enabled: !current.marquee_mode_enabled, unique_mode_enabled: false }))} />
+<FormatToggle label="Use Royalty-driven rules" detail={leagueFormat.acquisition_mode === "all_open" ? "Unavailable: this league has no player ownership" : "Turns Unique-player-driven rules off; Automatic Unique defaults to ON"} value={specialRules.marquee_mode_enabled} disabled={!canEdit || leagueFormat.acquisition_mode === "all_open"} onPress={() => setSpecialRules(current => { const enabling = !current.marquee_mode_enabled; return { ...current, marquee_mode_enabled: enabling, unique_mode_enabled: false, automatic_unique_enabled: enabling ? true : current.automatic_unique_enabled }; })} />
 {specialRules.marquee_mode_enabled ? <View>
 <AdminNumberField label="Marquee Players per owner" value={specialRules.marquee_players_per_owner} onChange={value => updateSpecialNumber("marquee_players_per_owner", value)} />
 <AdminNumberField label="Regular-player royalty" detail="percentage" value={specialRules.regular_royalty_percent} onChange={value => updateSpecialNumber("regular_royalty_percent", value)} />
@@ -924,7 +928,7 @@ function PointDetailSection({ title, rows, total }: { title: string; rows: Array
   return <View style={s.detailSection}><View style={s.detailHeading}><Text style={s.detailTitle}>{title}</Text><Text style={s.detailTotal}>{total}</Text></View>{visible.length ? visible.map(([label, value]) => <View key={label} style={s.detailRow}><Text style={s.detailLabel}>{label}</Text><Text style={s.detailValue}>{value > 0 ? `+${value}` : value}</Text></View>) : <Text style={s.detailEmpty}>No points</Text>}</View>;
 }
 
-function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { leagueId: string; ownershipEnabled: boolean; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
+function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { leagueId: string; memberId: string; ownershipEnabled: boolean; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
   const teamScrollRef = useRef<ScrollView>(null);
   const teamPositions = useRef<Record<string, number>>({});
   const playerPositions = useRef<Record<string, number>>({});
@@ -935,6 +939,8 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
   const [submitBusy, setSubmitBusy] = useState(false);
   const [submitMessage, setSubmitMessage] = useState("");
   const [lineupLoadBusy, setLineupLoadBusy] = useState(false);
+  const [hasSavedCurrentLineup, setHasSavedCurrentLineup] = useState(false);
+  const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
   const [firstMissingPriorMatch, setFirstMissingPriorMatch] = useState<number | null>(null);
   const [carriedForwardNames, setCarriedForwardNames] = useState<Set<string>>(new Set());
   const [boosterUses, setBoosterUses] = useState<Array<{ code: Exclude<BoosterCode, "">; matchNumber: number }>>([]);
@@ -942,6 +948,7 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
   const [boosterRuleSettings, setBoosterRuleSettings] = useState<BoosterRuleSetting[]>([]);
   const [transferPeriods, setTransferPeriods] = useState<TransferPeriod[]>([]);
   const [transferUsage, setTransferUsage] = useState<Record<string, number>>({});
+  const [hasPriorPeriodLineup, setHasPriorPeriodLineup] = useState(false);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [scheduledFixtureCount, setScheduledFixtureCount] = useState<number | null>(null);
   const [specialLabels, setSpecialLabels] = useState<Record<string, string[]>>({});
@@ -998,7 +1005,7 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
   const teams = Array.from(new Set(chosen.map(p => p.team)));
   const maxTeam = Math.max(0, ...teams.map(team => chosen.filter(p => p.team === team).length));
   const activeTransferPeriod = transferPeriods.find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
-  const initialLineupFree = !!activeTransferPeriod?.first_match_free && activeMatchNumber === activeTransferPeriod.start_match_number;
+  const initialLineupFree = !!activeTransferPeriod?.first_match_free && !hasPriorPeriodLineup;
   const transfers = initialLineupFree ? 0 : chosen.filter(p => (ownershipEnabled ? p.owner !== ownerName : true) && !carriedForwardNames.has(p.name)).length;
   const transferLimit = activeTransferPeriod?.transfer_limit ?? 0;
   const alreadyUsedTransfers = activeTransferPeriod ? transferUsage[activeTransferPeriod.id] ?? 0 : 0;
@@ -1033,7 +1040,7 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
     if (selected.includes(name)) { setSelected(selected.filter(x => x !== name)); if (captain === name) setCaptain(""); if (vice === name) setVice(""); if (impactPlayer === name) { setImpactPlayer(""); setImpactType(""); } if (boosterPlayer === name) setBoosterPlayer(""); }
     else setSelected([...selected, name]);
   };
-  const resetXI = () => { const snapshot = submittedSnapshots.current[activeMatchId]; if (!snapshot) return; setSelected([...snapshot.players]); setCaptain(snapshot.captain); setVice(snapshot.vice); setImpactPlayer(snapshot.impactPlayer); setImpactType(snapshot.impactType); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(!!snapshot); setShowIssues(false); };
+  const resetXI = () => { const snapshot = submittedSnapshots.current[activeMatchId]; if (!snapshot) return; setSelected([...snapshot.players]); setCaptain(snapshot.captain); setVice(snapshot.vice); setImpactPlayer(snapshot.impactPlayer); setImpactType(snapshot.impactType); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(hasSavedCurrentLineup); setShowIssues(false); };
   const clearXI = () => { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(false); setShowIssues(false); };
   const submitXI = async () => {
     setSubmitBusy(true); setSubmitMessage("");
@@ -1041,14 +1048,20 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
     const matchNumber = Number(activeMatchId.replace("M", ""));
     const fixtureResult = await supabase.from("fixtures").select("id").eq("league_id", leagueId).eq("match_number", matchNumber).single();
     if (fixtureResult.error) { setSubmitMessage(fixtureResult.error.message); setSubmitBusy(false); return; }
-    const playerResult = await supabase.from("players").select("id,full_name").in("full_name", selected);
+    const playerResult = await supabase.from("league_players").select("player_id,player:players!inner(full_name)").eq("league_id", leagueId).eq("active", true).in("player.full_name", selected);
     if (playerResult.error) { setSubmitMessage(playerResult.error.message); setSubmitBusy(false); return; }
-    const playerIdByName = new Map((playerResult.data ?? []).map(player => [player.full_name, player.id]));
+    const playerIdByName = new Map((playerResult.data ?? []).map((leaguePlayer: any) => [leaguePlayer.player.full_name, leaguePlayer.player_id] as [string, string]));
     const playerIds = selected.map(name => playerIdByName.get(name)).filter((id): id is string => !!id);
     if (playerIds.length !== selected.length) { setSubmitMessage("Some selected players could not be matched to the Supabase squad."); setSubmitBusy(false); return; }
-    const { error } = await supabase.rpc("submit_lineup_with_transfer_enforcement", { p_fixture_id: fixtureResult.data.id, p_player_ids: playerIds, p_captain_player_id: captain ? playerIdByName.get(captain) ?? null : null, p_vice_captain_player_id: vice ? playerIdByName.get(vice) ?? null : null, p_impact_player_id: impactPlayer ? playerIdByName.get(impactPlayer) ?? null : null, p_impact_type: impactType || null, p_booster_code: boosterCode || null, p_booster_player_id: boosterPlayer ? playerIdByName.get(boosterPlayer) ?? null : null });
-    if (error) setSubmitMessage(error.message);
-    else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setSubmitted(true); setSubmitMessage("Team saved to Supabase."); }
+    const { data: savedLineupId, error } = await supabase.rpc("submit_lineup_with_transfer_enforcement", { p_fixture_id: fixtureResult.data.id, p_player_ids: playerIds, p_captain_player_id: captain ? playerIdByName.get(captain) ?? null : null, p_vice_captain_player_id: vice ? playerIdByName.get(vice) ?? null : null, p_impact_player_id: impactPlayer ? playerIdByName.get(impactPlayer) ?? null : null, p_impact_type: impactType || null, p_booster_code: boosterCode || null, p_booster_player_id: boosterPlayer ? playerIdByName.get(boosterPlayer) ?? null : null });
+    if (error) { setSubmitMessage(error.message); Alert.alert("Team not submitted", error.message); }
+    else if (!savedLineupId) { const message = "The lineup could not be confirmed. Please submit again."; setSubmitMessage(message); Alert.alert("Team not submitted", message); }
+    else {
+      const verification = await supabase.from("lineup_players").select("player_id", { count: "exact" }).eq("lineup_id", savedLineupId);
+      if (verification.error) { const message = `Team was submitted, but verification failed: ${verification.error.message}`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
+      else if ((verification.count ?? verification.data?.length ?? 0) !== selected.length) { const message = `Team verification found ${verification.count ?? verification.data?.length ?? 0}/${selected.length} saved players. Please submit again.`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
+      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
+    }
     setSubmitBusy(false);
   };
   const chooseBooster = (code: BoosterCode) => { if ((code === "3X" && !tripleImpactAvailable) || (code === "2UP" && !doubleUpAvailable) || (code === "SUP-TR" && !superTransferAvailable)) return; const next = boosterCode === code ? "" : code; setBoosterCode(next); if (next !== "3X") setBoosterPlayer(""); setSubmitted(false); };
@@ -1063,12 +1076,10 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
     if (!fixture.databaseId) return;
     let cancelled = false;
     const loadLineup = async () => {
-      setLineupLoadBusy(true); setFirstMissingPriorMatch(null); setSubmitMessage("");
-      const memberResult = await supabase.from("league_members").select("id").eq("league_id", leagueId).eq("display_name", ownerName).eq("status", "active").single();
-      if (memberResult.error) { if (!cancelled) { setSubmitMessage(memberResult.error.message); setLineupLoadBusy(false); } return; }
+      setLineupLoadBusy(true); setFirstMissingPriorMatch(null); setHasPriorPeriodLineup(false); setHasSavedCurrentLineup(false); setSubmitMessage("");
       const [periodResult, transferResult, phaseResult, boosterRuleResult] = await Promise.all([
         supabase.from("league_transfer_periods").select("id,code,name,start_match_number,end_match_number,transfer_limit,first_match_free").eq("league_id", leagueId).eq("active", true).order("sort_order"),
-        supabase.from("transfer_events").select("transfer_period_id,transfer_count").eq("league_id", leagueId).eq("member_id", memberResult.data.id).eq("reason", "lineup_change"),
+        supabase.from("transfer_events").select("transfer_period_id,transfer_count").eq("league_id", leagueId).eq("member_id", memberId).eq("reason", "lineup_change"),
         supabase.from("league_phases").select("code,name,start_match_number,end_match_number").eq("league_id", leagueId).eq("active", true).order("sort_order"),
         supabase.from("booster_rules").select("code,total_usage_limit,phase_usage_limits").eq("league_id", leagueId).eq("active", true),
       ]);
@@ -1076,19 +1087,21 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
       if (!cancelled && transferResult.data) setTransferUsage(transferResult.data.reduce((usage: Record<string, number>, event: any) => event.transfer_period_id ? { ...usage, [event.transfer_period_id]: (usage[event.transfer_period_id] ?? 0) + event.transfer_count } : usage, {}));
       if (!cancelled && phaseResult.data) setLeaguePhases(phaseResult.data as LeaguePhase[]);
       if (!cancelled && boosterRuleResult.data) setBoosterRuleSettings(boosterRuleResult.data as BoosterRuleSetting[]);
-      const boosterUsageResult = await supabase.from("lineup_boosters").select("booster:booster_rules(code),fixture:fixtures(match_number)").eq("member_id", memberResult.data.id);
+      const boosterUsageResult = await supabase.from("lineup_boosters").select("booster:booster_rules(code),fixture:fixtures(match_number)").eq("member_id", memberId);
       if (!boosterUsageResult.error && !cancelled) setBoosterUses((boosterUsageResult.data ?? []).map((row: any) => ({ code: row.booster?.code, matchNumber: row.fixture?.match_number })).filter(use => use.code && use.matchNumber));
-      const earlierFixturesResult = await supabase.from("fixtures").select("id,match_number").eq("league_id", leagueId).lt("match_number", activeMatchNumber).order("match_number");
+      const earlierFixturesResult = await supabase.from("fixtures").select("id,match_number,status,lineup_lock_at,scheduled_start").eq("league_id", leagueId).lt("match_number", activeMatchNumber).order("match_number");
       if (earlierFixturesResult.error) { if (!cancelled) { setSubmitMessage(earlierFixturesResult.error.message); setLineupLoadBusy(false); } return; }
       const earlierFixtureIds = (earlierFixturesResult.data ?? []).map(row => row.id);
       const earlierLineupsResult = earlierFixtureIds.length
-        ? await supabase.from("lineup_submissions").select("fixture_id,status").eq("member_id", memberResult.data.id).in("fixture_id", earlierFixtureIds).in("status", ["submitted", "locked"])
+        ? await supabase.from("lineup_submissions").select("fixture_id,status").eq("member_id", memberId).in("fixture_id", earlierFixtureIds).in("status", ["submitted", "locked"])
         : { data: [], error: null };
       if (earlierLineupsResult.error) { if (!cancelled) { setSubmitMessage(earlierLineupsResult.error.message); setLineupLoadBusy(false); } return; }
       const submittedFixtureIds = new Set((earlierLineupsResult.data ?? []).map(row => row.fixture_id));
-      const missingPriorMatch = (earlierFixturesResult.data ?? []).find(row => !submittedFixtureIds.has(row.id))?.match_number ?? null;
-      if (!cancelled) setFirstMissingPriorMatch(missingPriorMatch);
-      const currentResult = await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type").eq("fixture_id", fixture.databaseId).eq("member_id", memberResult.data.id).maybeSingle();
+      const missingPriorMatch = (earlierFixturesResult.data ?? []).find(row => row.status === "scheduled" && new Date(row.lineup_lock_at ?? row.scheduled_start).getTime() > Date.now() && !submittedFixtureIds.has(row.id))?.match_number ?? null;
+      const currentPeriod = (periodResult.data ?? []).find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
+      const priorPeriodLineup = !!currentPeriod && (earlierFixturesResult.data ?? []).some(row => row.match_number >= currentPeriod.start_match_number && row.match_number <= currentPeriod.end_match_number && submittedFixtureIds.has(row.id));
+      if (!cancelled) { setFirstMissingPriorMatch(missingPriorMatch); setHasPriorPeriodLineup(priorPeriodLineup); }
+      const currentResult = await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type").eq("fixture_id", fixture.databaseId).eq("member_id", memberId).maybeSingle();
       if (currentResult.error) { if (!cancelled) { setSubmitMessage(currentResult.error.message); setLineupLoadBusy(false); } return; }
       let source = currentResult.data;
       let isCurrentSubmission = source?.status === "submitted" || source?.status === "locked";
@@ -1097,32 +1110,36 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
         if (priorFixtures.error) { if (!cancelled) { setSubmitMessage(priorFixtures.error.message); setLineupLoadBusy(false); } return; }
         const priorIds = (priorFixtures.data ?? []).map(row => row.id);
         if (priorIds.length) {
-          const priorLineups = await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,fixture_id").eq("member_id", memberResult.data.id).in("fixture_id", priorIds);
+          const priorLineups = await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,fixture_id").eq("member_id", memberId).in("fixture_id", priorIds);
           if (priorLineups.error) { if (!cancelled) { setSubmitMessage(priorLineups.error.message); setLineupLoadBusy(false); } return; }
           source = priorIds.map(id => (priorLineups.data ?? []).find(lineup => lineup.fixture_id === id)).find(Boolean) ?? null;
         }
       }
-      if (!source) { if (!cancelled) { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(false); setCarriedForwardNames(new Set()); setLineupLoadBusy(false); } return; }
-      const lineupPlayersResult = await supabase.from("lineup_players").select("slot,player:players(full_name)").eq("lineup_id", source.id).order("slot");
+      if (!source) { if (!cancelled) { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setCarriedForwardNames(new Set()); setLineupLoadBusy(false); } return; }
+      const lineupPlayersResult = await supabase.from("lineup_players").select("slot,player_id").eq("lineup_id", source.id).order("slot");
       const currentBoosterResult = isCurrentSubmission ? await supabase.from("lineup_boosters").select("target_player_id,booster:booster_rules(code)").eq("lineup_id", source.id).maybeSingle() : { data: null, error: null };
       const boosterTargetId = (currentBoosterResult.data as any)?.target_player_id ?? null;
       const markerIds = [source.captain_player_id, source.vice_captain_player_id, source.impact_player_id, boosterTargetId].filter((id): id is string => !!id);
       const markerPlayersResult = markerIds.length ? await supabase.from("players").select("id,full_name").in("id", markerIds) : { data: [], error: null };
-      if (lineupPlayersResult.error || markerPlayersResult.error) { if (!cancelled) { setSubmitMessage(lineupPlayersResult.error?.message ?? markerPlayersResult.error?.message ?? "Could not load lineup"); setLineupLoadBusy(false); } return; }
-      const names = (lineupPlayersResult.data ?? []).map((row: any) => row.player?.full_name).filter((name): name is string => !!name);
+      const lineupPlayerIds = (lineupPlayersResult.data ?? []).map(row => row.player_id);
+      const lineupNamesResult = lineupPlayerIds.length ? await supabase.from("players").select("id,full_name").in("id", lineupPlayerIds) : { data: [], error: null };
+      if (lineupPlayersResult.error || lineupNamesResult.error || markerPlayersResult.error) { if (!cancelled) { setSubmitMessage(lineupPlayersResult.error?.message ?? lineupNamesResult.error?.message ?? markerPlayersResult.error?.message ?? "Could not load lineup"); setLineupLoadBusy(false); } return; }
+      const nameById = new Map((lineupNamesResult.data ?? []).map(player => [player.id, player.full_name]));
+      const names = lineupPlayerIds.map(id => nameById.get(id)).filter((name): name is string => !!name);
+      if (isCurrentSubmission && names.length === 0) { if (!cancelled) { setSubmitMessage("Saved XI was found, but its players could not be loaded. Please refresh and try again."); setLineupLoadBusy(false); } return; }
       const markerName = (id: string | null) => (markerPlayersResult.data ?? []).find(row => row.id === id)?.full_name ?? "";
       const snapshot = { players: names, captain: markerName(source.captain_player_id), vice: markerName(source.vice_captain_player_id), impactPlayer: markerName(source.impact_player_id), impactType: (source.impact_type ?? "") as ImpactType };
       if (!cancelled) {
         submittedSnapshots.current[activeMatchId] = snapshot;
         setSelected(names); setCaptain(snapshot.captain); setVice(snapshot.vice); setImpactPlayer(snapshot.impactPlayer); setImpactType(snapshot.impactType);
-        setBoosterCode(isCurrentSubmission ? ((currentBoosterResult.data as any)?.booster?.code ?? "") : ""); setBoosterPlayer(isCurrentSubmission ? markerName(boosterTargetId) : ""); setSubmitted(isCurrentSubmission); setCarriedForwardNames(new Set(names)); setLineupLoadBusy(false);
+        setBoosterCode(isCurrentSubmission ? ((currentBoosterResult.data as any)?.booster?.code ?? "") : ""); setBoosterPlayer(isCurrentSubmission ? markerName(boosterTargetId) : ""); setHasSavedCurrentLineup(isCurrentSubmission); setSubmitted(isCurrentSubmission); setCarriedForwardNames(new Set(names)); setLineupLoadBusy(false);
       }
     };
     loadLineup();
     return () => { cancelled = true; };
-  }, [fixture.databaseId, activeMatchId, activeMatchNumber, leagueId, ownerName]);
+  }, [fixture.databaseId, activeMatchId, activeMatchNumber, leagueId, memberId]);
   if (!fixtures.length) return <ScrollView contentContainerStyle={s.content}><View style={s.pendingLeague}><Text style={s.pendingLeagueEyebrow}>{scheduledFixtureCount ? "LINEUPS CLOSED" : "FIXTURES REQUIRED"}</Text><Text style={s.pendingLeagueTitle}>{scheduledFixtureCount ? "No unlocked upcoming matches" : "No fixtures imported"}</Text><Text style={s.pendingLeagueText}>{scheduledFixtureCount ? "Scheduled fixtures exist, but their lineup lock times have passed. Owners cannot submit or change teams after lock." : "This league does not have scheduled fixtures yet. A league administrator must import or configure its fixtures before owners can select a team."}</Text></View></ScrollView>;
-  const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(false); setShowIssues(false); };
+  const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setShowIssues(false); };
   const focusPlayerInTeamList = (name: string, team: string) => {
     setFocusedPlayer(name);
     setExpandedTeams(current => current.includes(team) ? current : [...current, team]);
@@ -1191,21 +1208,30 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
     <Text style={s.otherTeamsTitle}>Other teams in Squad</Text><Text style={s.helper}>Tap to add or remove. Other-owner players use a transfer.</Text>
     {otherTeams.map(renderTeam)}
     <View style={[s.validation, errors.length ? s.invalid : s.valid]}><Text style={s.validationTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} to fix` : "Team is valid"}</Text>{errors.map(e => <Text key={e} style={s.validationText}>• {e}</Text>)}{!errors.length && <Text style={s.validationText}>Roles, cost, transfers and optional marker combinations are valid.</Text>}</View>
-    {submitMessage ? <View style={[s.adminMessage, submitMessage === "Team saved to Supabase." && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{submitMessage}</Text></View> : null}
+    {submitMessage ? <View style={[s.adminMessage, submitMessage === "Your lineup has been saved." && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{submitMessage}</Text></View> : null}
   </ScrollView>{showIssues && errors.length > 0 && <View style={[s.issuePopup, submissionWarnings.length > 0 && s.issuePopupWithWarnings]}>
 <Text style={s.issuePopupTitle}>Issues to fix</Text>{errors.map(error => <Text key={error} style={s.issuePopupText}>• {error}</Text>)}</View>}{submissionWarnings.length > 0 && <View style={s.submitWarning}>
 <Text style={s.submitWarningIcon}>⚠</Text>
 <Text style={s.submitWarningText}>{submissionWarnings[0]}{submissionWarnings.length > 1 ? ` +${submissionWarnings.length - 1} more warning${submissionWarnings.length > 2 ? "s" : ""}.` : ""}</Text>
-</View>}<View style={s.stickyAction}>
+</View>}{submitMessage ? <View style={[s.submitResult, submissionWarnings.length > 0 && s.submitResultWithWarnings, submitMessage === "Your lineup has been saved." ? s.submitResultSuccess : s.submitResultError]}><Text style={s.submitResultText}>{submitMessage}</Text></View> : null}<View style={s.stickyAction}>
 <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowIssues(!showIssues)}>
 <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
 <Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {transfers} transfers</Text>
 </TouchableOpacity>
 <TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : submitXI()}>
-{submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : submitted ? "Submitted ✓" : "Submit XI"}</Text>}
+{submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : submitted ? "Submitted ✓" : hasSavedCurrentLineup ? "Resubmit XI" : "Submit XI"}</Text>}
 </TouchableOpacity>
-</View>
-</View>;
+</View><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowSubmitConfirmation(false)}>
+<View style={s.submitModalOverlay}><View style={s.submitModalCard}>
+<View style={s.submitModalCheck}><Text style={s.submitModalCheckText}>✓</Text></View>
+<Text style={s.submitModalEyebrow}>LINEUP CONFIRMED</Text>
+<Text style={s.submitModalTitle}>Match {activeMatchNumber} submitted</Text>
+<View style={s.submitModalTeams}><IplTeamBadge code={fixture.home} /><Text style={s.submitModalVs}>VS</Text><IplTeamBadge code={fixture.away} /></View>
+<View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{transfers}</Text><Text style={s.submitModalStatLabel}>TRANSFERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
+<Text style={s.submitModalNote}>Your XI is confirmed. You can make changes and resubmit until the lineup locks.</Text>
+<TouchableOpacity style={s.submitModalButton} onPress={() => setShowSubmitConfirmation(false)}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
+</View></View>
+</Modal></View>;
 }
 
 function Stat({ label, value, detail }: { label: string; value: string; detail: string }) { return <View style={s.stat}><Text style={s.statLabel}>{label}</Text><Text style={s.statValue}>{value}</Text><Text style={s.meta}>{detail}</Text></View>; }
@@ -1367,6 +1393,27 @@ const s = StyleSheet.create({
   teamContent: { padding: 20, paddingBottom: 225 },
   stickyAction: { position: "absolute", left: 0, right: 0, bottom: 82, minHeight: 74, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#DDE4DF", paddingHorizontal: 16, paddingVertical: 11, flexDirection: "row", alignItems: "center" },
   submitWarning: { position: "absolute", left: 0, right: 0, bottom: 156, minHeight: 47, backgroundColor: "#FFF4D8", borderTopWidth: 1, borderTopColor: "#E6C86A", paddingHorizontal: 16, paddingVertical: 9, flexDirection: "row", alignItems: "center", zIndex: 3 },
+  submitResult: { position: "absolute", left: 12, right: 12, bottom: 164, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, zIndex: 5, borderWidth: 1 },
+  submitResultWithWarnings: { bottom: 211 },
+  submitResultSuccess: { backgroundColor: "#E7F6EC", borderColor: "#83BE94" },
+  submitResultError: { backgroundColor: "#FFF1ED", borderColor: "#D99B8E" },
+  submitResultText: { color: "#123D31", fontSize: 13, fontWeight: "800", textAlign: "center" },
+  submitModalOverlay: { flex: 1, backgroundColor: "rgba(0, 24, 19, 0.72)", alignItems: "center", justifyContent: "center", paddingHorizontal: 24 },
+  submitModalCard: { width: "100%", maxWidth: 420, backgroundColor: "#F8F8F2", borderRadius: 28, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 22, alignItems: "center", borderWidth: 1, borderColor: "#DDE6DF" },
+  submitModalCheck: { width: 62, height: 62, borderRadius: 31, backgroundColor: "#D8FF63", alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  submitModalCheckText: { color: "#062C23", fontSize: 34, fontWeight: "900" },
+  submitModalEyebrow: { color: "#687B74", fontSize: 11, fontWeight: "900", letterSpacing: 1.8 },
+  submitModalTitle: { color: "#082F26", fontSize: 25, fontWeight: "900", marginTop: 7, textAlign: "center" },
+  submitModalTeams: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 13, marginTop: 18 },
+  submitModalVs: { color: "#71817B", fontSize: 12, fontWeight: "900" },
+  submitModalSummary: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-around", backgroundColor: "#EDF3EF", borderRadius: 18, paddingVertical: 15, marginTop: 20 },
+  submitModalStat: { flex: 1, alignItems: "center" },
+  submitModalStatValue: { color: "#0C483A", fontSize: 19, fontWeight: "900" },
+  submitModalStatLabel: { color: "#7A8983", fontSize: 9, fontWeight: "800", marginTop: 3, letterSpacing: 0.7 },
+  submitModalDivider: { width: 1, height: 32, backgroundColor: "#CFDAD4" },
+  submitModalNote: { color: "#64756F", fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 18 },
+  submitModalButton: { width: "100%", backgroundColor: "#0A4A3B", borderRadius: 15, paddingVertical: 14, alignItems: "center", marginTop: 20 },
+  submitModalButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
   submitWarningIcon: { color: "#765D16", fontSize: 15, marginRight: 8 },
   submitWarningText: { flex: 1, color: "#765D16", fontSize: 9, lineHeight: 13, fontWeight: "800" },
   stickyTitle: { color: "#173028", fontSize: 13, fontWeight: "900" },
