@@ -23,6 +23,8 @@ Record the Supabase project, migration commit SHA, tester, timestamp and result 
 
 Run `verify_lineup_integrity.sql` after lineup-related migrations and before a release. It is read-only; every row must report `PASS`. It checks duplicate authenticated owner mappings, duplicate active player names within a league, saved XI size, active-player membership, power-marker membership and 3X target membership.
 
+Migration 045 adds a deferred invariant for future 3X submissions. Run `verify_migration_045.sql` after applying it. Historical published score records are intentionally immutable and are excluded from the release-blocking 3X integrity check.
+
 ## Migrations 032–034
 
 1. Run verification files 032, 033 and 034 after applying each migration.

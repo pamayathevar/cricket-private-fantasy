@@ -81,11 +81,13 @@ with checks as (
   union all
 
   select
-    '3X targets belong to the submitted XI',
+    'unpublished 3X targets belong to the submitted XI',
     count(*)
   from public.lineup_boosters lineup_booster
   join public.booster_rules booster on booster.id = lineup_booster.booster_rule_id
+  join public.fixtures fixture on fixture.id = lineup_booster.fixture_id
   where booster.code = '3X'
+    and fixture.scoring_status <> 'published'
     and lineup_booster.target_player_id is not null
     and not exists (
       select 1 from public.lineup_players lineup_player
