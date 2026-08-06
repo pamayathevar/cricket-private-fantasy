@@ -23,7 +23,7 @@ The Expo client, Supabase authentication, league foundation, RLS, configurable r
 
 - [ ] Verify all reads/writes are scoped by `league_id`.
 - [ ] Test non-overlapping phases/transfer periods, rule versions and server-time locks.
-- [ ] Test concurrent submissions and unique-player conflicts when implemented.
+- [ ] Test concurrent submissions and Unique/Marquee declaration conflicts across multiple authenticated owners.
 - [ ] Make score ingestion/staging/publishing idempotent.
 - [ ] Pin playing, points and calculation versions for published matches.
 - [ ] Add reconciliation reports for player, owner, phase and overall totals.
@@ -69,9 +69,10 @@ The Expo client, Supabase authentication, league foundation, RLS, configurable r
 
 - [ ] Build the draft league wizard in `SPEC.md`.
 - [ ] Add per-league invitation, opt-in and decline.
-- [ ] Add safe template cloning.
-- [ ] Add auction, all-open and unique-player acquisition modes.
-- [ ] Confirm and implement configurable royalty behavior.
+- [x] Add safe template cloning without ownership, bids, fixtures, squads or competitive history.
+- [x] Add auction/owned and all-open acquisition modes; keep live auction disabled.
+- [x] Implement configurable Unique-driven and Royalty-driven behavior with phase declarations and audited score adjustments.
+- [ ] Complete staging regression evidence for template special-rule parity, phase transitions and royalty reconciliation.
 - [ ] Re-enable live auction after concurrency, reconnect and audit tests.
 - [ ] Add squad/fixture import preview, validation and dry run.
 - [ ] Add admin correction tools so routine work never requires ad-hoc SQL.
@@ -117,4 +118,3 @@ git diff --check
 ```
 
 Then deploy/verify staging, test a preview build, tag the approved commit, back up and migrate production, release the compatible build/update, smoke-test and monitor.
-

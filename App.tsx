@@ -965,12 +965,16 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
     return () => { mounted = false; };
   }, [fixture.databaseId]);
   useEffect(() => {
-    const restricted = (name: string) => (specialLabels[name] ?? []).some(label => label === "UNIQUE" || label === "AUTO UNIQUE");
+    const restricted = (name: string) => {
+      const labels = specialLabels[name] ?? [];
+      const player = roster.find(item => item.name === name);
+      return labels.includes("UNIQUE") || (labels.includes("AUTO UNIQUE") && player?.owner !== ownerName);
+    };
     if (captain && restricted(captain)) setCaptain("");
     if (vice && restricted(vice)) setVice("");
     if (impactPlayer && restricted(impactPlayer)) { setImpactPlayer(""); setImpactType(""); }
     if (boosterCode === "3X" && boosterPlayer && restricted(boosterPlayer)) setBoosterPlayer("");
-  }, [specialLabels, captain, vice, impactPlayer, boosterCode, boosterPlayer]);
+  }, [specialLabels, captain, vice, impactPlayer, boosterCode, boosterPlayer, roster, ownerName]);
   const immediateNextFixture = fixtures[0];
   const nextLockMilliseconds = immediateNextFixture?.lineupLockAt ? Math.max(0, new Date(immediateNextFixture.lineupLockAt).getTime() - countdownNow) : 0;
   const nextLockSeconds = Math.floor(nextLockMilliseconds / 1000);
@@ -1136,7 +1140,7 @@ function TeamSelection({ leagueId, ownershipEnabled, ownerName, roster, fixtures
     const selectedFromTeam = selected.filter(name => teamPlayers.some(player => player.name === name)).length;
     return <View key={team} style={s.teamGroup} onLayout={event => { teamPositions.current[team] = event.nativeEvent.layout.y; }}>
       <TouchableOpacity style={[s.teamHeader, expanded && s.teamHeaderExpanded, { backgroundColor: brand.backgroundColor, borderColor: brand.borderColor }]} onPress={() => toggleTeam(team)}><Text style={[s.teamHeaderName, { color: brand.color }]}>{team}</Text><Text style={[s.teamHeaderCount, { color: brand.color }]}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{teamPlayers.length} players</Text><Text style={[s.teamChevron, { color: brand.color }]}>{expanded ? "▲" : "▼"}</Text></TouchableOpacity>
-      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const powerRestricted = (specialLabels[p.name] ?? []).some(label => label === "UNIQUE" || label === "AUTO UNIQUE"); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
+      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = labels.includes("UNIQUE") || (labels.includes("AUTO UNIQUE") && p.owner !== ownerName); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
 <TouchableOpacity style={s.playerMain} onPress={() => { setFocusedPlayer(p.name); toggle(p.name); }}>
 <View style={[s.checkbox, active && s.checkboxActive]}>
 <Text style={s.check}>{active ? "✓" : ""}</Text>

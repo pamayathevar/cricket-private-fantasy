@@ -34,6 +34,13 @@ Record the Supabase project, migration commit SHA, tester, timestamp and result 
 9. Verify 2UP applies after the Unique usage fee and is included in the Royalty base.
 10. Confirm every published score references a special rule version and exposes adjustment breakdown rows.
 11. Run `../verify_migration_038.sql`, then visually confirm fixture-effective special-player badges appear in Team Selection, Fixtures, Squad, Owner and History. Historical matches must retain their historical phase label.
+12. Run `verify_special_player_runtime.sql` against the disposable Special Rules Test league. Every power-role and calculation row must report `PASS`; review the phase snapshots for Matches 1, 36 and 71.
+
+## Migrations 040–041
+
+1. Apply migration 040 and run `../verify_migration_040.sql`. Active template transfer periods must begin at Match 1 and have no gaps.
+2. Apply migration 041 and run `../verify_migration_041.sql`. Both triggers must be installed and every active template with source special-player rules must contain a `special_player_rules` object.
+3. Create a disposable league from the updated template. Confirm its active special-player rule values match the snapshot while `phase_special_players`, ownership, bids, lineups, transfer events, special-player usage and score adjustments remain empty.
 
 ## Migration 019
 
