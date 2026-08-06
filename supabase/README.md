@@ -108,3 +108,19 @@ Commit the regenerated migration, review its diff and apply it through the Supab
 
 RLS protects league data even if someone creates an unapproved Supabase Auth account. Before public release, also configure a Supabase before-user-created Auth Hook to reject emails that do not exist in `league_members`; the local allowlist in `leagueMembers.ts` is only a temporary client-side convenience.
 20. `202608040020_import_ipl2025_fixture_template_into_ipl2027.sql` imports the actual IPL 2025 fixture order as clean, scheduled IPL 2027 test fixtures, without copying competitive state.
+
+## Unique, Marquee and Royalty rollout
+
+Apply migrations 032–034 in numerical order:
+
+1. `202608040032_special_player_rules.sql` adds typed, versioned league rules and the admin-only publishing RPC. Run `verify_migration_032.sql`.
+2. `202608040033_phase_special_players.sql` adds owner phase selections, automatic carry-forward, final-phase locking and server-side C/VC/BAI/BOI/3X rejection. Run `verify_migration_033.sql`.
+3. `202608040034_special_player_scoring.sql` applies other-player usage fees and rounded, zero-floor royalty during score publication and stores explainable adjustment rows. Run `verify_migration_034.sql`.
+
+The Rules screen is intentionally deployed with these migrations. Deploying the client first will show a missing-table load error. Rule publishing requires an unlocked scheduled effective match. Existing locked and published matches are unchanged; republishing a reviewed match recalculates its adjustment rows under the rule version assigned to that fixture.
+
+Rollback is forward-only: disable both modes through a new future-effective rule version. Do not drop rule or adjustment tables after matches have used them, because they are part of the scoring audit trail.
+
+Apply `202608040035_special_mode_ownership_guard.sql` to require an Auction/Owned league for Unique-driven or Royalty-driven mode and prevent both modes being enabled together. Apply `202608040036_minimum_royalty.sql` to configure separate regular and Marquee minimum royalty credits. Under the confirmed defaults, zero or negative player contributions still generate 5 regular or 15 Marquee royalty points.
+
+Apply `202608040037_phase_selection_window.sql` for the phase-opening and 24-hour deadline rules. Apply `202608040038_special_player_labels.sql` to expose the fixture-effective `UNIQUE`, `MARQUEE`, and automatic `AUTO UNIQUE` labels used consistently by Team Selection, Fixtures/points, Squad, Owner, and History. Run each matching verification file after its migration.

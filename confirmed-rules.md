@@ -56,6 +56,17 @@ The live-auction module is temporarily disabled in the mobile navigation and def
 
 “Include only boosters” is interpreted as including boosters but excluding the royalty-points mechanism. The other-owner usage penalty remains active.
 
+## Confirmed future league modes
+
+- A Unique-player-driven league lets each owner choose exactly two owned Unique Players per phase. Those players remain selectable by all owners but cannot receive C, VC, BAI, BOI or `3X`. Using another owner's player deducts the greater of 30% of the player's final contribution or 15 points; therefore 100 becomes 70 and 0 becomes -15. Royalty is disabled.
+- A Royalty-driven league lets each owner choose exactly two owned Marquee Players per phase. Other-owner usage keeps 100% of its final credited player contribution and adds royalty to the owning owner: the greater of 5% or 5 points for a regular player, and the greater of 15% or 15 points for a Marquee Player.
+- The royalty base includes the borrowing owner's applicable C, VC, BAI/BOI, `3X` or `2UP` result. `3X`, `2UP` and `SUP-TR` remain mutually exclusive match boosters.
+- Royalty is never negative, but its configured minimum applies even when final credited player points are zero or negative: 5 points for a regular player and 15 points for a Marquee Player by default. Each borrowing owner's royalty credit is rounded immediately to a whole point before credits are summed.
+- In Royalty mode, locked-XI appearances accumulate across the entire league. On the 49th appearance, the player becomes automatically Unique starting with the next match. Other owners can still select the player but cannot apply C, VC, BAI, BOI or `3X`; the owning owner can. Marquee status and its 15% rate may continue.
+- Unique/Marquee changes for a later non-playoff phase open only when the preceding phase starts and close 24 hours before that phase's first match. Future phases cannot be edited early. If no valid change is submitted, the previous selections carry forward. The final/playoff phase never permits changes; the preceding phase's selections carry forward automatically.
+- Injured, withdrawn or deactivated Unique/Marquee Players cannot be replaced during their current phase. They may be changed only in the next eligible phase-selection window; playoff carry-forward remains mandatory.
+- Unique, Marquee, royalty and automatic-Unique values are configurable in League Rules by league admins. Defaults preserve the confirmed values above. Changes are versioned with an effective-from match, apply only to future unlocked matches, revalidate affected unlocked submissions, and never silently recalculate locked or published matches. Owners can view these settings but cannot edit them.
+
 ## Current league data imported from the Sheet
 
 - The app supports 10 owner slots, but the current Sheet contains 9 active owners: Bala, Jeba, Johny, Mansur, Murali, Pandiyan, Saravana, Sashi, and Tamil.

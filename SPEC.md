@@ -46,32 +46,71 @@ Current foundation exists; production live auction is deferred. Budget, squad si
 - Transfers may still apply to lineup changes under the configured transfer policy.
 - Unique restrictions remain an independent option.
 
-### Unique-players-only league — Planned
+### Unique-player-driven league — Planned
 
 - Royalty points are disabled.
-- A protected player can appear in only one owner's locked lineup for the configured match, phase or league scope.
-- Conflict policy is configured before start. Default: earliest valid submission retains the player; later conflicts must be changed before lock.
-- Can operate with auction ownership or an open pool if enabled.
+- Every owner selects exactly two players from their owned squad as Unique Players for each phase.
+- Initial selections must be completed before the Phase 1 selection deadline.
+- A later non-playoff phase's selection window opens only when the preceding phase starts and closes 24 hours before the later phase's first match. Future phases are not selectable early. After the deadline, selections remain fixed for the phase.
+- If an owner makes no valid change before the deadline, the previous phase's two Unique Players carry forward automatically.
+- Changes are not allowed for the final/playoff phase. The two Unique Players from the preceding phase carry forward into the playoffs.
+- An injured, withdrawn or deactivated Unique Player cannot be replaced during the current phase. The owner may change that player only during the next eligible phase-selection window. If the next phase is the final/playoff phase, the existing selection carries forward and no replacement is allowed.
+- Unique Players remain selectable in every owner's XI; uniqueness does not reserve or remove the player from other owners.
+- A phase-selected Unique Player cannot receive Captain, Vice-Captain, BAI, BOI or `3X` from any owner, including the owning owner.
+- An owner using another owner's player pays an other-player usage fee equal to the greater of 30% of that player's otherwise eligible final contribution or 15 points.
+- The usage fee is deducted even when the player's final contribution is zero: 100 points becomes 70, while 0 points becomes -15.
+- `2UP` applies after the other-player usage fee. `SUP-TR` changes transfer charging only and never bypasses Unique restrictions.
 
-## 5. Marquee, unique and royalty points — Planned
+League-admin configuration includes the number of Unique Players per owner, percentage usage fee, minimum fixed usage fee, phase-change deadline, power-player restrictions and mid-phase replacement policy. Defaults are two Unique Players, 30%, 15 points, 24 hours, no C/VC/BAI/BOI/`3X`, and no replacement.
 
-These are independent configuration switches:
+## 5. Royalty-driven league — Planned
 
-- **Marquee:** an admin/import-tagged player receiving configured special treatment.
-- **Unique:** a player whose simultaneous selection is restricted.
-- **Royalty:** an additional points adjustment; royalty does not make a player unique.
+- Every owner selects exactly two players from their owned squad as Marquee Players for each phase.
+- Initial selections must be completed before the Phase 1 selection deadline.
+- A later non-playoff phase's selection window opens only when the preceding phase starts and closes 24 hours before the later phase's first match. Future phases are not selectable early. After the deadline, selections remain fixed for the phase.
+- If an owner makes no valid change before the deadline, the previous phase's two Marquee Players carry forward automatically.
+- Changes are not allowed for the final/playoff phase. The two Marquee Players from the preceding phase carry forward into the playoffs.
+- An injured, withdrawn or deactivated Marquee Player cannot be replaced during the current phase. The owner may change that player only during the next eligible phase-selection window. If the next phase is the final/playoff phase, the existing selection carries forward and no replacement is allowed.
+- When another owner uses an owned player, the borrowing owner keeps 100% of that player's final credited contribution; royalty is an additional credit and is not deducted from the borrower.
+- The owning owner receives the greater of 5% or 5 points for a regular player, and the greater of 15% or 15 points for a Marquee Player, for every other owner who uses that player.
+- Royalty is calculated independently for every borrowing owner and summed for the owning owner. An owner generates no royalty by using their own player.
+- The royalty base is the borrowing owner's final credited contribution for that player after applicable Captain, Vice-Captain, BAI/BOI, `3X` and `2UP` multipliers.
+- Royalty can never be negative. The configured minimum still applies when the final credited contribution is zero or negative: 5 points for a regular player and 15 points for a Marquee Player by default.
+- Each borrowing owner's royalty amount is rounded to a whole point immediately before it is credited and before multiple royalty credits are summed.
+- Only one booster may be active for a match. `3X`, `2UP` and `SUP-TR` cannot be combined with one another, so a royalty calculation can include `3X` or `2UP`, never both.
+- Example: a 100-point Marquee Player used as Captain plus `3X` contributes 600 to the borrower and 90 royalty points to the owner. Used as Captain with `2UP`, the attributed contribution is 400 and royalty is 60.
 
-Configuration includes:
+League-admin configuration includes the number of Marquee Players per owner, regular and Marquee royalty percentages, separate minimum royalty amounts, royalty rounding policy, phase-change deadline and mid-phase replacement policy. Defaults are two Marquee Players, 5% with a 5-point minimum, 15% with a 15-point minimum, immediate whole-point rounding, 24 hours, and no replacement.
 
-- royalty enabled/disabled;
-- formula: fixed points, percentage, multiplier or table;
-- recipient: selecting owner, owning owner, or both;
-- eligibility: marquee, unique, owned or explicit player list;
-- caps and positive/negative treatment;
-- unique enabled/disabled, scope and conflict policy;
-- marquee/unique source and effective period.
+### Automatic Unique status in a Royalty-driven league
 
-Royalty must appear as a separate, versioned points-breakdown category. Exact royalty formulas require business confirmation before implementation; the data model must not assume one formula.
+- Usage is one appearance in an owner's locked submitted XI.
+- Usage accumulates across the full league and does not reset at phase boundaries.
+- When usage exceeds 48 (the 49th locked appearance), the player becomes automatically Unique beginning with the next match. Locked and published matches are never recalculated.
+- Other owners may continue selecting an automatically Unique player but cannot assign Captain, Vice-Captain, BAI, BOI or `3X` to that player.
+- The owning owner may still apply power markers to their automatically Unique player.
+- Automatic Unique status does not remove Marquee status. If the owner selected the player as Marquee for the phase, the 15% royalty rate continues.
+
+The automatic-Unique usage threshold and restricted power-player markers are league-admin configuration. Defaults are 48 completed appearances and no C/VC/BAI/BOI/`3X` for borrowers after the threshold.
+
+Royalty and automatic-Unique calculations must be versioned, pinned to each published match and displayed as separate explainable breakdowns.
+
+### Phase selection timing
+
+- The deadline is calculated from the scheduled start of the first fixture in the target phase, using server time.
+- For a configurable league, the admin identifies which phase is the final/playoff phase; the application must not assume a fixed phase number.
+- Owners may save revisions before the deadline. The latest valid two-player selection becomes effective for the target phase.
+- The server rejects late changes even if a stale client still displays an edit control.
+- Rescheduling a phase's first fixture must use an audited admin workflow and explicitly decide whether the selection deadline moves; it must never silently reopen a closed selection window.
+
+### Rule administration and effective dates
+
+- Only active league admins may edit Unique, Marquee, royalty and automatic-Unique settings in the Rules tab. Owners receive a read-only view.
+- Rules are versioned. Every saved version records the administrator, timestamp, previous values and new values.
+- An administrator must choose an effective-from match when publishing a rule version.
+- A new version may affect only unlocked matches at or after its effective match. Submitted but unlocked lineups must be revalidated and clearly flagged if they no longer comply.
+- Locked or published matches retain the rule version already assigned to them and are never silently recalculated.
+- Changes to phase selections or their deadline/replacement policy cannot bypass a selection window that has already closed.
 
 ## 6. League templates — Planned
 
@@ -117,4 +156,3 @@ Player detail shows rounded batting, bowling, fielding, bonus, royalty, deductio
 ## 10. Definition of configurable
 
 A configurable feature is complete only when it is stored per league, editable during draft setup, validated server-side, read dynamically by the client, pinned/versioned in history, RLS-protected, safely cloneable when applicable, and verified against at least two different league configurations.
-

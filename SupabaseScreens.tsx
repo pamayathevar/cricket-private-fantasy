@@ -20,6 +20,34 @@ export const IPL_TEAM_BADGES: Record<string, { backgroundColor: string; color: s
 };
 export const teamBadge = (code?: string) => IPL_TEAM_BADGES[code ?? ""] ?? { backgroundColor: "#546A61", color: "#FFFFFF", borderColor: "#546A61" };
 export function IplTeamBadge({ code }: { code?: string }) { return <Text style={[x.teamBadge, teamBadge(code)]}>{code ?? "TBD"}</Text>; }
+export function SpecialPlayerBadge({ label }: { label?: string }) { return label ? <Text style={[x.specialPlayerBadge, label === "MARQUEE" && x.marqueePlayerBadge]}>{label}</Text> : null; }
+function useFixtureSpecialLabels(fixtureIds: string[]) {
+  const [labels, setLabels] = useState<Record<string, Record<string, string[]>>>({});
+  const key = fixtureIds.join(",");
+  useEffect(() => {
+    let mounted = true;
+    if (!fixtureIds.length) { setLabels({}); return () => { mounted = false; }; }
+    Promise.all(fixtureIds.map(async fixtureId => {
+      const { data } = await supabase.rpc("special_player_labels_for_fixture", { p_fixture_id: fixtureId });
+      const byName = ((data ?? []) as Array<{ full_name: string; label: string }>).reduce((result, row) => ({ ...result, [row.full_name]: [...(result[row.full_name] ?? []), row.label] }), {} as Record<string, string[]>);
+      return [fixtureId, byName] as const;
+    })).then(rows => { if (mounted) setLabels(Object.fromEntries(rows)); });
+    return () => { mounted = false; };
+  }, [key]);
+  return labels;
+}
+function useLeagueSpecialLabels(leagueId: string) {
+  const [fixtureId, setFixtureId] = useState("");
+  useEffect(() => {
+    let mounted = true;
+    supabase.from("fixtures").select("id").eq("league_id", leagueId).eq("status", "scheduled").order("match_number").limit(1).maybeSingle().then(({ data }) => {
+      if (mounted) setFixtureId(data?.id ?? "");
+    });
+    return () => { mounted = false; };
+  }, [leagueId]);
+  const labels = useFixtureSpecialLabels(fixtureId ? [fixtureId] : []);
+  return fixtureId ? labels[fixtureId] ?? {} : {};
+}
 const Empty = ({ text }: { text: string }) => <View style={x.empty}><Text style={x.emptyText}>{text}</Text></View>;
 const Loading = () => <View style={x.empty}><ActivityIndicator color="#174D3D" /><Text style={x.emptyText}>Loading from Supabase…</Text></View>;
 
@@ -80,6 +108,7 @@ export function ProductionMatches({ leagueId, roster }: { leagueId: string; rost
   const [expanded, setExpanded] = useState("");
   const [error, setError] = useState("");
   useEffect(() => { let cancelled = false; setMatches([]); setError(""); supabase.from("fixtures").select("id,match_number,scheduled_start,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),player_match_points(batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at,player:players(full_name))").eq("league_id", leagueId).order("match_number").then(({ data, error: e }) => { if (cancelled) return; if (e) setError(e.message); else setMatches(data ?? []); }); return () => { cancelled = true; }; }, [leagueId]);
+  const specialLabels = useFixtureSpecialLabels(matches.map(match => match.id));
   if (error) return <ScrollView contentContainerStyle={x.screen}><Empty text={error} /></ScrollView>;
   return <ScrollView contentContainerStyle={x.screen}>
     <Text style={x.title}>Fixtures</Text>
@@ -102,7 +131,7 @@ export function ProductionMatches({ leagueId, roster }: { leagueId: string; rost
           <View style={x.pointHead}><Text style={x.pointPlayer}>PLAYER</Text><Text style={x.pointCell}>BAT</Text><Text style={x.pointCell}>BOWL</Text><Text style={x.pointCell}>FLD</Text><Text style={x.pointCell}>BON</Text><Text style={x.pointTotal}>TOTAL</Text></View>
           {points.map(point => {
             const player = roster.find(p => p.name === point.player?.full_name);
-            return <View key={point.player?.full_name} style={x.pointRow}><View style={x.pointPlayer}><Text style={x.name}>{point.player?.full_name}</Text><View style={x.inlineMeta}><IplTeamBadge code={player?.team} /><Text style={x.meta}>{player?.owner === "Available" ? "OpenPlayer" : `Owned by ${player?.owner ?? "—"}`}</Text></View></View><Text style={x.pointCell}>{fmt(point.batting_points)}</Text><Text style={x.pointCell}>{fmt(point.bowling_points)}</Text><Text style={x.pointCell}>{fmt(point.fielding_points)}</Text><Text style={x.pointCell}>{fmt(point.bonus_points)}</Text><Text style={x.pointTotal}>{fmt(point.total_points)}</Text></View>;
+            return <View key={point.player?.full_name} style={x.pointRow}><View style={x.pointPlayer}><View style={x.playerLabelRow}><Text style={x.name}>{point.player?.full_name}</Text>{(specialLabels[match.id]?.[point.player?.full_name] ?? []).map(label => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={x.inlineMeta}><IplTeamBadge code={player?.team} /><Text style={x.meta}>{player?.owner === "Available" ? "OpenPlayer" : `Owned by ${player?.owner ?? "—"}`}</Text></View></View><Text style={x.pointCell}>{fmt(point.batting_points)}</Text><Text style={x.pointCell}>{fmt(point.bowling_points)}</Text><Text style={x.pointCell}>{fmt(point.fielding_points)}</Text><Text style={x.pointCell}>{fmt(point.bonus_points)}</Text><Text style={x.pointTotal}>{fmt(point.total_points)}</Text></View>;
           })}
         </View> : <Empty text={match.scoring_status === "review" ? "Points are under admin review." : "Points have not been published."} /> : null}
       </View>;
@@ -110,16 +139,75 @@ export function ProductionMatches({ leagueId, roster }: { leagueId: string; rost
   </ScrollView>;
 }
 
-export function ProductionSquads({ leagueId, currentOwner, roster }: { leagueId: string; currentOwner: string; roster: Player[] }) {
+type SpecialSelectionConfig = { type: "unique" | "marquee"; required: number };
+type SpecialSelectionPhase = { id: string; name: string; sort_order: number; is_final_phase: boolean; opensAt: string | null; closesAt: string | null };
+export function ProductionSquads({ leagueId, currentOwner, roster, specialSelection }: { leagueId: string; currentOwner: string; roster: Player[]; specialSelection?: SpecialSelectionConfig | null }) {
   const [points, setPoints] = useState<any[]>([]);
   const [expanded, setExpanded] = useState(currentOwner);
   const [expandedPlayer, setExpandedPlayer] = useState("");
   const [error, setError] = useState("");
+  const leagueSpecialLabels = useLeagueSpecialLabels(leagueId);
+  const [specialPhase, setSpecialPhase] = useState<SpecialSelectionPhase | null>(null);
+  const [specialSelected, setSpecialSelected] = useState<string[]>([]);
+  const [specialPlayerIds, setSpecialPlayerIds] = useState<Record<string, string>>({});
+  const [specialBusy, setSpecialBusy] = useState(false);
+  const [specialMessage, setSpecialMessage] = useState("");
   useEffect(() => { supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name),fixture:fixtures!inner(league_id)").eq("fixture.league_id", leagueId).not("published_at", "is", null).then(({ data, error: e }) => { if (e) setError(e.message); else setPoints(data ?? []); }); }, [leagueId]);
+  useEffect(() => {
+    let mounted = true;
+    setSpecialPhase(null); setSpecialSelected([]); setSpecialPlayerIds({}); setSpecialMessage("");
+    if (!specialSelection) return () => { mounted = false; };
+    const load = async () => {
+      setSpecialBusy(true);
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData.user?.id;
+      const { data: member, error: memberError } = userId ? await supabase.from("league_members").select("id").eq("league_id", leagueId).eq("user_id", userId).eq("status", "active").maybeSingle() : { data: null, error: null };
+      if (!mounted) return;
+      if (!member) { setSpecialMessage(memberError?.message ?? "Active owner membership is required."); setSpecialBusy(false); return; }
+      const [phaseResult, playerResult, selectionResult] = await Promise.all([
+        supabase.from("league_phases").select("id,name,sort_order,is_final_phase").eq("league_id", leagueId).eq("active", true).order("sort_order"),
+        supabase.from("league_players").select("player_id,player:players(full_name)").eq("league_id", leagueId).eq("owner_member_id", member.id).eq("active", true),
+        supabase.from("phase_special_players").select("phase_id,player_id").eq("league_id", leagueId).eq("member_id", member.id).eq("selection_type", specialSelection.type),
+      ]);
+      const loadError = phaseResult.error ?? playerResult.error ?? selectionResult.error;
+      if (loadError) { setSpecialMessage(loadError.message); setSpecialBusy(false); return; }
+      const phases = await Promise.all(((phaseResult.data ?? []) as any[]).map(async phase => {
+        const [opens, closes] = await Promise.all([
+          supabase.rpc("phase_special_selection_opens_at", { p_phase_id: phase.id }),
+          supabase.rpc("phase_special_selection_deadline", { p_phase_id: phase.id }),
+        ]);
+        return { ...phase, opensAt: opens.data as string | null, closesAt: closes.data as string | null } as SpecialSelectionPhase;
+      }));
+      if (!mounted) return;
+      const now = Date.now();
+      const target = phases.find(phase => !phase.is_final_phase && (!phase.opensAt || new Date(phase.opensAt).getTime() <= now) && !!phase.closesAt && now < new Date(phase.closesAt).getTime()) ?? null;
+      const explicit = (selectionResult.data ?? []) as Array<{ phase_id: string; player_id: string }>;
+      const targetOrder = target?.sort_order ?? -1;
+      const sourcePhase = [...phases].filter(phase => phase.sort_order <= targetOrder && explicit.some(row => row.phase_id === phase.id)).sort((a, b) => b.sort_order - a.sort_order)[0];
+      setSpecialPhase(target);
+      setSpecialSelected(sourcePhase ? explicit.filter(row => row.phase_id === sourcePhase.id).map(row => row.player_id) : []);
+      setSpecialPlayerIds(Object.fromEntries(((playerResult.data ?? []) as any[]).map(row => [row.player?.full_name, row.player_id])));
+      setSpecialBusy(false);
+    };
+    load();
+    return () => { mounted = false; };
+  }, [leagueId, specialSelection?.type, specialSelection?.required]);
+  const toggleSpecial = (playerId: string) => {
+    if (!specialPhase || specialBusy || !specialSelection) return;
+    setSpecialMessage("");
+    setSpecialSelected(current => current.includes(playerId) ? current.filter(id => id !== playerId) : current.length < specialSelection.required ? [...current, playerId] : current);
+  };
+  const saveSpecial = async () => {
+    if (!specialPhase || !specialSelection || specialSelected.length !== specialSelection.required) return;
+    setSpecialBusy(true); setSpecialMessage("");
+    const { error: saveError } = await supabase.rpc("set_phase_special_players", { p_phase_id: specialPhase.id, p_selection_type: specialSelection.type, p_player_ids: specialSelected });
+    setSpecialBusy(false);
+    setSpecialMessage(saveError ? saveError.message : `Saved ${specialSelection.required} ${specialSelection.type === "unique" ? "Unique" : "Marquee"} Players for ${specialPhase.name}.`);
+  };
   const totals = useMemo(() => { const latest = new Map<string, any>(); for (const row of points) { const key = `${row.fixture_id}:${row.player?.full_name}`; if (!latest.has(key) || latest.get(key).calculation_version < row.calculation_version) latest.set(key, row); } const map = new Map<string, any>(); for (const row of latest.values()) { const name = row.player?.full_name; const current = map.get(name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; map.set(name, { matches: current.matches + 1, batting: current.batting + Number(row.batting_points), bowling: current.bowling + Number(row.bowling_points), fielding: current.fielding + Number(row.fielding_points), bonus: current.bonus + Number(row.bonus_points), total: current.total + Number(row.total_points) }); } return map; }, [points]);
   if (error) return <Empty text={error} />;
   const owners = Array.from(new Set(roster.filter(p => p.owner !== "Available").map(p => p.owner))).sort((a, b) => a === currentOwner ? -1 : b === currentOwner ? 1 : a.localeCompare(b));
-  return <View><Text style={x.section}>Owner Squads</Text><Text style={x.subtitle}>Auction squads with totals from published matches</Text>{owners.map(owner => { const open = expanded === owner; const ownerPlayers = roster.filter(p => p.owner === owner).sort((a, b) => (totals.get(b.name)?.total ?? 0) - (totals.get(a.name)?.total ?? 0)); const total = ownerPlayers.reduce((sum, p) => sum + (totals.get(p.name)?.total ?? 0), 0); return <View key={owner} style={x.cardBlock}><TouchableOpacity style={x.row} onPress={() => setExpanded(open ? "" : owner)}><View style={x.avatar}><Text style={x.avatarText}>{owner[0]}</Text></View><View style={x.grow}><Text style={x.ownerDisplayName}>{owner}{owner === currentOwner ? " · You" : ""}</Text><Text style={x.meta}>{ownerPlayers.length} auction players</Text></View><Text style={x.value}>{fmt(total)} pts</Text><Text style={x.chevron}>{open ? "▲" : "▼"}</Text></TouchableOpacity>{open && ownerPlayers.map(player => { const p = totals.get(player.name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; const playerKey = `${owner}:${player.team}:${player.name}`; const playerOpen = expandedPlayer === playerKey; return <View key={player.name}><TouchableOpacity style={x.pointRow} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}><View style={x.pointPlayer}><View style={x.ownerPlayerNameRow}><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={x.playerListName}>{player.name}</Text><Text style={x.ownerPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></View><View style={x.ownerPlayerTeamRole}><IplTeamBadge code={player.team} /><Text style={x.ownerPlayerRole}>{roleLabel[player.role]}</Text></View><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={x.ownerPlayerCosts}>Selection ₹{player.price}m  ·  Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice}m`}</Text></View><Text style={x.pointCell}>{fmt(p.batting)}</Text><Text style={x.pointCell}>{fmt(p.bowling)}</Text><Text style={x.pointCell}>{fmt(p.fielding)}</Text><Text style={x.pointCell}>{fmt(p.bonus)}</Text><Text style={x.pointTotal}>{fmt(p.total)}</Text></TouchableOpacity>{playerOpen ? <View style={x.ownerPlayerBreakdown}><BreakdownLine label="Scored matches" value={p.matches} /><BreakdownLine label="Batting" value={p.batting} /><BreakdownLine label="Bowling" value={p.bowling} /><BreakdownLine label="Fielding" value={p.fielding} /><BreakdownLine label="Bonus" value={p.bonus} /><BreakdownLine label="Total points" value={p.total} strong /></View> : null}</View>; })}</View>; })}</View>;
+  return <View><Text style={x.section}>Owner Squads</Text><Text style={x.subtitle}>Auction squads with totals from published matches</Text>{owners.map(owner => { const open = expanded === owner; const isCurrentOwner = owner === currentOwner; const ownerPlayers = roster.filter(p => p.owner === owner).sort((a, b) => (totals.get(b.name)?.total ?? 0) - (totals.get(a.name)?.total ?? 0)); const total = ownerPlayers.reduce((sum, p) => sum + (totals.get(p.name)?.total ?? 0), 0); return <View key={owner} style={x.cardBlock}><TouchableOpacity style={x.row} onPress={() => setExpanded(open ? "" : owner)}><View style={x.avatar}><Text style={x.avatarText}>{owner[0]}</Text></View><View style={x.grow}><Text style={x.ownerDisplayName}>{owner}{isCurrentOwner ? " · You" : ""}</Text><Text style={x.meta}>{ownerPlayers.length} auction players</Text></View><Text style={x.value}>{fmt(total)} pts</Text><Text style={x.chevron}>{open ? "▲" : "▼"}</Text></TouchableOpacity>{open && isCurrentOwner && specialSelection ? <View style={x.specialSelectionBanner}><Text style={x.specialSelectionTitle}>{specialPhase ? `${specialPhase.name} ${specialSelection.type === "unique" ? "Unique" : "Marquee"} Players` : "Special-player selection"}</Text><Text style={x.specialSelectionText}>{specialBusy ? "Loading selection…" : specialPhase ? `Select ${specialSelection.required} below · ${specialSelected.length}/${specialSelection.required} selected · closes ${new Date(specialPhase.closesAt!).toLocaleString()}` : "No selection window is currently open. The next phase opens only after the current phase starts; playoffs carry forward."}</Text></View> : null}{open && ownerPlayers.map(player => { const p = totals.get(player.name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; const playerKey = `${owner}:${player.team}:${player.name}`; const playerOpen = expandedPlayer === playerKey; const specialPlayerId = specialPlayerIds[player.name]; const specialChecked = !!specialPlayerId && specialSelected.includes(specialPlayerId); return <View key={player.name}><TouchableOpacity style={x.pointRow} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}><View style={x.pointPlayer}><View style={x.ownerPlayerNameRow}><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={x.playerListName}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.ownerPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text>{isCurrentOwner && specialSelection && specialPhase && specialPlayerId ? <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: specialChecked }} style={[x.specialCheckbox, specialChecked && x.specialCheckboxChecked]} onPress={() => toggleSpecial(specialPlayerId)}><Text style={x.specialCheckboxText}>{specialChecked ? "✓" : ""}</Text></TouchableOpacity> : null}</View><View style={x.ownerPlayerTeamRole}><IplTeamBadge code={player.team} /><Text style={x.ownerPlayerRole}>{roleLabel[player.role]}</Text></View><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={x.ownerPlayerCosts}>Selection ₹{player.price}m  ·  Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice}m`}</Text></View><Text style={x.pointCell}>{fmt(p.batting)}</Text><Text style={x.pointCell}>{fmt(p.bowling)}</Text><Text style={x.pointCell}>{fmt(p.fielding)}</Text><Text style={x.pointCell}>{fmt(p.bonus)}</Text><Text style={x.pointTotal}>{fmt(p.total)}</Text></TouchableOpacity>{playerOpen ? <View style={x.ownerPlayerBreakdown}><BreakdownLine label="Scored matches" value={p.matches} /><BreakdownLine label="Batting" value={p.batting} /><BreakdownLine label="Bowling" value={p.bowling} /><BreakdownLine label="Fielding" value={p.fielding} /><BreakdownLine label="Bonus" value={p.bonus} /><BreakdownLine label="Total points" value={p.total} strong /></View> : null}</View>; })}{open && isCurrentOwner && specialSelection && specialPhase ? <View style={x.specialSelectionActions}><TouchableOpacity disabled={specialBusy || specialSelected.length !== specialSelection.required} style={[x.primary, (specialBusy || specialSelected.length !== specialSelection.required) && { opacity: 0.45 }]} onPress={saveSpecial}><Text style={x.primaryText}>Save {specialSelected.length}/{specialSelection.required} for {specialPhase.name}</Text></TouchableOpacity>{specialMessage ? <Text style={x.specialSelectionMessage}>{specialMessage}</Text> : null}</View> : specialMessage && open && isCurrentOwner ? <Text style={x.specialSelectionMessage}>{specialMessage}</Text> : null}</View>; })}</View>;
 }
 
 type LeagueSquadPlayer = Player & { leaguePlayerId: string; active: boolean; bidPrice: number | null; ownerId: string };
@@ -146,6 +234,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const [editActive, setEditActive] = useState(true);
   const [editBusy, setEditBusy] = useState(false);
   const [loadVersion, setLoadVersion] = useState(0);
+  const leagueSpecialLabels = useLeagueSpecialLabels(leagueId);
   const teams = useMemo(() => Array.from(new Set(squadPlayers.map(player => player.team))).sort((a, b) => a.localeCompare(b)), [squadPlayers]);
   useEffect(() => {
     let cancelled = false;
@@ -266,7 +355,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
           return <View key={playerKey}>
             <View style={[x.squadPlayerRow, !player.active && x.squadPlayerRowInactive]}>
               <TouchableOpacity disabled={!points} style={x.squadPlayerMain} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}>
-                <View style={x.grow}><View style={x.squadPlayerNameRow}><Text style={[x.squadPlayerName, !player.active && x.squadPlayerNameInactive]}>{player.name}</Text><Text style={x.squadSelectionCost}>₹{player.price.toFixed(1)}m</Text></View><Text style={x.squadPlayerOwner}>{`${!player.active ? "Inactive · " : ""}${player.owner === "Available" ? "OpenPlayer" : `Owned by ${player.owner} [Bid ${player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`}]`}`}</Text></View>
+                <View style={x.grow}><View style={x.squadPlayerNameRow}><Text style={[x.squadPlayerName, !player.active && x.squadPlayerNameInactive]}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.squadSelectionCost}>₹{player.price.toFixed(1)}m</Text></View><Text style={x.squadPlayerOwner}>{`${!player.active ? "Inactive · " : ""}${player.owner === "Available" ? "OpenPlayer" : `Owned by ${player.owner} [Bid ${player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`}]`}`}</Text></View>
                 <Text style={x.roleText}>{roleLabel[player.role]}</Text>
                 {points ? <><Text style={x.squadPlayerPoints}>{fmt(points.total)} pts</Text><Text style={x.squadPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></> : <Text style={x.squadPointsPending}>0 pts</Text>}
               </TouchableOpacity>
@@ -313,6 +402,7 @@ export function ProductionHistory({ leagueId }: { leagueId: string }) {
   const [expandedOwner, setExpandedOwner] = useState("");
   const [expandedPlayer, setExpandedPlayer] = useState("");
   const [error, setError] = useState("");
+  const specialLabels = useFixtureSpecialLabels(matches.map(match => match.id));
   useEffect(() => {
     Promise.all([
       supabase.from("fixtures").select("id,match_number,stage,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),player_match_points(player_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at),member_match_scores(lineup_id,total_points,rank,calculation_breakdown),lineup_submissions(id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,member:league_members(id,display_name),lineup_players(slot,player:players(id,full_name,role,team:cricket_teams(code))),lineup_boosters(target_player_id,booster:booster_rules(code,player_multiplier,match_multiplier)))").eq("league_id", leagueId).order("match_number", { ascending: false }),
@@ -387,7 +477,7 @@ export function ProductionHistory({ leagueId }: { leagueId: string }) {
               const contribution = (grossContribution - ownershipDeduction) * matchMultiplier;
               const playerKey = `${key}:${player.id}`;
               const playerOpen = expandedPlayer === playerKey;
-              return <View key={player.id}><TouchableOpacity style={x.historyPlayer} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}><Text style={x.chevron}>{playerOpen ? "▲" : "▼"}</Text><View style={[x.grow, { marginLeft: 7 }]}><Text style={x.playerName}>{entry.slot}. {player.full_name}</Text><View style={x.playerMetaRow}><IplTeamBadge code={player.team?.code} /><Text style={x.roleText}>{player.role}</Text><Text style={[x.ownershipText, ownership === "Mine" ? x.ownershipMine : ownership === "OpenPlayer" ? x.ownershipOpen : x.ownershipOther]}>{ownership}</Text><Text style={x.baseText}>{playerPoints ? `Base ${fmt(playerPoints.total_points)}` : "Points pending"}</Text></View></View>{playerPoints ? <Text style={x.playerValue}>{fmt(contribution)} pts</Text> : null}{markers.map(marker => <Text key={marker} style={x.marker}>{marker}</Text>)}</TouchableOpacity>{playerOpen && playerPoints ? <View style={x.playerBreakdown}><BreakdownLine label="Batting" value={playerPoints.batting_points} /><BreakdownLine label="Bowling" value={playerPoints.bowling_points} /><BreakdownLine label="Fielding" value={playerPoints.fielding_points} /><BreakdownLine label="Bonus" value={playerPoints.bonus_points} /><BreakdownLine label="Base total" value={playerPoints.total_points} strong />{grossContribution !== Number(playerPoints.total_points) ? <BreakdownLine label="After player multipliers" value={grossContribution} /> : null}{ownershipDeduction > 0 ? <BreakdownLine label="Ownership deduction" value={-ownershipDeduction} /> : null}{matchMultiplier !== 1 ? <BreakdownLine label={`After ${booster?.booster?.code} (${matchMultiplier}×)`} value={contribution} /> : null}<BreakdownLine label="Final player contribution" value={contribution} strong /></View> : null}</View>;
+              return <View key={player.id}><TouchableOpacity style={x.historyPlayer} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}><Text style={x.chevron}>{playerOpen ? "▲" : "▼"}</Text><View style={[x.grow, { marginLeft: 7 }]}><View style={x.playerLabelRow}><Text style={x.playerName}>{entry.slot}. {player.full_name}</Text>{(specialLabels[match.id]?.[player.full_name] ?? []).map(label => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={x.playerMetaRow}><IplTeamBadge code={player.team?.code} /><Text style={x.roleText}>{player.role}</Text><Text style={[x.ownershipText, ownership === "Mine" ? x.ownershipMine : ownership === "OpenPlayer" ? x.ownershipOpen : x.ownershipOther]}>{ownership}</Text><Text style={x.baseText}>{playerPoints ? `Base ${fmt(playerPoints.total_points)}` : "Points pending"}</Text></View></View>{playerPoints ? <Text style={x.playerValue}>{fmt(contribution)} pts</Text> : null}{markers.map(marker => <Text key={marker} style={x.marker}>{marker}</Text>)}</TouchableOpacity>{playerOpen && playerPoints ? <View style={x.playerBreakdown}><BreakdownLine label="Batting" value={playerPoints.batting_points} /><BreakdownLine label="Bowling" value={playerPoints.bowling_points} /><BreakdownLine label="Fielding" value={playerPoints.fielding_points} /><BreakdownLine label="Bonus" value={playerPoints.bonus_points} /><BreakdownLine label="Base total" value={playerPoints.total_points} strong />{grossContribution !== Number(playerPoints.total_points) ? <BreakdownLine label="After player multipliers" value={grossContribution} /> : null}{ownershipDeduction > 0 ? <BreakdownLine label="Ownership deduction" value={-ownershipDeduction} /> : null}{matchMultiplier !== 1 ? <BreakdownLine label={`After ${booster?.booster?.code} (${matchMultiplier}×)`} value={contribution} /> : null}<BreakdownLine label="Final player contribution" value={contribution} strong /></View> : null}</View>;
             }) : null}
           </View>;
         }) : <Empty text="No owner lineup is visible for this match." /> : null}
@@ -405,9 +495,11 @@ const x = StyleSheet.create({
   card: { backgroundColor: "white", borderRadius: 16, overflow: "hidden" }, cardBlock: { backgroundColor: "white", borderRadius: 15, overflow: "hidden", marginBottom: 10 }, row: { flexDirection: "row", alignItems: "center", padding: 12, borderBottomWidth: 1, borderBottomColor: "#EDF0EA" }, matchHeader: { flexDirection: "row", alignItems: "center", padding: 14 }, matchTeams: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }, vsText: { color: "#718079", fontSize: 8, fontWeight: "900" }, inlineMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }, grow: { flex: 1 }, name: { color: "#173028", fontSize: 11, fontWeight: "900" }, meta: { color: "#7D8B85", fontSize: 8, marginTop: 3 }, value: { color: "#174D3D", fontSize: 11, fontWeight: "900", marginHorizontal: 7 }, chevron: { color: "#61756D", fontSize: 10 }, rank: { width: 34, color: "#5F716A", fontWeight: "900" }, avatar: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#E8F4EF", alignItems: "center", justifyContent: "center", marginRight: 9 }, avatarText: { color: "#174D3D", fontWeight: "900" },
   chips: { gap: 7, paddingBottom: 12 }, chip: { backgroundColor: "#E5ECE8", borderRadius: 11, paddingHorizontal: 13, paddingVertical: 9 }, chipActive: { backgroundColor: "#174D3D" }, chipLabel: { color: "#315047", fontSize: 10, fontWeight: "900" }, chipLabelActive: { color: "#DDFB72" }, chipDetail: { color: "#82918B", fontSize: 7, marginTop: 2 },
   pointHead: { flexDirection: "row", padding: 9, backgroundColor: "#EEF2EF" }, pointRow: { flexDirection: "row", alignItems: "center", padding: 9, borderTopWidth: 1, borderTopColor: "#EDF0EA" }, pointPlayer: { flex: 1, minWidth: 0, paddingRight: 5 }, pointCell: { width: 29, textAlign: "right", color: "#61736C", fontSize: 8 }, pointTotal: { width: 35, textAlign: "right", color: "#173028", fontSize: 9, fontWeight: "900" },
+  playerLabelRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }, specialPlayerBadge: { color: "#6B4E00", backgroundColor: "#FFF0A8", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, fontSize: 7, fontWeight: "900", overflow: "hidden" }, marqueePlayerBadge: { color: "#FFFFFF", backgroundColor: "#7B3FA1" },
   ownerDisplayName: { color: "#10251F", fontFamily: OWNER_FONT, fontSize: 15, fontWeight: "700", letterSpacing: 0.25 },
   playerListName: { flex: 1, color: "#173028", fontSize: 11, fontWeight: "900" },
   ownerPlayerNameRow: { flexDirection: "row", alignItems: "center", minWidth: 0 }, ownerPlayerChevron: { color: "#61756D", fontSize: 7, fontWeight: "900", marginLeft: 4 }, ownerPlayerTeamRole: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 }, ownerPlayerRole: { color: "#536B62", fontSize: 8, fontWeight: "800" }, ownerPlayerCosts: { color: "#7D8B85", fontSize: 8, lineHeight: 11, marginTop: 4 }, ownerPlayerBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 28, paddingVertical: 8 },
+  specialSelectionBanner: { backgroundColor: "#EAF3EE", borderBottomWidth: 1, borderBottomColor: "#D5E2DB", paddingHorizontal: 12, paddingVertical: 10 }, specialSelectionTitle: { color: "#174D3D", fontSize: 10, fontWeight: "900" }, specialSelectionText: { color: "#61736C", fontSize: 8, lineHeight: 12, marginTop: 3 }, specialCheckbox: { width: 21, height: 21, borderRadius: 6, borderWidth: 1.5, borderColor: "#8EA198", alignItems: "center", justifyContent: "center", marginLeft: 8 }, specialCheckboxChecked: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, specialCheckboxText: { color: "#DDFB72", fontSize: 12, fontWeight: "900" }, specialSelectionActions: { paddingHorizontal: 12, paddingBottom: 12 }, specialSelectionMessage: { color: "#315C50", fontSize: 9, fontWeight: "800", paddingHorizontal: 12, paddingVertical: 9 },
   squadTitleRow: { flexDirection: "row", alignItems: "center" }, squadToggle: { backgroundColor: "#E5ECE8", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, marginLeft: 8 }, squadToggleText: { color: "#315047", fontSize: 8, fontWeight: "900" },
   squadTeamCard: { backgroundColor: "white", borderRadius: 14, overflow: "hidden", marginBottom: 11 }, squadTeamHeader: { minHeight: 52, borderWidth: 2, flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 7 }, squadTeamHeaderMain: { flex: 1, minHeight: 38, flexDirection: "row", alignItems: "center", paddingHorizontal: 3 }, squadTeamCode: { width: 45, fontSize: 14, fontWeight: "900" }, squadTeamSummary: { flex: 1, fontSize: 8, lineHeight: 12, fontWeight: "800", opacity: 0.92 }, squadTeamChevron: { marginLeft: 7, fontSize: 10, fontWeight: "900" }, squadAddPlayerButton: { minWidth: 49, minHeight: 28, borderRadius: 7, borderWidth: 1, alignItems: "center", justifyContent: "center", marginLeft: 7 }, squadAddPlayerButtonText: { fontSize: 7, fontWeight: "900" },
   squadAddForm: { backgroundColor: "#F4F7F4", borderBottomWidth: 1, borderBottomColor: "#DDE5E0", padding: 12 }, squadAddFormTitle: { color: "#173028", fontSize: 12, fontWeight: "900", marginBottom: 9 }, squadAddInput: { backgroundColor: "white", borderWidth: 1, borderColor: "#D5DED9", borderRadius: 9, color: "#173028", fontSize: 11, paddingHorizontal: 11, paddingVertical: 9, marginBottom: 8 }, squadAddRoles: { flexDirection: "row", gap: 5, marginBottom: 8 }, squadAddRole: { flex: 1, minHeight: 31, backgroundColor: "#E5ECE8", borderRadius: 7, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 }, squadAddRoleActive: { backgroundColor: "#174D3D" }, squadAddRoleText: { color: "#536B62", fontSize: 7, fontWeight: "900" }, squadAddRoleTextActive: { color: "#DDFB72" }, squadAddLabel: { color: "#60726A", fontSize: 8, fontWeight: "900", marginBottom: 6 }, squadOwnerChoices: { gap: 6, paddingBottom: 9 }, squadOwnerChoice: { backgroundColor: "white", borderWidth: 1, borderColor: "#D5DED9", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }, squadOwnerChoiceActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, squadOwnerChoiceText: { color: "#536B62", fontSize: 8, fontWeight: "800" }, squadOwnerChoiceTextActive: { color: "#DDFB72" }, squadAddSubmit: { backgroundColor: "#DDFB72", borderRadius: 9, minHeight: 38, alignItems: "center", justifyContent: "center" }, squadAddSubmitText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
