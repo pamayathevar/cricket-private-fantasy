@@ -58,7 +58,7 @@ The live-auction module is temporarily disabled in the mobile navigation and def
 
 ## Confirmed future league modes
 
-- A Unique-player-driven league lets each owner choose exactly two owned Unique Players per phase. Those players remain selectable by all owners but cannot receive C, VC, BAI, BOI or `3X`. Using another owner's player deducts the greater of 30% of the player's final contribution or 15 points; therefore 100 becomes 70 and 0 becomes -15. Royalty is disabled.
+- A Unique-player-driven league lets each owner choose exactly two owned Unique Players per phase. Those players remain selectable by all owners. Their owning owner may apply C, VC, BAI, BOI or `3X`; borrowing owners cannot. Using another owner's player deducts the greater of 30% of the player's final contribution or 15 points; therefore 100 becomes 70 and 0 becomes -15. Royalty is disabled.
 - A Royalty-driven league lets each owner choose exactly two owned Marquee Players per phase. Other-owner usage keeps 100% of its final credited player contribution and adds royalty to the owning owner: the greater of 5% or 5 points for a regular player, and the greater of 15% or 15 points for a Marquee Player.
 - The royalty base includes the borrowing owner's applicable C, VC, BAI/BOI, `3X` or `2UP` result. `3X`, `2UP` and `SUP-TR` remain mutually exclusive match boosters.
 - Royalty is never negative, but its configured minimum applies even when final credited player points are zero or negative: 5 points for a regular player and 15 points for a Marquee Player by default. Each borrowing owner's royalty credit is rounded immediately to a whole point before credits are summed.
@@ -66,6 +66,12 @@ The live-auction module is temporarily disabled in the mobile navigation and def
 - Unique/Marquee changes for a later non-playoff phase open only when the preceding phase starts and close 24 hours before that phase's first match. Future phases cannot be edited early. If no valid change is submitted, the previous selections carry forward. The final/playoff phase never permits changes; the preceding phase's selections carry forward automatically.
 - Injured, withdrawn or deactivated Unique/Marquee Players cannot be replaced during their current phase. They may be changed only in the next eligible phase-selection window; playoff carry-forward remains mandatory.
 - Unique, Marquee, royalty and automatic-Unique values are configurable in League Rules by league admins. Defaults preserve the confirmed values above. Changes are versioned with an effective-from match, apply only to future unlocked matches, revalidate affected unlocked submissions, and never silently recalculate locked or published matches. Owners can view these settings but cannot edit them.
+
+## Official squad changes
+
+- Squad imports preserve historical player, ownership, lineup and scoring records.
+- A player marked Withdrawn by the configured squad source is deactivated only for the affected league/season and cannot be selected in future lineups.
+- A replacement player is added as an active OpenPlayer with a league selection cost. Ownership changes only through the existing audited league-admin player-edit workflow.
 
 ## Current league data imported from the Sheet
 

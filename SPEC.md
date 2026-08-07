@@ -56,12 +56,12 @@ Current foundation exists; production live auction is deferred. Budget, squad si
 - Changes are not allowed for the final/playoff phase. The two Unique Players from the preceding phase carry forward into the playoffs.
 - An injured, withdrawn or deactivated Unique Player cannot be replaced during the current phase. The owner may change that player only during the next eligible phase-selection window. If the next phase is the final/playoff phase, the existing selection carries forward and no replacement is allowed.
 - Unique Players remain selectable in every owner's XI; uniqueness does not reserve or remove the player from other owners.
-- A phase-selected Unique Player cannot receive Captain, Vice-Captain, BAI, BOI or `3X` from any owner, including the owning owner.
+- A phase-selected Unique Player may receive Captain, Vice-Captain, BAI, BOI or `3X` from the owning owner. Borrowing owners cannot apply those configured power roles.
 - An owner using another owner's player pays an other-player usage fee equal to the greater of 30% of that player's otherwise eligible final contribution or 15 points.
 - The usage fee is deducted even when the player's final contribution is zero: 100 points becomes 70, while 0 points becomes -15.
 - `2UP` applies after the other-player usage fee. `SUP-TR` changes transfer charging only and never bypasses Unique restrictions.
 
-League-admin configuration includes the number of Unique Players per owner, percentage usage fee, minimum fixed usage fee, phase-change deadline, power-player restrictions and mid-phase replacement policy. Defaults are two Unique Players, 30%, 15 points, 24 hours, no C/VC/BAI/BOI/`3X`, and no replacement.
+League-admin configuration includes the number of Unique Players per owner, percentage usage fee, minimum fixed usage fee, phase-change deadline, borrower power-player restrictions and mid-phase replacement policy. Defaults are two Unique Players, 30%, 15 points, 24 hours, no C/VC/BAI/BOI/`3X` for borrowers, and no replacement.
 
 ## 5. Royalty-driven league — Planned
 

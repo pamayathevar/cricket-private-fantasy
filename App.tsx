@@ -715,16 +715,16 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 </View>
 <View style={s.adminCard}>
 <Text style={s.adminGroupTitle}>Unique-player-driven league</Text>
-<Text style={s.adminNoticeText}>Each owner declares owned Unique Players for the phase. Anyone may still select them, but they cannot receive configured power roles. Borrowing another owner's player incurs a usage fee.</Text>
+<Text style={s.adminNoticeText}>Each owner declares owned Unique Players for the phase. Their owner may use power roles; borrowing owners cannot. Borrowing another owner's player also incurs the configured usage fee.</Text>
 <FormatToggle label="Use Unique-player-driven rules" detail={leagueFormat.acquisition_mode === "all_open" ? "Unavailable: this league has no player ownership" : "Turns Royalty-driven rules off"} value={specialRules.unique_mode_enabled} disabled={!canEdit || leagueFormat.acquisition_mode === "all_open"} onPress={() => setSpecialRules(current => ({ ...current, unique_mode_enabled: !current.unique_mode_enabled, marquee_mode_enabled: false }))} />
 {specialRules.unique_mode_enabled ? <View>
 <AdminNumberField label="Unique Players per owner" value={specialRules.unique_players_per_owner} onChange={value => updateSpecialNumber("unique_players_per_owner", value)} />
 <AdminNumberField label="Other-player usage fee" detail="percentage of final contribution" value={specialRules.other_player_fee_percent} onChange={value => updateSpecialNumber("other_player_fee_percent", value)} />
 <AdminNumberField label="Minimum usage fee" detail="points; applied even when contribution is zero" value={specialRules.other_player_minimum_fee} onChange={value => updateSpecialNumber("other_player_minimum_fee", value)} />
-<FormatToggle label="Restrict Captain" detail="Unique Players cannot be Captain" value={specialRules.unique_restrict_captain} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_captain: !current.unique_restrict_captain }))} />
-<FormatToggle label="Restrict Vice-Captain" detail="Unique Players cannot be Vice-Captain" value={specialRules.unique_restrict_vice_captain} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_vice_captain: !current.unique_restrict_vice_captain }))} />
-<FormatToggle label="Restrict BAI / BOI" detail="Unique Players cannot be Impact Players" value={specialRules.unique_restrict_impact} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_impact: !current.unique_restrict_impact }))} />
-<FormatToggle label="Restrict 3X" detail="Unique Players cannot receive Triple Impact" value={specialRules.unique_restrict_3x} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_3x: !current.unique_restrict_3x }))} />
+<FormatToggle label="Restrict Captain" detail="Borrowing owners cannot make a Unique Player Captain" value={specialRules.unique_restrict_captain} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_captain: !current.unique_restrict_captain }))} />
+<FormatToggle label="Restrict Vice-Captain" detail="Borrowing owners cannot make a Unique Player Vice-Captain" value={specialRules.unique_restrict_vice_captain} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_vice_captain: !current.unique_restrict_vice_captain }))} />
+<FormatToggle label="Restrict BAI / BOI" detail="Borrowing owners cannot use a Unique Player as an Impact Player" value={specialRules.unique_restrict_impact} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_impact: !current.unique_restrict_impact }))} />
+<FormatToggle label="Restrict 3X" detail="Borrowing owners cannot give a Unique Player Triple Impact" value={specialRules.unique_restrict_3x} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, unique_restrict_3x: !current.unique_restrict_3x }))} />
 </View> : <Text style={s.adminFieldDetail}>OFF · No Unique declaration, power restriction or special borrowing fee.</Text>}
 </View>
 <View style={s.adminCard}>
@@ -982,7 +982,7 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     const restricted = (name: string) => {
       const labels = specialLabels[name] ?? [];
       const player = roster.find(item => item.name === name);
-      return labels.includes("UNIQUE") || (labels.includes("AUTO UNIQUE") && player?.owner !== ownerName);
+      return (labels.includes("UNIQUE") || labels.includes("AUTO UNIQUE")) && player?.owner !== ownerName;
     };
     if (captain && restricted(captain)) setCaptain("");
     if (vice && restricted(vice)) setVice("");
@@ -1172,7 +1172,7 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     const selectedFromTeam = selected.filter(name => teamPlayers.some(player => player.name === name)).length;
     return <View key={team} style={s.teamGroup} onLayout={event => { teamPositions.current[team] = event.nativeEvent.layout.y; }}>
       <TouchableOpacity style={[s.teamHeader, expanded && s.teamHeaderExpanded, { backgroundColor: brand.backgroundColor, borderColor: brand.borderColor }]} onPress={() => toggleTeam(team)}><Text style={[s.teamHeaderName, { color: brand.color }]}>{team}</Text><Text style={[s.teamHeaderCount, { color: brand.color }]}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{teamPlayers.length} players</Text><Text style={[s.teamChevron, { color: brand.color }]}>{expanded ? "▲" : "▼"}</Text></TouchableOpacity>
-      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = labels.includes("UNIQUE") || (labels.includes("AUTO UNIQUE") && p.owner !== ownerName); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
+      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = (labels.includes("UNIQUE") || labels.includes("AUTO UNIQUE")) && p.owner !== ownerName; return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
 <TouchableOpacity style={s.playerMain} onPress={() => { setFocusedPlayer(p.name); toggle(p.name); }}>
 <View style={[s.checkbox, active && s.checkboxActive]}>
 <Text style={s.check}>{active ? "✓" : ""}</Text>
