@@ -25,6 +25,8 @@ Run `verify_lineup_integrity.sql` after lineup-related migrations and before a r
 
 Migration 045 adds a deferred invariant for future 3X submissions. Run `verify_migration_045.sql` after applying it. Historical published score records are intentionally immutable and are excluded from the release-blocking 3X integrity check.
 
+Use `verify_automatic_unique_conversion.sql` in the disposable Royalty test league after publishing a deliberately low Automatic Unique threshold effective from an unlocked match. It verifies the `AUTO UNIQUE` label, confirms the owning owner remains power-eligible, and confirms a borrowing owner is restricted.
+
 ## Migrations 032–034
 
 1. Run verification files 032, 033 and 034 after applying each migration.
