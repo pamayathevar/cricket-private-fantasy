@@ -738,9 +738,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 </View> : <Text style={s.adminFieldDetail}>OFF · No Marquee declaration, royalty credit or automatic Unique conversion.</Text>}
 </View>
 <View style={s.adminCard}>
-<Text style={s.adminGroupTitle}>Shared phase-selection policy</Text>
-<Text style={s.adminNoticeText}>Used by whichever mode is enabled. Final/playoff selections always carry forward and cannot be changed.</Text>
-<AdminNumberField label="Change deadline" detail="hours before the next phase starts" value={specialRules.phase_change_deadline_hours} onChange={value => updateSpecialNumber("phase_change_deadline_hours", value)} />
+<Text style={s.adminGroupTitle}>Unique / Marquee selection timing</Text>
+<Text style={s.adminNoticeText}>Controls when owners must finalize their special players for each phase. Final/playoff selections always carry forward and cannot be changed.</Text>
+<AdminNumberField label="Selection closes before phase" detail="Hours before that phase's first match. Example: 24 closes owner changes one day before the phase begins." value={specialRules.phase_change_deadline_hours} onChange={value => updateSpecialNumber("phase_change_deadline_hours", value)} />
 <FormatToggle label="Mid-phase injury replacement" detail="Confirmed default is OFF; playoff changes remain blocked" value={specialRules.mid_phase_replacement_allowed} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, mid_phase_replacement_allowed: !current.mid_phase_replacement_allowed }))} />
 </View>
 </View> : section === "playing" ? <View style={s.adminCard}>
