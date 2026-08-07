@@ -8,7 +8,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "export:web": "expo export --platform web --output-dir dist",
+    "check:secrets": "node scripts/check-tracked-secrets.mjs",
+    "check": "npm run typecheck && npm run check:secrets && npm run export:web"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

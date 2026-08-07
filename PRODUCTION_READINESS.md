@@ -113,8 +113,10 @@ Keep infrastructure simple for the closed group, but never place privileged cred
 
 ```sh
 npm ci
-npm run typecheck
+npm run check
 git diff --check
 ```
+
+GitHub also runs these non-database checks for every pull request and push to `main`. Supabase migrations, RLS role checks, authenticated RPC tests and score reconciliation remain staging gates and are intentionally not run against a live project from CI yet.
 
 Then deploy/verify staging, test a preview build, tag the approved commit, back up and migrate production, release the compatible build/update, smoke-test and monitor.
