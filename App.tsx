@@ -1013,10 +1013,11 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
   const maxTeam = Math.max(0, ...teams.map(team => chosen.filter(p => p.team === team).length));
   const activeTransferPeriod = transferPeriods.find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
   const initialLineupFree = !!activeTransferPeriod?.first_match_free && !hasPriorPeriodLineup;
-  const transfers = initialLineupFree ? 0 : chosen.filter(p => (ownershipEnabled ? p.owner !== ownerName : true) && !carriedForwardNames.has(p.name)).length;
+  const freeTransferMatch = initialLineupFree && !firstMissingPriorMatch && !lineupLoadBusy;
+  const transfers = freeTransferMatch ? 0 : chosen.filter(p => (ownershipEnabled ? p.owner !== ownerName : true) && !carriedForwardNames.has(p.name)).length;
   const transferLimit = activeTransferPeriod?.transfer_limit ?? 0;
   const alreadyUsedTransfers = activeTransferPeriod ? transferUsage[activeTransferPeriod.id] ?? 0 : 0;
-  const displayedTransfers = boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + transfers}/${transferLimit}`;
+  const displayedTransfers = freeTransferMatch ? "Free" : boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + transfers}/${transferLimit}`;
   const used3X = boosterUses.find(use => use.code === "3X");
   const tripleImpactAvailable = !used3X;
   const currentPhase = leaguePhases.find(phase => activeMatchNumber >= phase.start_match_number && activeMatchNumber <= phase.end_match_number);
@@ -1025,7 +1026,7 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
   const doubleUpUsesInPhase = boosterUses.filter(use => use.code === "2UP" && leaguePhases.find(phase => use.matchNumber >= phase.start_match_number && use.matchNumber <= phase.end_match_number)?.code === currentPhase?.code);
   const doubleUpAvailable = !!currentPhase && doubleUpPhaseLimit > doubleUpUsesInPhase.length && boosterUses.filter(use => use.code === "2UP").length < Number(doubleUpRule?.total_usage_limit ?? 0);
   const superTransferUsed = boosterUses.find(use => use.code === "SUP-TR");
-  const superTransferAvailable = !superTransferUsed;
+  const superTransferAvailable = !initialLineupFree && !firstMissingPriorMatch && !superTransferUsed;
   const myPlayers = chosen.filter(p => p.owner === ownerName).length;
   const openPlayers = chosen.filter(p => p.owner === "Available").length;
   const otherOwnerPlayers = chosen.filter(p => p.owner !== ownerName && p.owner !== "Available").length;
@@ -1033,9 +1034,9 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
   const impactSelectedPlayer = chosen.find(p => p.name === impactPlayer);
   const impactWarnings = [impactType === "BOI" && impactSelectedPlayer && ["BA", "WK"].includes(impactSelectedPlayer.role) && `BOI warning: ${impactSelectedPlayer.name} is a ${impactSelectedPlayer.role === "BA" ? "batter" : "wicketkeeper"}. Only bowling points will count.`, impactType === "BAI" && impactSelectedPlayer?.role === "BO" && `BAI warning: ${impactSelectedPlayer.name} is a bowler. Only batting points will count.`].filter(Boolean) as string[];
   const selectionScopeWarnings = ownershipEnabled ? chosen.filter(player => player.owner !== ownerName && !matchTeams.includes(player.team) && !carriedForwardNames.has(player.name)).map(player => `${player.name} is not your player and is not playing in ${fixture.home} vs ${fixture.away}.`) : [];
-  const optionalMarkerWarnings = [!captain && `Captain not selected. You may still submit without the ${rules.captain_multiplier}× Captain bonus.`, !vice && `Vice-Captain not selected. You may still submit without the ${rules.vice_captain_multiplier}× VC bonus.`, !impactPlayer && "BAI/BOI not selected. Impact is optional for this match."].filter(Boolean) as string[];
+  const optionalMarkerWarnings = [!captain && "Captain not selected", !vice && "Vice-Captain not selected", !impactPlayer && "BAI/BOI not selected"].filter(Boolean) as string[];
   const submissionWarnings = [...selectionScopeWarnings, ...impactWarnings, ...optionalMarkerWarnings];
-  const errors = [fixtureLocked && "Lineup is locked", firstMissingPriorMatch && `Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`, !activeTransferPeriod && `No transfer period is configured for Match ${activeMatchNumber}`, selected.length !== rules.lineup_size && `Select exactly ${rules.lineup_size} players (${selected.length}/${rules.lineup_size})`, count("BA") < rules.min_batters && `At least ${rules.min_batters} batters required`, count("BO") < rules.min_bowlers && `At least ${rules.min_bowlers} bowlers required`, count("WK") < rules.min_wicketkeepers && `At least ${rules.min_wicketkeepers} wicketkeeper${rules.min_wicketkeepers === 1 ? "" : "s"} required`, count("AL") < rules.min_all_rounders && `At least ${rules.min_all_rounders} all-rounder${rules.min_all_rounders === 1 ? "" : "s"} required`, maxTeam > rules.max_from_one_team && `Maximum ${rules.max_from_one_team} from one IPL team`, total > rules.lineup_budget && `₹${(total - rules.lineup_budget).toFixed(1)}m over budget`, activeTransferPeriod && boosterCode !== "SUP-TR" && alreadyUsedTransfers + transfers > transferLimit && `${activeTransferPeriod.name} transfer limit of ${transferLimit} exceeded`, captain && vice && captain === vice && "Captain and vice-captain must differ", impactPlayer && !impactType && "Choose BAI or BOI for the Impact player", impactPlayer && (impactPlayer === captain || impactPlayer === vice) && "Impact player cannot be captain or vice-captain", boosterCode === "3X" && !boosterPlayer && "Select the player who receives 3X", boosterCode === "3X" && boosterPlayer && !selected.includes(boosterPlayer) && "The 3X player must be in your XI"].filter(Boolean) as string[];
+  const errors = [fixtureLocked && "Lineup is locked", firstMissingPriorMatch && `Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`, !activeTransferPeriod && `No transfer period is configured for Match ${activeMatchNumber}`, selected.length !== rules.lineup_size && `Select exactly ${rules.lineup_size} players (${selected.length}/${rules.lineup_size})`, count("BA") < rules.min_batters && `At least ${rules.min_batters} batters required`, count("BO") < rules.min_bowlers && `At least ${rules.min_bowlers} bowlers required`, count("WK") < rules.min_wicketkeepers && `At least ${rules.min_wicketkeepers} wicketkeeper${rules.min_wicketkeepers === 1 ? "" : "s"} required`, count("AL") < rules.min_all_rounders && `At least ${rules.min_all_rounders} all-rounder${rules.min_all_rounders === 1 ? "" : "s"} required`, maxTeam > rules.max_from_one_team && `Maximum ${rules.max_from_one_team} from one IPL team`, total > rules.lineup_budget && `₹${(total - rules.lineup_budget).toFixed(1)}m over budget`, initialLineupFree && boosterCode === "SUP-TR" && "Super Transfer is unavailable because this lineup already has free transfers", activeTransferPeriod && boosterCode !== "SUP-TR" && alreadyUsedTransfers + transfers > transferLimit && `${activeTransferPeriod.name} transfer limit of ${transferLimit} exceeded`, captain && vice && captain === vice && "Captain and vice-captain must differ", impactPlayer && !impactType && "Choose BAI or BOI for the Impact player", impactPlayer && (impactPlayer === captain || impactPlayer === vice) && "Impact player cannot be captain or vice-captain", boosterCode === "3X" && !boosterPlayer && "Select the player who receives 3X", boosterCode === "3X" && boosterPlayer && !selected.includes(boosterPlayer) && "The 3X player must be in your XI"].filter(Boolean) as string[];
   const toggle = (name: string) => {
     const player = roster.find(item => item.name === name);
     const freshExternalPlayer = player && (ownershipEnabled ? player.owner !== ownerName : true) && !carriedForwardNames.has(name);
@@ -1072,6 +1073,13 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     setSubmitBusy(false);
   };
   const chooseBooster = (code: BoosterCode) => { if ((code === "3X" && !tripleImpactAvailable) || (code === "2UP" && !doubleUpAvailable) || (code === "SUP-TR" && !superTransferAvailable)) return; const next = boosterCode === code ? "" : code; setBoosterCode(next); if (next !== "3X") setBoosterPlayer(""); setSubmitted(false); };
+  useEffect(() => {
+    if (initialLineupFree && boosterCode === "SUP-TR") {
+      setBoosterCode("");
+      setBoosterPlayer("");
+      setSubmitted(false);
+    }
+  }, [initialLineupFree, boosterCode, setBoosterCode, setBoosterPlayer, setSubmitted]);
   useEffect(() => {
     if (fixtures.length && !fixtures.some(match => match.id === activeMatchId)) setActiveMatchId(fixtures[0].id);
   }, [fixtures, activeMatchId]);
@@ -1187,6 +1195,7 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; return <TouchableOpacity key={match.id} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, active && submitted ? s.statusSubmitted : null]}>{active && submitted ? "Submitted" : "XI carried · booster empty"}</Text></TouchableOpacity>; })}</ScrollView>
     <View style={s.selectionTitleRow}><View style={{ flex: 1 }}><Text style={s.greeting}>{submitted ? "Your submitted XI" : "Select your XI"}</Text><View style={s.titleTeamRow}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away} /><Text style={s.titleLock}>Locks {fixture.day} at {fixture.time}</Text></View></View><View style={s.selectionActions}><TouchableOpacity style={s.resetButton} onPress={resetXI}><Text style={s.resetButtonText}>Reset XI</Text></TouchableOpacity><TouchableOpacity style={s.clearButton} onPress={clearXI}><Text style={s.clearButtonText}>Clear XI</Text></TouchableOpacity></View></View>
     <View style={s.activeRulesBanner}><Text style={s.activeRulesTitle}>Playing Rules v{rules.version}</Text><Text style={s.activeRulesText}>Minimum {rules.min_bowlers} bowlers · {rules.lineup_size} players · ₹{rules.lineup_budget}m budget</Text></View>
+    {firstMissingPriorMatch ? <View style={s.priorMatchBanner}><View style={s.priorMatchIcon}><Text style={s.priorMatchIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.priorMatchTitle}>SUBMIT MATCH {firstMissingPriorMatch} FIRST</Text><Text style={s.priorMatchText}>Match {firstMissingPriorMatch} is still open. Submit that XI before preparing Match {activeMatchNumber}.</Text></View></View> : freeTransferMatch ? <View style={s.freeTransferBanner}><View style={s.freeTransferIcon}><Text style={s.freeTransferIconText}>↔</Text></View><View style={{ flex: 1 }}><Text style={s.freeTransferTitle}>FREE TRANSFER MATCH</Text><Text style={s.freeTransferText}>Your first submitted XI in {activeTransferPeriod?.name ?? "this period"}. All changes are free and your {transferLimit}-transfer balance remains unchanged.</Text></View></View> : null}
     {lineupLoadBusy ? <View style={s.carryForward}><ActivityIndicator color="#174D3D" /><Text style={s.carryForwardText}>Loading saved or carried-forward XI…</Text></View> : null}
     {rulesLoadMessage ? <View style={s.warningCard}><Text style={s.warningText}>⚠ {rulesLoadMessage}</Text></View> : null}
     {submitted && <View style={s.carryForward}><Text style={s.carryForwardText}>✓ This XI will carry forward to the next match automatically.</Text></View>}
@@ -1203,7 +1212,7 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     <View style={s.boosterGrid}>
       <BoosterCard code="3X" name="Triple Impact" detail={tripleImpactAvailable ? "1 remaining · all phases" : `Used in Match ${used3X?.matchNumber} · unavailable`} active={boosterCode === "3X"} disabled={!tripleImpactAvailable} onPress={() => chooseBooster("3X")} />
       <BoosterCard code="2UP" name="Double Up" detail={doubleUpAvailable ? `${currentPhase?.name}: ${doubleUpPhaseLimit - doubleUpUsesInPhase.length} remaining` : doubleUpPhaseLimit <= 0 ? `Unavailable in ${currentPhase?.name ?? "this phase"}` : `${currentPhase?.name}: usage reached`} active={boosterCode === "2UP"} disabled={!doubleUpAvailable} onPress={() => chooseBooster("2UP")} />
-      <BoosterCard code="SUP-TR" name="Super Transfer" detail={superTransferAvailable ? "1 remaining · all phases" : `Used in Match ${superTransferUsed?.matchNumber} · unavailable`} active={boosterCode === "SUP-TR"} disabled={!superTransferAvailable} onPress={() => chooseBooster("SUP-TR")} />
+      {!initialLineupFree ? <BoosterCard code="SUP-TR" name="Super Transfer" detail={superTransferAvailable ? "1 remaining · all phases" : `Used in Match ${superTransferUsed?.matchNumber} · unavailable`} active={boosterCode === "SUP-TR"} disabled={!superTransferAvailable} onPress={() => chooseBooster("SUP-TR")} /> : null}
     </View>
     {boosterCode === "3X" && <View style={s.boosterHelp}><Text style={s.boosterHelpTitle}>{boosterPlayer ? `${boosterPlayer} receives 3X` : "Choose the 3X player below"}</Text><Text style={s.boosterHelpText}>Stacks multiplicatively: C+3X = 6×, VC+3X = 4.5×, and BAI/BOI+3X = 6× for that discipline.</Text></View>}
     {boosterCode === "2UP" && <View style={s.boosterHelp}><Text style={s.boosterHelpTitle}>Your final match total will be doubled</Text><Text style={s.boosterHelpText}>Availability follows the configured usage limit for {currentPhase?.name ?? "this league phase"}.</Text></View>}
@@ -1514,6 +1523,16 @@ const s = StyleSheet.create({
   activeRulesBanner: { backgroundColor: "#E8F2ED", borderRadius: 11, paddingHorizontal: 12, paddingVertical: 9, marginBottom: 10 },
   activeRulesTitle: { color: "#174D3D", fontSize: 10, fontWeight: "900" },
   activeRulesText: { color: "#587068", fontSize: 9, marginTop: 3 },
+  freeTransferBanner: { flexDirection: "row", alignItems: "center", backgroundColor: "#DDF7E2", borderWidth: 1, borderColor: "#62A970", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 10 },
+  freeTransferIcon: { width: 31, height: 31, borderRadius: 16, backgroundColor: "#277348", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  freeTransferIconText: { color: "white", fontSize: 17, fontWeight: "900" },
+  freeTransferTitle: { color: "#1D603A", fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
+  freeTransferText: { color: "#407154", fontSize: 9, lineHeight: 13, marginTop: 3 },
+  priorMatchBanner: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFF0E8", borderWidth: 1, borderColor: "#D98763", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 10 },
+  priorMatchIcon: { width: 31, height: 31, borderRadius: 16, backgroundColor: "#A64D31", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  priorMatchIconText: { color: "white", fontSize: 16, fontWeight: "900" },
+  priorMatchTitle: { color: "#873D28", fontSize: 11, fontWeight: "900", letterSpacing: 0.6 },
+  priorMatchText: { color: "#865A4B", fontSize: 9, lineHeight: 13, marginTop: 3 },
   ownershipSummary: { flexDirection: "row", gap: 7, marginTop: 8, marginBottom: 2 },
   ownershipItem: { flex: 1, backgroundColor: "white", borderRadius: 11, paddingHorizontal: 9, paddingVertical: 9, flexDirection: "row", alignItems: "center" },
   ownershipDot: { width: 8, height: 8, borderRadius: 4, marginRight: 7 },

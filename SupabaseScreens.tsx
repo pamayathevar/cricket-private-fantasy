@@ -297,6 +297,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const [pointRows, setPointRows] = useState<any[]>([]);
   const [royaltyRows, setRoyaltyRows] = useState<any[]>([]);
   const [royaltyMode, setRoyaltyMode] = useState(false);
+  const [ownershipEnabled, setOwnershipEnabled] = useState(true);
   const [squadPlayers, setSquadPlayers] = useState<LeagueSquadPlayer[]>([]);
   const [pointsError, setPointsError] = useState("");
   const [availabilityMessage, setAvailabilityMessage] = useState("");
@@ -322,6 +323,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setPointRows([]);
     setRoyaltyRows([]);
     setRoyaltyMode(false);
+    setOwnershipEnabled(true);
     setSquadPlayers([]);
     setOwners([]);
     setPointsError("");
@@ -333,14 +335,16 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
       supabase.from("league_members").select("id,display_name").eq("league_id", leagueId).eq("status", "active").in("role", ["owner", "league_admin"]).order("display_name"),
       supabase.from("special_player_score_adjustments").select("player_id,adjustment_points,adjustment_type").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
       supabase.from("special_player_rule_sets").select("marquee_mode_enabled").eq("league_id", leagueId).eq("active", true).maybeSingle(),
-    ]).then(([pointsResult, squadResult, ownerResult, royaltyResult, ruleResult]) => {
+      supabase.from("league_format_configs").select("ownership_enabled").eq("league_id", leagueId).maybeSingle(),
+    ]).then(([pointsResult, squadResult, ownerResult, royaltyResult, ruleResult, formatResult]) => {
         if (cancelled) return;
-        const error = pointsResult.error ?? squadResult.error ?? ownerResult.error ?? royaltyResult.error ?? ruleResult.error;
+        const error = pointsResult.error ?? squadResult.error ?? ownerResult.error ?? royaltyResult.error ?? ruleResult.error ?? formatResult.error;
         if (error) setPointsError(error.message);
         else {
           setPointRows(pointsResult.data ?? []);
           setRoyaltyRows(royaltyResult.data ?? []);
           setRoyaltyMode(ruleResult.data?.marquee_mode_enabled === true);
+          setOwnershipEnabled(formatResult.data?.ownership_enabled !== false);
           setSquadPlayers((squadResult.data as any[] ?? []).map(row => ({ leaguePlayerId: row.id, playerId: row.player_id, active: row.active, name: row.player.full_name, team: row.player.team?.code ?? "—", role: row.player.role as Player["role"], price: Number(row.acquisition_price), bidPrice: row.bid_price == null ? null : Number(row.bid_price), ownerId: row.owner?.id ?? "", owner: row.owner?.display_name ?? "Available" })).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name)));
           setOwners((ownerResult.data ?? []) as LeagueSquadOwner[]);
         }
@@ -387,7 +391,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     if (!editName.trim()) { setAvailabilityMessage("Player name is required."); return; }
     if (!Number.isFinite(cost) || cost < 0) { setAvailabilityMessage("Selection cost must be zero or greater."); return; }
     setEditBusy(true); setAvailabilityMessage("");
-    const { error } = await supabase.rpc("edit_league_player", { p_league_player_id: player.leaguePlayerId, p_full_name: editName.trim(), p_role: editRole, p_selection_cost: cost, p_owner_member_id: editOwnerId || null, p_active: editActive });
+    const { error } = await supabase.rpc("edit_league_player", { p_league_player_id: player.leaguePlayerId, p_full_name: editName.trim(), p_role: editRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? editOwnerId || null : null, p_active: editActive });
     setEditBusy(false);
     if (error) { setAvailabilityMessage(error.message); Alert.alert("Edit player", error.message); return; }
     setEditingPlayerId("");
@@ -405,7 +409,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     if (!newPlayerName.trim()) { setAvailabilityMessage("Player name is required."); return; }
     if (!Number.isFinite(cost) || cost < 0) { setAvailabilityMessage("Selection cost must be zero or greater."); return; }
     setAddBusy(true); setAvailabilityMessage("");
-    const { error } = await supabase.rpc("add_league_replacement_player", { p_league_id: leagueId, p_team_code: addingTeam, p_full_name: newPlayerName.trim(), p_role: newPlayerRole, p_selection_cost: cost, p_owner_member_id: newPlayerOwnerId || null });
+    const { error } = await supabase.rpc("add_league_replacement_player", { p_league_id: leagueId, p_team_code: addingTeam, p_full_name: newPlayerName.trim(), p_role: newPlayerRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? newPlayerOwnerId || null : null });
     setAddBusy(false);
     if (error) { setAvailabilityMessage(error.message); Alert.alert("Add player", error.message); return; }
     const addedName = newPlayerName.trim();
@@ -437,8 +441,8 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
           <View style={x.squadAddRoles}>{(["BA", "WK", "AL", "BO"] as Player["role"][]).map(role => <TouchableOpacity key={role} style={[x.squadAddRole, newPlayerRole === role && x.squadAddRoleActive]} onPress={() => setNewPlayerRole(role)}><Text style={[x.squadAddRoleText, newPlayerRole === role && x.squadAddRoleTextActive]}>{roleLabel[role]}</Text></TouchableOpacity>)}</View>
           <Text style={x.squadAddLabel}>Selection cost (₹m)</Text>
           <TextInput style={x.squadAddInput} value={newPlayerCost} onChangeText={setNewPlayerCost} keyboardType="decimal-pad" placeholder="Selection cost (₹m)" placeholderTextColor="#8B9893" />
-          <Text style={x.squadAddLabel}>Assign to</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><TouchableOpacity style={[x.squadOwnerChoice, !newPlayerOwnerId && x.squadOwnerChoiceActive]} onPress={() => setNewPlayerOwnerId("")}><Text style={[x.squadOwnerChoiceText, !newPlayerOwnerId && x.squadOwnerChoiceTextActive]}>OpenPlayer</Text></TouchableOpacity>{owners.map(owner => <TouchableOpacity key={owner.id} style={[x.squadOwnerChoice, newPlayerOwnerId === owner.id && x.squadOwnerChoiceActive]} onPress={() => setNewPlayerOwnerId(owner.id)}><Text style={[x.squadOwnerChoiceText, newPlayerOwnerId === owner.id && x.squadOwnerChoiceTextActive]}>{owner.display_name}</Text></TouchableOpacity>)}</ScrollView>
+          {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assign to</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><TouchableOpacity style={[x.squadOwnerChoice, !newPlayerOwnerId && x.squadOwnerChoiceActive]} onPress={() => setNewPlayerOwnerId("")}><Text style={[x.squadOwnerChoiceText, !newPlayerOwnerId && x.squadOwnerChoiceTextActive]}>OpenPlayer</Text></TouchableOpacity>{owners.map(owner => <TouchableOpacity key={owner.id} style={[x.squadOwnerChoice, newPlayerOwnerId === owner.id && x.squadOwnerChoiceActive]} onPress={() => setNewPlayerOwnerId(owner.id)}><Text style={[x.squadOwnerChoiceText, newPlayerOwnerId === owner.id && x.squadOwnerChoiceTextActive]}>{owner.display_name}</Text></TouchableOpacity>)}</ScrollView></> : <Text style={x.squadEditBidNote}>All Open Players league · this player will remain OpenPlayer</Text>}
           <TouchableOpacity disabled={addBusy} style={[x.squadAddSubmit, addBusy && { opacity: 0.6 }]} onPress={addReplacementPlayer}>{addBusy ? <ActivityIndicator color="#10251F" /> : <Text style={x.squadAddSubmitText}>Add player</Text>}</TouchableOpacity>
         </View> : null}
         {!collapsed ? teamPlayers.map(player => {
@@ -463,11 +467,11 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
               <View style={x.squadAddRoles}>{(["BA", "WK", "AL", "BO"] as Player["role"][]).map(role => <TouchableOpacity key={role} style={[x.squadAddRole, editRole === role && x.squadAddRoleActive]} onPress={() => setEditRole(role)}><Text style={[x.squadAddRoleText, editRole === role && x.squadAddRoleTextActive]}>{roleLabel[role]}</Text></TouchableOpacity>)}</View>
               <Text style={x.squadAddLabel}>Selection cost (₹m)</Text>
               <TextInput style={x.squadAddInput} value={editCost} onChangeText={setEditCost} keyboardType="decimal-pad" placeholder="Selection cost (₹m)" placeholderTextColor="#8B9893" />
-              <Text style={x.squadAddLabel}>Assigned owner</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><TouchableOpacity style={[x.squadOwnerChoice, !editOwnerId && x.squadOwnerChoiceActive]} onPress={() => setEditOwnerId("")}><Text style={[x.squadOwnerChoiceText, !editOwnerId && x.squadOwnerChoiceTextActive]}>OpenPlayer</Text></TouchableOpacity>{owners.map(owner => <TouchableOpacity key={owner.id} style={[x.squadOwnerChoice, editOwnerId === owner.id && x.squadOwnerChoiceActive]} onPress={() => setEditOwnerId(owner.id)}><Text style={[x.squadOwnerChoiceText, editOwnerId === owner.id && x.squadOwnerChoiceTextActive]}>{owner.display_name}</Text></TouchableOpacity>)}</ScrollView>
+              {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assigned owner</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><TouchableOpacity style={[x.squadOwnerChoice, !editOwnerId && x.squadOwnerChoiceActive]} onPress={() => setEditOwnerId("")}><Text style={[x.squadOwnerChoiceText, !editOwnerId && x.squadOwnerChoiceTextActive]}>OpenPlayer</Text></TouchableOpacity>{owners.map(owner => <TouchableOpacity key={owner.id} style={[x.squadOwnerChoice, editOwnerId === owner.id && x.squadOwnerChoiceActive]} onPress={() => setEditOwnerId(owner.id)}><Text style={[x.squadOwnerChoiceText, editOwnerId === owner.id && x.squadOwnerChoiceTextActive]}>{owner.display_name}</Text></TouchableOpacity>)}</ScrollView></> : <Text style={x.squadEditBidNote}>All Open Players league · owner assignment is disabled</Text>}
               <Text style={x.squadAddLabel}>Availability</Text>
               <View style={x.squadEditAvailability}><TouchableOpacity style={[x.squadEditStatus, editActive && x.squadEditStatusActive]} onPress={() => setEditActive(true)}><Text style={[x.squadEditStatusText, editActive && x.squadEditStatusTextActive]}>Active</Text></TouchableOpacity><TouchableOpacity style={[x.squadEditStatus, !editActive && x.squadEditStatusInactive]} onPress={() => setEditActive(false)}><Text style={[x.squadEditStatusText, !editActive && x.squadEditStatusTextInactive]}>Deactivate</Text></TouchableOpacity></View>
-              <Text style={x.squadEditBidNote}>Completed bid: {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`} · read-only</Text>
+              {ownershipEnabled ? <Text style={x.squadEditBidNote}>Completed bid: {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`} · read-only</Text> : null}
               <TouchableOpacity disabled={editBusy} style={[x.squadAddSubmit, editBusy && { opacity: 0.6 }]} onPress={() => savePlayer(player)}>{editBusy ? <ActivityIndicator color="#10251F" /> : <Text style={x.squadAddSubmitText}>Save changes</Text>}</TouchableOpacity>
             </View> : null}
             {playerOpen && points ? <View style={x.squadPointsBreakdown}>

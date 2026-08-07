@@ -217,13 +217,34 @@ from remote_test_leagues target
 where rules.league_id = target.league_id
   and rules.active;
 
--- All-open means every active squad player is genuinely open. Auction-owned
--- player assignments and bid prices are retained in Unique/Royalty leagues.
+-- All-open means every active squad player is genuinely open. Ownership and
+-- bid prices are removed, but selection costs remain because the XI budget
+-- still applies. Prefer the matching IPL 2026 selection cost; use a role-based
+-- default only when the player does not exist in that source league.
 update public.league_players league_player
 set
   owner_member_id = null,
   acquisition_type = 'open',
-  acquisition_price = 0,
+  acquisition_price = coalesce(
+    (
+      select nullif(source_player.acquisition_price, 0)
+      from public.league_players source_player
+      where source_player.league_id = '10000000-0000-4000-8000-000000002026'
+        and source_player.player_id = league_player.player_id
+      limit 1
+    ),
+    (
+      select case player.role
+        when 'AL' then 8
+        when 'BA' then 7.5
+        when 'WK' then 7.5
+        when 'BO' then 7.5
+        else 7.5
+      end
+      from public.players player
+      where player.id = league_player.player_id
+    )
+  ),
   bid_price = null,
   acquired_at = null,
   released_at = null,
