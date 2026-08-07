@@ -46,6 +46,13 @@ const leagueBadge = (league: DatabaseMembership["league"]) => {
   const competitionCode = /world\s*cup/i.test(source) ? "WC" : /\bipl\b/i.test(source) ? "IPL" : league.competition.split(/\s+/).filter(Boolean).map(word => word[0]).join("").slice(0, 3).toUpperCase();
   return { competitionCode, year, ...LEAGUE_BADGE_COLORS[colorIndex] };
 };
+const leagueFormatNote = (league: DatabaseMembership["league"]) => {
+  const identity = `${league.slug} ${league.name}`.toLowerCase();
+  if (identity.includes("open")) return "All IPL players are open to everyone; no auction ownership.";
+  if (identity.includes("unique")) return "Owned squads with phase Unique Players and borrowing penalties.";
+  if (identity.includes("royalty")) return "Owned squads earn royalty when other owners use their players.";
+  return "";
+};
 
 function LeagueEmblem({ league }: { league: DatabaseMembership["league"] }) {
   const badge = leagueBadge(league);
@@ -268,7 +275,7 @@ function LeaguePicker({ memberships, activeLeagueId, onSelect, onChanged }: { me
   });
   return <ImageBackground source={require("./assets/cricket-home-background-v2.png")} resizeMode="cover" style={s.homeBackground} imageStyle={s.homeBackgroundImage}>
     <View pointerEvents="none" style={s.homeBackgroundShade} />
-    <ScrollView contentContainerStyle={[s.content, s.homeContent]}><Text style={s.homeGreeting}>Your leagues</Text><Text style={s.homeSubtitle}>Accept invitations or open a league where your participation is active.</Text>{message ? <View style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}{ordered.map(membership => { const league = membership.league; const active = membership.status === "active"; const statusLabel = membership.status === "accepted" ? "Accepted · waiting for activation" : membership.status === "suspended" ? "Deactivated" : membership.status.charAt(0).toUpperCase() + membership.status.slice(1); return <View key={membership.id} style={[s.leagueCard, s.homeLeagueCard, activeLeagueId === league.id && s.leagueCardSelected]}><TouchableOpacity disabled={!active} style={s.leagueCardMain} onPress={() => onSelect(league.id)}><LeagueEmblem league={league} /><View style={{ flex: 1 }}><Text style={s.leagueName}>{league.name}</Text><Text style={s.leagueMeta}>{league.competition} · {league.season_year} · {membership.role === "league_admin" ? "Admin" : "Owner"}</Text><Text style={[s.leagueStatus, active ? s.leagueStatusActive : s.leagueStatusPending]}>{statusLabel}</Text></View>{active ? <Text style={s.leagueArrow}>›</Text> : null}</TouchableOpacity>{membership.status === "invited" ? <View style={s.invitationActions}><TouchableOpacity disabled={responding === membership.id} style={s.invitationDecline} onPress={() => respond(membership, false)}><Text style={s.invitationDeclineText}>Decline</Text></TouchableOpacity><TouchableOpacity disabled={responding === membership.id} style={s.invitationAccept} onPress={() => respond(membership, true)}>{responding === membership.id ? <ActivityIndicator color="#10251F" /> : <Text style={s.invitationAcceptText}>Accept invitation</Text>}</TouchableOpacity></View> : null}</View>; })}</ScrollView>
+    <ScrollView contentContainerStyle={[s.content, s.homeContent]}><Text style={s.homeGreeting}>Your leagues</Text><Text style={s.homeSubtitle}>Accept invitations or open a league where your participation is active.</Text>{message ? <View style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}{ordered.map(membership => { const league = membership.league; const active = membership.status === "active"; const formatNote = leagueFormatNote(league); const statusLabel = membership.status === "accepted" ? "Accepted · waiting for activation" : membership.status === "suspended" ? "Deactivated" : membership.status.charAt(0).toUpperCase() + membership.status.slice(1); return <View key={membership.id} style={[s.leagueCard, s.homeLeagueCard, activeLeagueId === league.id && s.leagueCardSelected]}><TouchableOpacity disabled={!active} style={s.leagueCardMain} onPress={() => onSelect(league.id)}><LeagueEmblem league={league} /><View style={{ flex: 1 }}><Text style={s.leagueName}>{league.name}</Text><Text style={s.leagueMeta}>{league.competition} · {league.season_year} · {membership.role === "league_admin" ? "Admin" : "Owner"}</Text>{formatNote ? <Text style={s.leagueFormatNote} numberOfLines={2}>{formatNote}</Text> : null}<Text style={[s.leagueStatus, active ? s.leagueStatusActive : s.leagueStatusPending]}>{statusLabel}</Text></View>{active ? <Text style={s.leagueArrow}>›</Text> : null}</TouchableOpacity>{membership.status === "invited" ? <View style={s.invitationActions}><TouchableOpacity disabled={responding === membership.id} style={s.invitationDecline} onPress={() => respond(membership, false)}><Text style={s.invitationDeclineText}>Decline</Text></TouchableOpacity><TouchableOpacity disabled={responding === membership.id} style={s.invitationAccept} onPress={() => respond(membership, true)}>{responding === membership.id ? <ActivityIndicator color="#10251F" /> : <Text style={s.invitationAcceptText}>Accept invitation</Text>}</TouchableOpacity></View> : null}</View>; })}</ScrollView>
   </ImageBackground>;
 }
 function LeagueSetupPending({ league }: { league: { name: string; format: string; season: string } }) {
@@ -934,7 +941,7 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
   const playerPositions = useRef<Record<string, number>>({});
   const [activeMatchId, setActiveMatchId] = useState("");
   const [showIssues, setShowIssues] = useState(false);
-  const [expandedTeams, setExpandedTeams] = useState<string[]>(["PBKS", "GT"]);
+  const [expandedTeams, setExpandedTeams] = useState<string[]>([]);
   const [focusedPlayer, setFocusedPlayer] = useState("");
   const [submitBusy, setSubmitBusy] = useState(false);
   const [submitMessage, setSubmitMessage] = useState("");
@@ -1358,6 +1365,7 @@ const s = StyleSheet.create({
   leagueEmblemYear: { fontSize: 10, lineHeight: 12, fontWeight: "900", letterSpacing: 1.2 },
   leagueName: { color: "#173028", fontSize: 16, fontWeight: "900" },
   leagueMeta: { color: "#7D8B85", fontSize: 9, marginTop: 3 },
+  leagueFormatNote: { color: "#4F665D", fontSize: 9, lineHeight: 13, marginTop: 5, paddingRight: 4 },
   leagueStatus: { alignSelf: "flex-start", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, fontWeight: "900", marginTop: 8 },
   leagueStatusActive: { color: "#285F39", backgroundColor: "#E2F1DF" },
   leagueStatusPending: { color: "#735F22", backgroundColor: "#F5EFD5" },
