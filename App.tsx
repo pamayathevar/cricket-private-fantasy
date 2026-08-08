@@ -12,6 +12,9 @@ import { IplTeamBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistor
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
 type BoosterCode = "3X" | "2UP" | "SUP-TR" | "";
+type PlayerRoleFilter = "ALL" | Role;
+type PlayerOwnershipFilter = "ALL" | "MINE" | "OPEN" | "OTHER";
+type PlayerSort = "NAME" | "COST" | "POINTS";
 type MembershipStatus = "invited" | "accepted" | "declined" | "active" | "suspended" | "withdrawn" | "disabled";
 type DatabaseMembership = {
   id: string;
@@ -171,6 +174,7 @@ function MembershipGate({ session }: { session: Session }) {
 
 function FantasyApp({ session, memberships, refreshMemberships }: { session: Session; memberships: DatabaseMembership[]; refreshMemberships: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("Home");
+  const [showNavigationMenu, setShowNavigationMenu] = useState(false);
   const [activeLeagueId, setActiveLeagueId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [captain, setCaptain] = useState("");
@@ -186,6 +190,8 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const [leagueRoster, setLeagueRoster] = useState<Player[]>([]);
   const [rosterRefreshVersion, setRosterRefreshVersion] = useState(0);
   const [ownershipEnabled, setOwnershipEnabled] = useState<boolean | null>(null);
+  const [requestedTeamFixtureId, setRequestedTeamFixtureId] = useState("");
+  const [requestedHistoryFixtureId, setRequestedHistoryFixtureId] = useState("");
   const activeMembership = memberships.find(item => item.league_id === activeLeagueId && item.status === "active");
   const activeLeague = activeMembership?.league;
   const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
@@ -195,7 +201,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     setSelected([]); setCaptain(""); setVice(""); setLineupSubmitted(false);
     setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer("");
   };
-  const selectLeague = (leagueId: string) => { resetLineupState(); setOwnershipEnabled(null); setActiveLeagueId(leagueId); setTab("Ranking"); };
+  const selectLeague = (leagueId: string) => { resetLineupState(); setRequestedTeamFixtureId(""); setOwnershipEnabled(null); setActiveLeagueId(leagueId); setTab("Team"); };
   useEffect(() => {
     if (!leagueDatabaseId) return;
     let cancelled = false;
@@ -245,13 +251,42 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} roster={leagueRoster} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle="light-content" />
     <View style={s.appShell}>
-      <View style={[s.header, s.headerModern]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : "#6D44C5" }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={s.headerIdentity}><Text style={[s.eyebrow, s.eyebrowModern]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={s.headerMetaRow}><Text style={[s.signedInAs, s.signedInAsModern]} numberOfLines={1}>{memberName}</Text>{activeLeague ? <View style={[s.headerPageChip, { backgroundColor: `${tabAccent(tab)}28` }]}><Text style={[s.headerPageChipText, { color: tabAccent(tab) }]}>{tabLabels[tab] ?? tab}</Text></View> : null}</View></View><View style={s.headerActions}>{activeLeague?.status === "active" && <View style={s.livePill}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View>}<TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity></View></View>
+      <View style={[s.header, s.headerModern]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : "#6D44C5" }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={s.headerIdentity}><Text style={[s.eyebrow, s.eyebrowModern]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={s.headerMetaRow}><Text style={[s.signedInAs, s.signedInAsModern]} numberOfLines={1}>{memberName}</Text>{activeLeague && tab !== "Home" ? <View style={[s.headerPageChip, { backgroundColor: `${tabAccent(tab)}28` }]}><Text style={[s.headerPageChipText, { color: tabAccent(tab) }]}>{tabLabels[tab] ?? tab}</Text></View> : null}</View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={s.livePill}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : null}{activeLeague && tab !== "Home" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open navigation menu" style={s.navigationMenuButton} onPress={() => setShowNavigationMenu(true)}><Text style={s.navigationMenuButtonIcon}>☰</Text><Text style={s.navigationMenuButtonText}>Menu</Text></TouchableOpacity> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
       {leagueContent}
-      <View style={[s.tabBar, s.tabBarModern]}>{tabs.map(item => { const active = tab === item; const accent = tabAccent(item); return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={tabLabels[item] ?? item} accessibilityState={{ selected: active }} style={[s.tab, s.tabModern, active && s.tabActive]} onPress={() => setTab(item === "Home" || activeLeague ? item : "Home")}><CricketTabIcon item={item} active={active} /><Text style={[s.tabText, s.tabTextModern, active && { color: accent, fontWeight: "900" }]}>{tabLabels[item] ?? item}</Text></TouchableOpacity>; })}</View>
+      <Modal visible={showNavigationMenu} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowNavigationMenu(false)}>
+        <TouchableOpacity activeOpacity={1} style={s.navigationMenuOverlay} onPress={() => setShowNavigationMenu(false)}>
+          <View style={s.navigationMenuCard} onStartShouldSetResponder={() => true}>
+            <View style={s.navigationMenuHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.navigationMenuEyebrow}>LEAGUE MENU</Text>
+                <Text style={s.navigationMenuLeague} numberOfLines={2}>{activeLeague?.name}</Text>
+              </View>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close menu" style={s.navigationMenuClose} onPress={() => setShowNavigationMenu(false)}>
+                <Text style={s.navigationMenuCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} bounces={false} contentContainerStyle={s.navigationMenuScroll}>
+              {tabs.map(item => {
+                const active = tab === item;
+                const accent = tabAccent(item);
+                const menuLabel = item === "Team" ? "Select XI" : tabLabels[item] ?? item;
+                return <TouchableOpacity key={item} style={[s.navigationMenuItem, active && { backgroundColor: `${accent}18`, borderColor: `${accent}55` }]} onPress={() => { setTab(item); setShowNavigationMenu(false); }}>
+                  <CricketTabIcon item={item} active={active} />
+                  <Text style={[s.navigationMenuItemText, active && { color: accent, fontWeight: "900" }]}>{menuLabel}</Text>
+                  {active ? <View style={[s.navigationMenuCheck, { backgroundColor: accent }]}><Text style={s.navigationMenuCheckText}>✓</Text></View> : <Text style={s.navigationMenuArrow}>›</Text>}
+                </TouchableOpacity>;
+              })}
+              <View style={s.navigationMenuDivider} />
+              <TouchableOpacity style={s.navigationMenuHome} onPress={() => { setTab("Home"); setShowNavigationMenu(false); }}><Text style={s.navigationMenuHomeIcon}>⌂</Text><Text style={s.navigationMenuHomeText}>All leagues</Text></TouchableOpacity>
+              <TouchableOpacity style={s.navigationMenuSignOut} onPress={() => supabase.auth.signOut()}><Text style={s.navigationMenuSignOutText}>Sign out</Text></TouchableOpacity>
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   </SafeAreaView>;
 }
@@ -981,12 +1016,17 @@ function PointDetailSection({ title, rows, total }: { title: string; rows: Array
   return <View style={s.detailSection}><View style={s.detailHeading}><Text style={s.detailTitle}>{title}</Text><Text style={s.detailTotal}>{total}</Text></View>{visible.length ? visible.map(([label, value]) => <View key={label} style={s.detailRow}><Text style={s.detailLabel}>{label}</Text><Text style={s.detailValue}>{value > 0 ? `+${value}` : value}</Text></View>) : <Text style={s.detailEmpty}>No points</Text>}</View>;
 }
 
-function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { leagueId: string; memberId: string; ownershipEnabled: boolean; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
+function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnabled, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { requestedFixtureId: string; leagueId: string; memberId: string; ownershipEnabled: boolean; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
   const teamScrollRef = useRef<ScrollView>(null);
+  const fixtureStripRef = useRef<ScrollView>(null);
   const teamPositions = useRef<Record<string, number>>({});
   const playerPositions = useRef<Record<string, number>>({});
   const [activeMatchId, setActiveMatchId] = useState("");
   const [showIssues, setShowIssues] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [roleFilter, setRoleFilter] = useState<PlayerRoleFilter>("ALL");
+  const [ownershipFilter, setOwnershipFilter] = useState<PlayerOwnershipFilter>("ALL");
+  const [playerSort, setPlayerSort] = useState<PlayerSort>("NAME");
   const [expandedTeams, setExpandedTeams] = useState<string[]>([]);
   const [focusedPlayer, setFocusedPlayer] = useState("");
   const [submitBusy, setSubmitBusy] = useState(false);
@@ -1008,6 +1048,16 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
   const [specialLabels, setSpecialLabels] = useState<Record<string, string[]>>({});
   const [leaguePlayerPoints, setLeaguePlayerPoints] = useState<Record<string, number>>({});
   const submittedSnapshots = useRef<Record<string, { players: string[]; captain: string; vice: string; impactPlayer: string; impactType: ImpactType }>>({});
+  useEffect(() => {
+    if (!requestedFixtureId) return;
+    const requestedIndex = fixtures.findIndex(match => match.databaseId === requestedFixtureId);
+    if (requestedIndex < 0) return;
+    setActiveMatchId(fixtures[requestedIndex].id);
+    const scrollTimer = setTimeout(() => {
+      fixtureStripRef.current?.scrollTo({ x: Math.max(0, requestedIndex * 151 - 20), animated: true });
+    }, 80);
+    return () => clearTimeout(scrollTimer);
+  }, [requestedFixtureId, fixtures]);
   useEffect(() => {
     let mounted = true;
     supabase.from("fixtures").select("id", { count: "exact", head: true }).eq("league_id", leagueId).eq("status", "scheduled").then(({ count }) => {
@@ -1155,8 +1205,12 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     }
   }, [initialLineupFree, boosterCode, setBoosterCode, setBoosterPlayer, setSubmitted]);
   useEffect(() => {
-    if (fixtures.length && !fixtures.some(match => match.id === activeMatchId)) setActiveMatchId(fixtures[0].id);
-  }, [fixtures, activeMatchId]);
+    if (!fixtures.length || fixtures.some(match => match.id === activeMatchId)) return;
+    const requestedMatch = requestedFixtureId
+      ? fixtures.find(match => match.databaseId === requestedFixtureId)
+      : undefined;
+    setActiveMatchId(requestedMatch?.id ?? fixtures[0].id);
+  }, [fixtures, activeMatchId, requestedFixtureId]);
   useEffect(() => {
     const timer = setInterval(() => setCountdownNow(Date.now()), 1_000);
     return () => clearInterval(timer);
@@ -1166,23 +1220,24 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     let cancelled = false;
     const loadLineup = async () => {
       setLineupLoadBusy(true); setFirstMissingPriorMatch(null); setHasPriorPeriodLineup(false); setHasSavedCurrentLineup(false); setSubmitMessage("");
-      const [periodResult, transferResult, phaseResult, boosterRuleResult] = await Promise.all([
+      const [periodResult, transferResult, phaseResult, boosterRuleResult, boosterUsageResult, earlierFixturesResult, currentResult] = await Promise.all([
         supabase.from("league_transfer_periods").select("id,code,name,start_match_number,end_match_number,transfer_limit,first_match_free").eq("league_id", leagueId).eq("active", true).order("sort_order"),
         supabase.from("transfer_events").select("transfer_period_id,transfer_count").eq("league_id", leagueId).eq("member_id", memberId).eq("reason", "lineup_change"),
         supabase.from("league_phases").select("code,name,start_match_number,end_match_number").eq("league_id", leagueId).eq("active", true).order("sort_order"),
         supabase.from("booster_rules").select("code,total_usage_limit,phase_usage_limits").eq("league_id", leagueId).eq("active", true),
+        supabase.from("lineup_boosters").select("booster:booster_rules(code),fixture:fixtures(match_number)").eq("member_id", memberId),
+        supabase.from("fixtures").select("id,match_number,status,lineup_lock_at,scheduled_start").eq("league_id", leagueId).lt("match_number", activeMatchNumber).order("match_number"),
+        supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type").eq("fixture_id", fixture.databaseId).eq("member_id", memberId).maybeSingle(),
       ]);
       if (!cancelled && periodResult.data) setTransferPeriods(periodResult.data as TransferPeriod[]);
       if (!cancelled && transferResult.data) setTransferUsage(transferResult.data.reduce((usage: Record<string, number>, event: any) => event.transfer_period_id ? { ...usage, [event.transfer_period_id]: (usage[event.transfer_period_id] ?? 0) + event.transfer_count } : usage, {}));
       if (!cancelled && phaseResult.data) setLeaguePhases(phaseResult.data as LeaguePhase[]);
       if (!cancelled && boosterRuleResult.data) setBoosterRuleSettings(boosterRuleResult.data as BoosterRuleSetting[]);
-      const boosterUsageResult = await supabase.from("lineup_boosters").select("booster:booster_rules(code),fixture:fixtures(match_number)").eq("member_id", memberId);
       if (!boosterUsageResult.error && !cancelled) setBoosterUses((boosterUsageResult.data ?? []).map((row: any) => ({ code: row.booster?.code, matchNumber: row.fixture?.match_number })).filter(use => use.code && use.matchNumber));
-      const earlierFixturesResult = await supabase.from("fixtures").select("id,match_number,status,lineup_lock_at,scheduled_start").eq("league_id", leagueId).lt("match_number", activeMatchNumber).order("match_number");
       if (earlierFixturesResult.error) { if (!cancelled) { setSubmitMessage(earlierFixturesResult.error.message); setLineupLoadBusy(false); } return; }
       const earlierFixtureIds = (earlierFixturesResult.data ?? []).map(row => row.id);
       const earlierLineupsResult = earlierFixtureIds.length
-        ? await supabase.from("lineup_submissions").select("fixture_id,status").eq("member_id", memberId).in("fixture_id", earlierFixtureIds).in("status", ["submitted", "locked"])
+        ? await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,fixture_id").eq("member_id", memberId).in("fixture_id", earlierFixtureIds).in("status", ["submitted", "locked"])
         : { data: [], error: null };
       if (earlierLineupsResult.error) { if (!cancelled) { setSubmitMessage(earlierLineupsResult.error.message); setLineupLoadBusy(false); } return; }
       const submittedFixtureIds = new Set((earlierLineupsResult.data ?? []).map(row => row.fixture_id));
@@ -1190,33 +1245,28 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
       const currentPeriod = (periodResult.data ?? []).find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
       const priorPeriodLineup = !!currentPeriod && (earlierFixturesResult.data ?? []).some(row => row.match_number >= currentPeriod.start_match_number && row.match_number <= currentPeriod.end_match_number && submittedFixtureIds.has(row.id));
       if (!cancelled) { setFirstMissingPriorMatch(missingPriorMatch); setHasPriorPeriodLineup(priorPeriodLineup); }
-      const currentResult = await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type").eq("fixture_id", fixture.databaseId).eq("member_id", memberId).maybeSingle();
       if (currentResult.error) { if (!cancelled) { setSubmitMessage(currentResult.error.message); setLineupLoadBusy(false); } return; }
       let source = currentResult.data;
       let isCurrentSubmission = source?.status === "submitted" || source?.status === "locked";
       if (!source) {
-        const priorFixtures = await supabase.from("fixtures").select("id").eq("league_id", leagueId).lt("match_number", activeMatchNumber).order("match_number", { ascending: false });
-        if (priorFixtures.error) { if (!cancelled) { setSubmitMessage(priorFixtures.error.message); setLineupLoadBusy(false); } return; }
-        const priorIds = (priorFixtures.data ?? []).map(row => row.id);
-        if (priorIds.length) {
-          const priorLineups = await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,fixture_id").eq("member_id", memberId).in("fixture_id", priorIds);
-          if (priorLineups.error) { if (!cancelled) { setSubmitMessage(priorLineups.error.message); setLineupLoadBusy(false); } return; }
-          source = priorIds.map(id => (priorLineups.data ?? []).find(lineup => lineup.fixture_id === id)).find(Boolean) ?? null;
-        }
+        const priorIds = [...earlierFixtureIds].reverse();
+        source = priorIds.map(id => (earlierLineupsResult.data ?? []).find(lineup => lineup.fixture_id === id)).find(Boolean) ?? null;
       }
       if (!source) { if (!cancelled) { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setCarriedForwardNames(new Set()); setLineupLoadBusy(false); } return; }
-      const lineupPlayersResult = await supabase.from("lineup_players").select("slot,player_id").eq("lineup_id", source.id).order("slot");
-      const currentBoosterResult = isCurrentSubmission ? await supabase.from("lineup_boosters").select("target_player_id,booster:booster_rules(code)").eq("lineup_id", source.id).maybeSingle() : { data: null, error: null };
+      const [lineupPlayersResult, currentBoosterResult] = await Promise.all([
+        supabase.from("lineup_players").select("slot,player_id").eq("lineup_id", source.id).order("slot"),
+        isCurrentSubmission ? supabase.from("lineup_boosters").select("target_player_id,booster:booster_rules(code)").eq("lineup_id", source.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+      ]);
       const boosterTargetId = (currentBoosterResult.data as any)?.target_player_id ?? null;
       const markerIds = [source.captain_player_id, source.vice_captain_player_id, source.impact_player_id, boosterTargetId].filter((id): id is string => !!id);
-      const markerPlayersResult = markerIds.length ? await supabase.from("players").select("id,full_name").in("id", markerIds) : { data: [], error: null };
       const lineupPlayerIds = (lineupPlayersResult.data ?? []).map(row => row.player_id);
-      const lineupNamesResult = lineupPlayerIds.length ? await supabase.from("players").select("id,full_name").in("id", lineupPlayerIds) : { data: [], error: null };
-      if (lineupPlayersResult.error || lineupNamesResult.error || markerPlayersResult.error) { if (!cancelled) { setSubmitMessage(lineupPlayersResult.error?.message ?? lineupNamesResult.error?.message ?? markerPlayersResult.error?.message ?? "Could not load lineup"); setLineupLoadBusy(false); } return; }
-      const nameById = new Map((lineupNamesResult.data ?? []).map(player => [player.id, player.full_name]));
+      const relevantPlayerIds = Array.from(new Set([...lineupPlayerIds, ...markerIds]));
+      const playerNamesResult = relevantPlayerIds.length ? await supabase.from("players").select("id,full_name").in("id", relevantPlayerIds) : { data: [], error: null };
+      if (lineupPlayersResult.error || playerNamesResult.error) { if (!cancelled) { setSubmitMessage(lineupPlayersResult.error?.message ?? playerNamesResult.error?.message ?? "Could not load lineup"); setLineupLoadBusy(false); } return; }
+      const nameById = new Map((playerNamesResult.data ?? []).map(player => [player.id, player.full_name]));
       const names = lineupPlayerIds.map(id => nameById.get(id)).filter((name): name is string => !!name);
       if (isCurrentSubmission && names.length === 0) { if (!cancelled) { setSubmitMessage("Saved XI was found, but its players could not be loaded. Please refresh and try again."); setLineupLoadBusy(false); } return; }
-      const markerName = (id: string | null) => (markerPlayersResult.data ?? []).find(row => row.id === id)?.full_name ?? "";
+      const markerName = (id: string | null) => id ? nameById.get(id) ?? "" : "";
       const snapshot = { players: names, captain: markerName(source.captain_player_id), vice: markerName(source.vice_captain_player_id), impactPlayer: markerName(source.impact_player_id), impactType: (source.impact_type ?? "") as ImpactType };
       if (!cancelled) {
         submittedSnapshots.current[activeMatchId] = snapshot;
@@ -1238,14 +1288,28 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     }, 180);
   };
   const toggleTeam = (team: string) => setExpandedTeams(expandedTeams.includes(team) ? expandedTeams.filter(item => item !== team) : [...expandedTeams, team]);
+  const playerMatchesFilters = (player: Player) => {
+    const roleMatches = roleFilter === "ALL" || player.role === roleFilter;
+    const ownershipMatches = ownershipFilter === "ALL"
+      || (ownershipFilter === "MINE" && player.owner === ownerName)
+      || (ownershipFilter === "OPEN" && player.owner === "Available")
+      || (ownershipFilter === "OTHER" && player.owner !== ownerName && player.owner !== "Available");
+    return roleMatches && ownershipMatches;
+  };
+  const sortPlayers = (teamPlayers: Player[]) => [...teamPlayers].sort((left, right) => {
+    if (playerSort === "COST") return Number(right.price) - Number(left.price) || left.name.localeCompare(right.name);
+    if (playerSort === "POINTS") return (leaguePlayerPoints[right.name] ?? 0) - (leaguePlayerPoints[left.name] ?? 0) || left.name.localeCompare(right.name);
+    return left.name.localeCompare(right.name);
+  });
   const renderTeam = (team: string) => {
-    const teamPlayers = roster.filter(player => player.team === team);
+    const allTeamPlayers = roster.filter(player => player.team === team);
+    const teamPlayers = sortPlayers(allTeamPlayers.filter(playerMatchesFilters));
     if (!teamPlayers.length) return null;
     const expanded = expandedTeams.includes(team);
     const brand = teamBadge(team);
-    const selectedFromTeam = selected.filter(name => teamPlayers.some(player => player.name === name)).length;
+    const selectedFromTeam = selected.filter(name => allTeamPlayers.some(player => player.name === name)).length;
     return <View key={team} style={s.teamGroup} onLayout={event => { teamPositions.current[team] = event.nativeEvent.layout.y; }}>
-      <TouchableOpacity style={[s.teamHeader, s.teamHeaderModern, expanded && s.teamHeaderExpanded, { backgroundColor: brand.backgroundColor, borderColor: brand.borderColor }]} onPress={() => toggleTeam(team)}><Text style={[s.teamHeaderName, { color: brand.color }]}>{team}</Text><Text style={[s.teamHeaderCount, { color: brand.color }]}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{teamPlayers.length} players</Text><Text style={[s.teamChevron, { color: brand.color }]}>{expanded ? "▲" : "▼"}</Text></TouchableOpacity>
+      <TouchableOpacity style={[s.teamHeader, s.teamHeaderModern, expanded && s.teamHeaderExpanded, { backgroundColor: brand.backgroundColor, borderColor: brand.borderColor }]} onPress={() => toggleTeam(team)}><Text style={[s.teamHeaderName, { color: brand.color }]}>{team}</Text><Text style={[s.teamHeaderCount, { color: brand.color }]}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{teamPlayers.length}{teamPlayers.length !== allTeamPlayers.length ? ` of ${allTeamPlayers.length}` : ""} players</Text><Text style={[s.teamChevron, { color: brand.color }]}>{expanded ? "▲" : "▼"}</Text></TouchableOpacity>
       {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = (labels.includes("UNIQUE") || labels.includes("AUTO UNIQUE")) && p.owner !== ownerName; return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, s.playerRowModern, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
 <TouchableOpacity style={s.playerMain} onPress={() => { setFocusedPlayer(p.name); toggle(p.name); }}>
 <View style={[s.checkbox, active && s.checkboxActive]}>
@@ -1263,10 +1327,11 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
 <Marker text="BOI" active={impactPlayer === p.name && impactType === "BOI"} disabled={powerRestricted} onPress={() => { const clearing = impactPlayer === p.name && impactType === "BOI"; setImpactPlayer(clearing ? "" : p.name); setImpactType(clearing ? "" : "BOI"); if (!clearing && captain === p.name) setCaptain(""); if (!clearing && vice === p.name) setVice(""); setSubmitted(false); }} />{boosterCode === "3X" && <Marker text="3X" active={boosterPlayer === p.name} disabled={powerRestricted} onPress={() => { setBoosterPlayer(boosterPlayer === p.name ? "" : p.name); setSubmitted(false); }} />}</View>}</View>; })}
     </View>;
   };
-  return <View style={s.teamScreen}><ScrollView ref={teamScrollRef} contentContainerStyle={s.teamContent}>
+  return <View style={s.teamScreen}><ScrollView ref={teamScrollRef} contentContainerStyle={s.teamContent} scrollEventThrottle={16} onScroll={event => setShowScrollTop(event.nativeEvent.contentOffset.y > 520)}>
     <Text style={s.greeting}>Plan next 7 matches</Text><Text style={s.subtitle}>Select a fixture, prepare its XI, and submit before its own lock.</Text>
     {immediateNextFixture ? <View style={s.lockCountdown}><View><Text style={s.lockCountdownLabel}>{nextLockIsFarAway ? "NEXT LINEUP LOCKS ON" : "NEXT LINEUP LOCKS IN"}</Text><Text style={s.lockCountdownMatch}>Match {immediateNextFixture.id.replace("M", "")} · {immediateNextFixture.home} vs {immediateNextFixture.away}</Text></View><Text style={[s.lockCountdownTime, nextLockIsFarAway && s.lockCountdownDate]}>{nextLockDisplay}</Text></View> : null}
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; return <TouchableOpacity key={match.id} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, active && submitted ? s.statusSubmitted : null]}>{active && submitted ? "Submitted" : "XI carried · booster empty"}</Text></TouchableOpacity>; })}</ScrollView>
+    <View style={s.activeFixtureBanner}><View style={s.activeFixtureBadge}><Text style={s.activeFixtureBadgeText}>ACTIVE XI</Text></View><View style={s.activeFixtureDetails}><Text style={s.activeFixtureTitle}>Editing Match {activeMatchNumber}</Text><View style={s.activeFixtureTeams}><IplTeamBadge code={fixture.home} /><Text style={s.activeFixtureVs}>VS</Text><IplTeamBadge code={fixture.away} /></View></View><Text style={s.activeFixtureHint}>{hasSavedCurrentLineup ? "EDIT XI" : "NEW XI"}</Text></View>
+    <ScrollView ref={fixtureStripRef} horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; return <TouchableOpacity key={match.id} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, active && submitted ? s.statusSubmitted : null]}>{active && submitted ? "Submitted" : "XI carried · booster empty"}</Text></TouchableOpacity>; })}</ScrollView>
     <View style={s.boosterSection}><View style={s.boosterSectionHeading}><Text style={s.boosterSectionTitle}>Match booster</Text><Text style={s.boosterSectionHint}>Optional · choose one</Text></View><View style={s.boosterGrid}>
       <BoosterCard code="3X" name="Triple Impact" detail={tripleImpactAvailable ? "1 remaining · all phases" : `Used in Match ${used3X?.matchNumber} · unavailable`} active={boosterCode === "3X"} disabled={!tripleImpactAvailable} onPress={() => chooseBooster("3X")} />
       <BoosterCard code="2UP" name="Double Up" detail={doubleUpAvailable ? `${currentPhase?.name}: ${doubleUpPhaseLimit - doubleUpUsesInPhase.length} remaining` : doubleUpPhaseLimit <= 0 ? `Unavailable in ${currentPhase?.name ?? "this phase"}` : `${currentPhase?.name}: usage reached`} active={boosterCode === "2UP"} disabled={!doubleUpAvailable} onPress={() => chooseBooster("2UP")} />
@@ -1285,16 +1350,31 @@ function TeamSelection({ leagueId, memberId, ownershipEnabled, ownerName, roster
     <Text style={s.selectedTitle}>Selected Players ({chosen.length}/{rules.lineup_size})</Text>
     {chosen.length ? <View style={s.selectedList}>{chosen.map((player, index) => { const marker = captain === player.name ? "C" : vice === player.name ? "VC" : impactPlayer === player.name ? impactType : ""; const triple = boosterCode === "3X" && boosterPlayer === player.name; return <View key={player.name} style={[s.selectedListRow, marker === "C" && s.rowCaptain, marker === "VC" && s.rowVice, marker === "BAI" && s.rowBai, marker === "BOI" && s.rowBoi]}><Text style={s.selectedNumber}>{index + 1}</Text><TouchableOpacity style={{ flex: 1 }} onPress={() => focusPlayerInTeamList(player.name, player.team)}><View style={s.specialNameRow}><Text style={s.selectedChipName}>{player.name}</Text>{(specialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={s.teamSubMeta}><IplTeamBadge code={player.team} /><Text style={s.selectedChipMeta}>{player.role}</Text><Text style={s.selectedCost}>₹{Number(player.price).toFixed(1)}m</Text><Text style={s.selectedEditHint}>Tap to edit C/VC/BAI/BOI</Text></View></TouchableOpacity>{marker ? <MarkerBadge marker={marker} /> : null}{triple ? <MarkerBadge marker="3X" /> : null}<TouchableOpacity style={s.removeSelected} onPress={() => toggle(player.name)}><Text style={s.removeSelectedText}>×</Text></TouchableOpacity></View>; })}</View> : <View style={s.emptySelected}><Text style={s.emptySelectedText}>No players selected. Choose players from the team sections below.</Text></View>}
     <View style={[s.selectionSummary, s.selectionSummaryModern]}><Summary label="PLAYERS" value={`${selected.length}/${rules.lineup_size}`} bad={selected.length !== rules.lineup_size} /><Summary label="COST" value={`₹${total.toFixed(1)}m`} bad={total > rules.lineup_budget} /><Summary label="TRANSFERS" value={displayedTransfers} bad={false} /></View>
-    <View style={s.ownershipSummary}><OwnershipSummary label="MY PLAYERS" value={myPlayers} tone="mine" /><OwnershipSummary label="OPENPLAYERS" value={openPlayers} tone="open" /><OwnershipSummary label="OTHER OWNERS" value={otherOwnerPlayers} tone="other" /><OwnershipSummary label={`${fixture.home} + ${fixture.away}`} value={currentMatchPlayers} tone="match" /></View>
+    {ownershipEnabled ? <View style={s.ownershipSummary}><OwnershipSummary label="MY PLAYERS" value={myPlayers} tone="mine" /><OwnershipSummary label="OPENPLAYERS" value={openPlayers} tone="open" /><OwnershipSummary label="OTHER OWNERS" value={otherOwnerPlayers} tone="other" /><OwnershipSummary label={`${fixture.home} + ${fixture.away}`} value={currentMatchPlayers} tone="match" /></View> : <View style={s.openLeagueMatchSummary}><View style={[s.ownershipDot, s.dotMatch]} /><Text style={s.openLeagueMatchLabel}>{fixture.home} + {fixture.away} players in your XI</Text><Text style={s.openLeagueMatchValue}>{currentMatchPlayers}</Text></View>}
     <View style={s.roles}>{(["WK", "BA", "AL", "BO"] as Role[]).map(r => <Text key={r} style={s.roleChip}>{r} {count(r)}</Text>)}</View>
     {submissionWarnings.length ? <View style={s.combinedWarning}><TouchableOpacity style={s.combinedWarningHeader} onPress={() => setShowWarnings(value => !value)}><View style={s.combinedWarningIcon}><Text style={s.combinedWarningIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.combinedWarningTitle}>{submissionWarnings.length} selection notice{submissionWarnings.length > 1 ? "s" : ""}</Text><Text style={s.combinedWarningSummary}>{submissionWarnings[0]}</Text></View><Text style={s.combinedWarningChevron}>{showWarnings ? "▲" : "▼"}</Text></TouchableOpacity>{showWarnings ? <View style={s.combinedWarningBody}>{submissionWarnings.map(warning => <Text key={warning} style={s.combinedWarningText}>• {warning}</Text>)}</View> : null}</View> : null}
+    <View style={s.playerFiltersCard}>
+      <View style={s.playerFiltersHeading}><View><Text style={s.playerFiltersTitle}>Filter & sort players</Text><Text style={s.playerFiltersHint}>Find the right players without changing your XI</Text></View>{roleFilter !== "ALL" || ownershipFilter !== "ALL" ? <TouchableOpacity onPress={() => { setRoleFilter("ALL"); setOwnershipFilter("ALL"); }}><Text style={s.clearFiltersText}>Clear filters</Text></TouchableOpacity> : null}</View>
+      <Text style={s.playerFilterLabel}>ROLE</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>
+        {([['ALL', 'All roles'], ['BA', 'Batters'], ['WK', 'Wicketkeepers'], ['AL', 'All-rounders'], ['BO', 'Bowlers']] as Array<[PlayerRoleFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} style={[s.playerFilterChip, roleFilter === value && s.playerFilterChipActive]} onPress={() => setRoleFilter(value)}><Text style={[s.playerFilterChipText, roleFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}
+      </ScrollView>
+      {ownershipEnabled ? <><Text style={s.playerFilterLabel}>OWNERSHIP</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>
+          {([['ALL', 'All players'], ['MINE', 'My Players'], ['OTHER', 'Other Owners'], ['OPEN', 'OpenPlayer']] as Array<[PlayerOwnershipFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} style={[s.playerFilterChip, ownershipFilter === value && s.playerFilterChipActive]} onPress={() => setOwnershipFilter(value)}><Text style={[s.playerFilterChipText, ownershipFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}
+        </ScrollView></> : null}
+      <Text style={s.playerFilterLabel}>SORT BY</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>
+        {([['NAME', 'Name A–Z'], ['COST', 'Cost · High first'], ['POINTS', 'Points · High first']] as Array<[PlayerSort, string]>).map(([value, label]) => <TouchableOpacity key={value} style={[s.playerFilterChip, playerSort === value && s.playerFilterChipActive]} onPress={() => setPlayerSort(value)}><Text style={[s.playerFilterChipText, playerSort === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}
+      </ScrollView>
+    </View>
     <Text style={s.sectionTitle}>Playing teams</Text><View style={s.playingTeamHelp}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>and</Text><IplTeamBadge code={fixture.away} /><Text style={s.helperInline}>players are shown first.</Text></View>
     {matchTeams.map(renderTeam)}
     <Text style={s.otherTeamsTitle}>Other teams in Squad</Text><Text style={s.helper}>Tap to add or remove. Other-owner players use a transfer.</Text>
     {otherTeams.map(renderTeam)}
     <View style={[s.validation, errors.length ? s.invalid : s.valid]}><Text style={s.validationTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} to fix` : "Team is valid"}</Text>{errors.map(e => <Text key={e} style={s.validationText}>• {e}</Text>)}{!errors.length && <Text style={s.validationText}>Roles, cost, transfers and optional marker combinations are valid.</Text>}</View>
     {submitMessage ? <View style={[s.adminMessage, submitMessage === "Your lineup has been saved." && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{submitMessage}</Text></View> : null}
-  </ScrollView>{showIssues && errors.length > 0 && <View style={s.issuePopup}>
+  </ScrollView>{showScrollTop && !showIssues && !submitMessage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Scroll to top" style={s.scrollTopButton} onPress={() => teamScrollRef.current?.scrollTo({ y: 0, animated: true })}><Text style={s.scrollTopArrow}>↑</Text><Text style={s.scrollTopText}>Top</Text></TouchableOpacity> : null}{showIssues && errors.length > 0 && <View style={s.issuePopup}>
 <Text style={s.issuePopupTitle}>Issues to fix</Text>{errors.map(error => <Text key={error} style={s.issuePopupText}>• {error}</Text>)}</View>}{submitMessage ? <View style={[s.submitResult, submitMessage === "Your lineup has been saved." ? s.submitResultSuccess : s.submitResultError]}><Text style={s.submitResultText}>{submitMessage}</Text></View> : null}<View style={s.stickyAction}>
 <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowIssues(!showIssues)}>
 <Text style={s.stickyMatch}>MATCH {activeMatchNumber} · {fixture.home} VS {fixture.away}</Text>
@@ -1475,10 +1555,13 @@ const s = StyleSheet.create({
   markerBadgeText: { color: "white", fontSize: 9, fontWeight: "900" },
   activeMarkerText: { color: "white" },
   teamScreen: { flex: 1, backgroundColor: "#F4F5EF" },
-  teamContent: { padding: 20, paddingBottom: 225 },
-  stickyAction: { position: "absolute", left: 0, right: 0, bottom: 82, minHeight: 74, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#DDE4DF", paddingHorizontal: 16, paddingVertical: 11, flexDirection: "row", alignItems: "center" },
-  submitWarning: { position: "absolute", left: 0, right: 0, bottom: 156, minHeight: 47, backgroundColor: "#FFF4D8", borderTopWidth: 1, borderTopColor: "#E6C86A", paddingHorizontal: 16, paddingVertical: 9, flexDirection: "row", alignItems: "center", zIndex: 3 },
-  submitResult: { position: "absolute", left: 12, right: 12, bottom: 164, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, zIndex: 5, borderWidth: 1 },
+  teamContent: { padding: 20, paddingBottom: Platform.OS === "android" ? 155 : 125 },
+  scrollTopButton: { position: "absolute", right: 16, bottom: Platform.OS === "android" ? 120 : 88, minWidth: 66, height: 40, borderRadius: 20, backgroundColor: "#173F35", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, zIndex: 4, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 8 },
+  scrollTopArrow: { color: UI.accent, fontSize: 18, lineHeight: 20, fontWeight: "900" },
+  scrollTopText: { color: "white", fontSize: 11, fontWeight: "900" },
+  stickyAction: { position: "absolute", left: 0, right: 0, bottom: Platform.OS === "android" ? 32 : 0, minHeight: 74, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#DDE4DF", paddingHorizontal: 16, paddingVertical: 11, flexDirection: "row", alignItems: "center" },
+  submitWarning: { position: "absolute", left: 0, right: 0, bottom: Platform.OS === "android" ? 106 : 74, minHeight: 47, backgroundColor: "#FFF4D8", borderTopWidth: 1, borderTopColor: "#E6C86A", paddingHorizontal: 16, paddingVertical: 9, flexDirection: "row", alignItems: "center", zIndex: 3 },
+  submitResult: { position: "absolute", left: 12, right: 12, bottom: Platform.OS === "android" ? 114 : 82, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, zIndex: 5, borderWidth: 1 },
   submitResultWithWarnings: { bottom: 211 },
   submitResultSuccess: { backgroundColor: "#E7F6EC", borderColor: "#83BE94" },
   submitResultError: { backgroundColor: "#FFF1ED", borderColor: "#D99B8E" },
@@ -1517,6 +1600,14 @@ const s = StyleSheet.create({
   lockCountdownMatch: { color: "#FFFFFF", fontSize: 11, fontWeight: "800", marginTop: 4 },
   lockCountdownTime: { color: "#D8FF63", fontSize: 19, fontWeight: "900", fontVariant: ["tabular-nums"] },
   lockCountdownDate: { fontSize: 12, maxWidth: 145, textAlign: "right" },
+  activeFixtureBanner: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFF4EC", borderWidth: 1, borderColor: "#F0B28B", borderRadius: 15, paddingHorizontal: 13, paddingVertical: 10, marginBottom: 12 },
+  activeFixtureBadge: { backgroundColor: "#EF6A2C", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, marginRight: 10 },
+  activeFixtureBadgeText: { color: "#FFFFFF", fontSize: 7, fontWeight: "900", letterSpacing: 0.6 },
+  activeFixtureDetails: { flex: 1 },
+  activeFixtureTitle: { color: "#173028", fontSize: 14, fontWeight: "900" },
+  activeFixtureTeams: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 },
+  activeFixtureVs: { color: "#7B8983", fontSize: 8, fontWeight: "900" },
+  activeFixtureHint: { color: "#9A4A27", fontSize: 8, fontWeight: "900", letterSpacing: 0.4, marginLeft: 8 },
   fixtureStripContent: { paddingHorizontal: 20, gap: 9 },
   fixtureCard: { width: 142, backgroundColor: "white", borderWidth: 1, borderColor: "#DCE4DF", borderRadius: 14, padding: 12 },
   fixtureCardActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" },
@@ -1531,6 +1622,17 @@ const s = StyleSheet.create({
   teamSubMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
   specialNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 },
   playingTeamHelp: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 10 },
+  playerFiltersCard: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DCE5E0", borderRadius: 17, padding: 13, marginTop: 14, shadowColor: "#18352D", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2 },
+  playerFiltersHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  playerFiltersTitle: { color: "#17352C", fontSize: 14, fontWeight: "900" },
+  playerFiltersHint: { color: "#7B8984", fontSize: 9, marginTop: 2 },
+  clearFiltersText: { color: "#C55734", fontSize: 10, fontWeight: "900", paddingHorizontal: 8, paddingVertical: 5 },
+  playerFilterLabel: { color: "#899690", fontSize: 8, fontWeight: "900", letterSpacing: 1, marginBottom: 6 },
+  playerFilterRow: { gap: 7, paddingBottom: 9 },
+  playerFilterChip: { minHeight: 32, borderRadius: 16, borderWidth: 1, borderColor: "#D5DEDA", backgroundColor: "#F4F7F5", paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
+  playerFilterChipActive: { backgroundColor: "#173F35", borderColor: "#173F35" },
+  playerFilterChipText: { color: "#536860", fontSize: 10, fontWeight: "800" },
+  playerFilterChipTextActive: { color: "#D8FF63", fontWeight: "900" },
   helperInline: { color: "#7D8984", fontSize: 11 },
   adminFixtureTeams: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
   fixtureStatus: { color: "#7B6B24", backgroundColor: "#F6F0D7", alignSelf: "flex-start", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, fontWeight: "800", marginTop: 9 },
@@ -1589,7 +1691,7 @@ const s = StyleSheet.create({
   emptyHistory: { backgroundColor: "white", borderRadius: 17, padding: 28, alignItems: "center" },
   emptyHistoryTitle: { color: "#20372F", fontSize: 16, fontWeight: "900" },
   emptyHistoryText: { color: "#819089", fontSize: 11, textAlign: "center", marginTop: 6 },
-  issuePopup: { position: "absolute", left: 12, right: 12, bottom: 160, backgroundColor: "#FFF5F1", borderWidth: 1, borderColor: "#EDC9BE", borderRadius: 14, padding: 14, zIndex: 5 },
+  issuePopup: { position: "absolute", left: 12, right: 12, bottom: Platform.OS === "android" ? 110 : 78, backgroundColor: "#FFF5F1", borderWidth: 1, borderColor: "#EDC9BE", borderRadius: 14, padding: 14, zIndex: 5 },
   issuePopupWithWarnings: { bottom: 207 },
   issuePopupTitle: { color: "#6E2D21", fontSize: 13, fontWeight: "900", marginBottom: 5 },
   issuePopupText: { color: "#78483F", fontSize: 11, marginTop: 4 },
@@ -1615,6 +1717,9 @@ const s = StyleSheet.create({
   priorMatchTitle: { color: "#873D28", fontSize: 11, fontWeight: "900", letterSpacing: 0.6 },
   priorMatchText: { color: "#865A4B", fontSize: 9, lineHeight: 13, marginTop: 3 },
   ownershipSummary: { flexDirection: "row", gap: 0, marginTop: 8, marginBottom: 2, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E4E8EE", borderRadius: 13, padding: 4 },
+  openLeagueMatchSummary: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E4E8EE", borderRadius: 13, paddingHorizontal: 14, paddingVertical: 11, marginTop: 8, marginBottom: 2 },
+  openLeagueMatchLabel: { flex: 1, color: "#52675F", fontSize: 10, fontWeight: "800", marginLeft: 2 },
+  openLeagueMatchValue: { color: "#173F35", fontSize: 18, fontWeight: "900" },
   ownershipItem: { flex: 1, minHeight: 42, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 6, flexDirection: "row", alignItems: "center" },
   ownershipDot: { width: 8, height: 8, borderRadius: 4, marginRight: 7 },
   dotMine: { backgroundColor: "#2B775F" },
@@ -1827,6 +1932,28 @@ const s = StyleSheet.create({
   headerPageChip: { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 3 },
   headerPageChipText: { fontSize: 9, fontWeight: "900" },
   headerActions: { alignItems: "flex-end", gap: 6, marginLeft: 5 },
+  navigationMenuButton: { minHeight: 38, borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 6 },
+  navigationMenuButtonIcon: { color: "white", fontSize: 17, fontWeight: "900" },
+  navigationMenuButtonText: { color: "white", fontSize: 11, fontWeight: "900" },
+  navigationMenuOverlay: { flex: 1, backgroundColor: "rgba(3,18,15,0.58)", alignItems: "flex-end", paddingTop: Platform.OS === "android" ? 70 : 86, paddingRight: 14 },
+  navigationMenuCard: { width: 286, maxHeight: "88%", backgroundColor: "#FBFCF8", borderRadius: 22, paddingHorizontal: 13, paddingTop: 12, paddingBottom: 10, borderWidth: 1, borderColor: "#D8E1DC", shadowColor: "#000", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.3, shadowRadius: 24, elevation: 18 },
+  navigationMenuHeader: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 4, paddingBottom: 8 },
+  navigationMenuEyebrow: { color: "#75847E", fontSize: 8, fontWeight: "900", letterSpacing: 1.4, marginTop: 2 },
+  navigationMenuLeague: { color: "#102A23", fontSize: 15, lineHeight: 19, fontWeight: "900", marginTop: 3, paddingRight: 6 },
+  navigationMenuClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginLeft: 5 },
+  navigationMenuCloseText: { color: "#52675F", fontSize: 23, lineHeight: 25, fontWeight: "600" },
+  navigationMenuScroll: { paddingBottom: 2 },
+  navigationMenuItem: { minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: "transparent", paddingHorizontal: 9, marginBottom: 3, flexDirection: "row", alignItems: "center", gap: 9 },
+  navigationMenuItemText: { flex: 1, color: "#304A42", fontSize: 12, fontWeight: "800" },
+  navigationMenuCheck: { width: 21, height: 21, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  navigationMenuCheckText: { color: "white", fontSize: 12, lineHeight: 14, fontWeight: "900" },
+  navigationMenuArrow: { color: "#83918C", fontSize: 24, lineHeight: 24 },
+  navigationMenuDivider: { height: 1, backgroundColor: "#E1E7E3", marginVertical: 8 },
+  navigationMenuHome: { minHeight: 44, borderRadius: 12, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 10 },
+  navigationMenuHomeIcon: { color: "#175B49", fontSize: 21, fontWeight: "900" },
+  navigationMenuHomeText: { color: "#1D4137", fontSize: 13, fontWeight: "900" },
+  navigationMenuSignOut: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: "#E3C6C0", backgroundColor: "#FFF5F2", marginTop: 7, alignItems: "center", justifyContent: "center" },
+  navigationMenuSignOutText: { color: "#8A4035", fontSize: 12, fontWeight: "900" },
   homeIcon: { width: 25, height: 25, alignItems: "center", justifyContent: "flex-end" },
   homeIconRoof: { position: "absolute", top: 1, width: 18, height: 18, backgroundColor: UI.primaryDeep, transform: [{ rotate: "45deg" }], borderRadius: 2 },
   homeIconBody: { width: 20, height: 16, backgroundColor: UI.primaryDeep, alignItems: "center", justifyContent: "flex-end" },
@@ -1841,7 +1968,7 @@ const s = StyleSheet.create({
   signedInAsModern: { flexShrink: 1, color: "#C0C8D5", fontSize: 10 },
   signOutButtonModern: { borderColor: "rgba(255,255,255,0.20)", backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 6 },
   signOutTextModern: { color: "#E7EAF0", fontSize: 9 },
-  tabBarModern: { left: 10, right: 10, bottom: 8, height: 76, paddingTop: 7, paddingHorizontal: 5, backgroundColor: "#FAFBFC", borderWidth: 1, borderColor: "#E2E6EC", borderRadius: 24, shadowColor: "#111827", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.18, shadowRadius: 16, elevation: 16 },
+  tabBarModern: { left: 10, right: 10, bottom: Platform.OS === "android" ? 32 : 8, height: 76, paddingTop: 7, paddingHorizontal: 5, backgroundColor: "#FAFBFC", borderWidth: 1, borderColor: "#E2E6EC", borderRadius: 24, shadowColor: "#111827", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.18, shadowRadius: 16, elevation: 16 },
   tabModern: { marginHorizontal: 1, paddingTop: 1, borderRadius: 17 },
   tabTextModern: { marginTop: 3, letterSpacing: 0.1, fontSize: 9 },
   tabActive: { backgroundColor: "#FFFFFF", borderRadius: 17, shadowColor: "#111827", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.1, shadowRadius: 7, elevation: 3 },

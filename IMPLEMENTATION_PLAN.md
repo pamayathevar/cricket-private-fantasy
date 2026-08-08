@@ -56,3 +56,27 @@ Exit: unique-only works with royalty disabled; royalty leagues reproduce publish
 - Automate authorized score ingestion and reconciliation.
 - Run nine-owner preview on physical iOS/Android devices.
 - Prepare privacy/store metadata and signed builds.
+
+### Deferred QA — fixture links after lock and publication
+
+Status: TODO. Run this checklist when a test fixture has first been locked, and repeat it after points are published for that fixture.
+
+After fixture lock:
+
+- [ ] Confirm the fixture shows **View XI** only after it becomes locked/started.
+- [ ] Tap **View XI** and confirm History opens the same match, scrolls it into view and expands it automatically.
+- [ ] Confirm all submitted XIs, C/VC, BAI/BOI, 3X and other booster markers follow post-lock visibility rules.
+- [ ] Confirm owners cannot see another owner's XI before lock, including through direct database reads or navigation.
+
+After points publication:
+
+- [ ] Confirm the action changes from **View XI** to **View scores**.
+- [ ] Tap **View scores** and confirm History opens the same match, scrolls it into view and expands it automatically.
+- [ ] Confirm owner totals, match ranks and each player's batting, bowling, fielding and bonus breakdown.
+- [ ] For Unique/Royalty leagues, confirm usage fees, royalty adjustments and final totals are displayed correctly.
+
+Platforms:
+
+- [ ] Android physical device.
+- [ ] iPhone physical device.
+- [ ] Web browser at mobile and desktop widths.

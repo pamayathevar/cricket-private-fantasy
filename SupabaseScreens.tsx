@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import type { Player } from "./squadData";
 import { supabase } from "./supabase";
@@ -103,14 +103,15 @@ export function ProductionRanking({ leagueId }: { leagueId: string }) {
 
 function Chip({ active, label, detail, onPress }: { active: boolean; label: string; detail: string; onPress: () => void }) { return <TouchableOpacity style={[x.chip, active && x.chipActive]} onPress={onPress}><Text style={[x.chipLabel, active && x.chipLabelActive]}>{label}</Text><Text style={[x.chipDetail, active && x.chipLabelActive]}>{detail}</Text></TouchableOpacity>; }
 
-export function ProductionMatches({ leagueId, roster }: { leagueId: string; roster: Player[] }) {
+export function ProductionMatches({ leagueId, memberId, roster, availableFixtureIds, openTeam, openHistory }: { leagueId: string; memberId: string; roster: Player[]; availableFixtureIds: Array<string | undefined>; openTeam: (fixtureId: string) => void; openHistory: (fixtureId: string) => void }) {
   const [matches, setMatches] = useState<any[]>([]);
   const [royalties, setRoyalties] = useState<any[]>([]);
   const [royaltyMode, setRoyaltyMode] = useState(false);
   const [expanded, setExpanded] = useState("");
+  const [matchFilter, setMatchFilter] = useState<"ALL" | "UPCOMING" | "COMPLETED" | "PUBLISHED">("ALL");
   const [error, setError] = useState("");
   useEffect(() => { let cancelled = false; setMatches([]); setRoyalties([]); setRoyaltyMode(false); setError(""); Promise.all([
-    supabase.from("fixtures").select("id,match_number,scheduled_start,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),player_match_points(player_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at,player:players(full_name))").eq("league_id", leagueId).order("match_number"),
+    supabase.from("fixtures").select("id,match_number,scheduled_start,lineup_lock_at,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),lineup_submissions(id,member_id,status,submitted_at),player_match_points(player_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at,player:players(full_name))").eq("league_id", leagueId).order("match_number"),
     supabase.from("special_player_score_adjustments").select("fixture_id,player_id,source_member_id,recipient_member_id,adjustment_type,final_player_contribution,rate_percent,minimum_fee,adjustment_points").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
     supabase.from("special_player_rule_sets").select("marquee_mode_enabled").eq("league_id", leagueId).eq("active", true).maybeSingle(),
   ]).then(([fixtureResult, royaltyResult, ruleResult]) => {
@@ -124,12 +125,24 @@ export function ProductionMatches({ leagueId, roster }: { leagueId: string; rost
     }
   }); return () => { cancelled = true; }; }, [leagueId]);
   const specialLabels = useFixtureSpecialLabels(matches.map(match => match.id));
+  const visibleMatches = useMemo(() => matches.filter(match => {
+    if (matchFilter === "UPCOMING") return match.status === "scheduled";
+    if (matchFilter === "COMPLETED") return match.status === "completed";
+    if (matchFilter === "PUBLISHED") return match.scoring_status === "published";
+    return true;
+  }), [matches, matchFilter]);
+  const upcomingCount = matches.filter(match => match.status === "scheduled").length;
+  const completedCount = matches.filter(match => match.status === "completed").length;
+  const publishedCount = matches.filter(match => match.scoring_status === "published").length;
   if (error) return <ScrollView contentContainerStyle={x.screen}><Empty text={error} /></ScrollView>;
   return <ScrollView contentContainerStyle={x.screen}>
     <Text style={x.title}>Fixtures</Text>
-    <Text style={x.subtitle}>All fixtures · published points are visible to owners</Text>
+    <Text style={x.subtitle}>Schedule, match status and published player points</Text>
+    {matches.length ? <View style={x.fixtureOverview}><View style={x.fixtureOverviewItem}><Text style={x.fixtureOverviewValue}>{matches.length}</Text><Text style={x.fixtureOverviewLabel}>TOTAL</Text></View><View style={x.fixtureOverviewDivider} /><View style={x.fixtureOverviewItem}><Text style={x.fixtureOverviewValue}>{upcomingCount}</Text><Text style={x.fixtureOverviewLabel}>UPCOMING</Text></View><View style={x.fixtureOverviewDivider} /><View style={x.fixtureOverviewItem}><Text style={x.fixtureOverviewValue}>{completedCount}</Text><Text style={x.fixtureOverviewLabel}>COMPLETED</Text></View><View style={x.fixtureOverviewDivider} /><View style={x.fixtureOverviewItem}><Text style={x.fixtureOverviewValue}>{publishedCount}</Text><Text style={x.fixtureOverviewLabel}>PUBLISHED</Text></View></View> : null}
+    {matches.length ? <ScrollView horizontal style={x.fixtureFilterScroller} showsHorizontalScrollIndicator={false} contentContainerStyle={x.fixtureFilters}>{([['ALL', 'All'], ['UPCOMING', 'Upcoming'], ['COMPLETED', 'Completed'], ['PUBLISHED', 'Points published']] as Array<[typeof matchFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} style={[x.fixtureFilter, matchFilter === value && x.fixtureFilterActive]} onPress={() => { setMatchFilter(value); setExpanded(""); }}><Text style={[x.fixtureFilterText, matchFilter === value && x.fixtureFilterTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView> : null}
     {!matches.length ? <Empty text="No fixtures have been imported for this league." /> : null}
-    {matches.map(match => {
+    {matches.length && !visibleMatches.length ? <Empty text="No fixtures match this filter." /> : null}
+    {visibleMatches.map(match => {
       const open = expanded === match.id;
       const latestVersion = Math.max(0, ...(match.player_match_points ?? []).filter((point: any) => point.published_at).map((point: any) => point.calculation_version));
       const points = [...(match.player_match_points ?? [])].filter((point: any) => point.published_at && point.calculation_version === latestVersion).sort((a, b) => {
@@ -138,11 +151,21 @@ export function ProductionMatches({ leagueId, roster }: { leagueId: string; rost
         return (pa?.team ?? "").localeCompare(pb?.team ?? "") || Number(b.total_points) - Number(a.total_points);
       });
       const matchRoyalties = royalties.filter(row => row.fixture_id === match.id);
+      const published = match.scoring_status === "published";
+      const completed = match.status === "completed";
+      const ownerSubmission = (match.lineup_submissions ?? []).find((lineup: any) => lineup.member_id === memberId);
+      const locked = match.status !== "scheduled" || (match.lineup_lock_at && new Date(match.lineup_lock_at).getTime() <= Date.now());
+      const availableForSelection = availableFixtureIds.includes(match.id);
+      const ownerStatus = ownerSubmission ? "SUBMITTED" : locked ? "NOT SUBMITTED" : availableForSelection ? "ACTION NEEDED" : "NOT OPEN";
+      const statusLabel = published ? "POINTS PUBLISHED" : completed ? "COMPLETED" : "UPCOMING";
+      const scheduled = match.scheduled_start ? new Date(match.scheduled_start).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "Time to be confirmed";
       return <View key={match.id} style={x.cardBlock}>
         <TouchableOpacity style={x.matchHeader} onPress={() => setExpanded(open ? "" : match.id)}>
-          <View style={x.grow}><Text style={x.name}>Match {match.match_number}</Text><View style={x.matchTeams}><IplTeamBadge code={match.home?.code} /><Text style={x.vsText}>vs</Text><IplTeamBadge code={match.away?.code} /></View><Text style={x.meta}>{match.status.toUpperCase()} · {match.scoring_status.toUpperCase()}</Text></View>
-          <Text style={x.chevron}>{open ? "▲" : "▼"}</Text>
+          <View style={x.matchNumberBadge}><Text style={x.matchNumberLabel}>MATCH</Text><Text style={x.matchNumberValue}>{match.match_number}</Text></View>
+          <View style={x.grow}><View style={x.matchTeams}><IplTeamBadge code={match.home?.code} /><Text style={x.vsText}>VS</Text><IplTeamBadge code={match.away?.code} /></View><Text style={x.matchDate}>{scheduled}</Text></View>
+          <View style={x.matchHeaderEnd}><View style={[x.matchStatusBadge, published ? x.matchStatusPublished : completed ? x.matchStatusCompleted : x.matchStatusUpcoming]}><Text style={[x.matchStatusText, published ? x.matchStatusPublishedText : completed ? x.matchStatusCompletedText : x.matchStatusUpcomingText]}>{statusLabel}</Text></View><Text style={x.chevron}>{open ? "▲" : "▼"}</Text></View>
         </TouchableOpacity>
+        <View style={x.ownerSubmissionBar}><View style={x.ownerSubmissionIdentity}><Text style={x.ownerSubmissionLabel}>YOUR XI</Text><View style={[x.ownerSubmissionPill, ownerSubmission ? x.ownerSubmissionDone : locked ? x.ownerSubmissionMissed : availableForSelection ? x.ownerSubmissionNeeded : x.ownerSubmissionLater]}><Text style={[x.ownerSubmissionPillText, ownerSubmission ? x.ownerSubmissionDoneText : locked ? x.ownerSubmissionMissedText : availableForSelection ? x.ownerSubmissionNeededText : x.ownerSubmissionLaterText]}>{ownerStatus}</Text></View></View>{!locked && availableForSelection ? <TouchableOpacity style={x.ownerSubmissionAction} onPress={() => openTeam(match.id)}><Text style={x.ownerSubmissionActionText}>{ownerSubmission ? "Edit XI" : "Submit XI"}</Text><Text style={x.ownerSubmissionActionArrow}>›</Text></TouchableOpacity> : locked || completed || published ? <TouchableOpacity style={x.ownerSubmissionAction} onPress={() => openHistory(match.id)}><Text style={x.ownerSubmissionActionText}>{published ? "View scores" : "View XI"}</Text><Text style={x.ownerSubmissionActionArrow}>›</Text></TouchableOpacity> : <Text style={x.ownerSubmissionLocked}>OPENS LATER</Text>}</View>
         {open ? points.length ? <View>
           <View style={x.pointHead}><Text style={x.pointPlayer}>PLAYER</Text><Text style={x.pointCell}>BAT</Text><Text style={x.pointCell}>BOWL</Text><Text style={x.pointCell}>FLD</Text><Text style={x.pointCell}>BON</Text>{royaltyMode ? <Text style={x.pointCell}>ROY</Text> : null}<Text style={x.pointTotal}>TOTAL</Text></View>
           {points.map(point => {
@@ -490,7 +513,10 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   </View>;
 }
 
-export function ProductionHistory({ leagueId }: { leagueId: string }) {
+export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagueId: string; requestedFixtureId?: string }) {
+  const historyScrollRef = useRef<ScrollView>(null);
+  const historyMatchPositions = useRef<Record<string, number>>({});
+  const lastScrolledFixture = useRef("");
   const [matches, setMatches] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
   const [playerOwners, setPlayerOwners] = useState<Record<string, string>>({});
@@ -503,6 +529,12 @@ export function ProductionHistory({ leagueId }: { leagueId: string }) {
   const [expandedPlayer, setExpandedPlayer] = useState("");
   const [error, setError] = useState("");
   const specialLabels = useFixtureSpecialLabels(matches.map(match => match.id));
+  useEffect(() => {
+    if (!requestedFixtureId || !matches.some(match => match.id === requestedFixtureId)) return;
+    setExpandedMatch(requestedFixtureId);
+    setExpandedOwner("");
+    setExpandedPlayer("");
+  }, [requestedFixtureId, matches]);
   useEffect(() => {
     Promise.all([
       supabase.from("fixtures").select("id,match_number,stage,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),player_match_points(player_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at),member_match_scores(lineup_id,total_points,rank,calculation_breakdown),lineup_submissions(id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,member:league_members(id,display_name),lineup_players(slot,player:players(id,full_name,role,team:cricket_teams(code))),lineup_boosters(target_player_id,booster:booster_rules(code,player_multiplier,match_multiplier)))").eq("league_id", leagueId).order("match_number", { ascending: false }),
@@ -525,7 +557,7 @@ export function ProductionHistory({ leagueId }: { leagueId: string }) {
     });
   }, [leagueId]);
   if (error) return <ScrollView contentContainerStyle={x.screen}><Empty text={error} /></ScrollView>;
-  return <ScrollView contentContainerStyle={x.screen}>
+  return <ScrollView ref={historyScrollRef} contentContainerStyle={x.screen}>
     <Text style={x.title}>Team History</Text>
     <Text style={x.subtitle}>Your submitted XIs and owner teams visible after lock</Text>
     {matches.length ? matches.map(match => {
@@ -537,7 +569,7 @@ export function ProductionHistory({ leagueId }: { leagueId: string }) {
       });
       const matchRule = [...lineupRules].filter(rule => Number(rule.effective_from_match_number ?? 1) <= Number(match.match_number)).sort((a, b) => Number(b.effective_from_match_number ?? 1) - Number(a.effective_from_match_number ?? 1) || Number(b.version) - Number(a.version))[0];
       const matchSpecialRule = [...specialRules].filter(rule => Number(rule.effective_from_match_number ?? 1) <= Number(match.match_number)).sort((a, b) => Number(b.effective_from_match_number ?? 1) - Number(a.effective_from_match_number ?? 1) || Number(b.version) - Number(a.version))[0];
-      return <View key={match.id} style={x.cardBlock}>
+      return <View key={match.id} style={x.cardBlock} onLayout={event => { historyMatchPositions.current[match.id] = event.nativeEvent.layout.y; if (match.id === requestedFixtureId && lastScrolledFixture.current !== requestedFixtureId) { lastScrolledFixture.current = requestedFixtureId; setTimeout(() => historyScrollRef.current?.scrollTo({ y: Math.max(0, event.nativeEvent.layout.y - 12), animated: true }), 80); } }}>
         <TouchableOpacity style={x.matchHeader} onPress={() => setExpandedMatch(open ? "" : match.id)}>
           <View style={x.grow}><Text style={x.name}>Match {match.match_number}</Text><View style={x.matchTeams}><IplTeamBadge code={match.home?.code} /><Text style={x.vsText}>vs</Text><IplTeamBadge code={match.away?.code} /></View><Text style={x.meta}>{match.status.toUpperCase()} · {match.scoring_status.toUpperCase()} · {lineups.length} visible teams</Text></View>
           <Text style={x.chevron}>{open ? "▲" : "▼"}</Text>
@@ -600,8 +632,13 @@ const x = StyleSheet.create({
   title: { color: "#18223B", fontSize: 26, lineHeight: 31, fontWeight: "900", letterSpacing: -0.4 }, subtitle: { color: "#687384", fontSize: 13, lineHeight: 19, marginTop: 5, marginBottom: 18 }, section: { color: "#18223B", fontSize: 19, lineHeight: 24, fontWeight: "900", letterSpacing: -0.2, marginTop: 22, marginBottom: 11 },
   hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 28, fontWeight: "900", marginTop: 10 }, heroTeams: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 }, heroMeta: { color: "#B7CDC6", fontSize: 11, marginTop: 8 }, accent: { color: "#DDFB72", fontSize: 13, fontWeight: "900" }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" },
   stats: { flexDirection: "row", gap: 9, marginTop: 13 }, metric: { flex: 1, backgroundColor: "white", borderRadius: 16, padding: 13, borderWidth: 1, borderColor: "#E7EAF0" }, metricLabel: { color: "#758091", fontSize: 9, fontWeight: "900", letterSpacing: 0.3 }, metricValue: { color: "#18223B", fontSize: 18, fontWeight: "900", marginTop: 5 },
+  fixtureOverview: { flexDirection: "row", alignItems: "center", backgroundColor: "#14273F", borderRadius: 17, paddingVertical: 13, marginBottom: 12 }, fixtureOverviewItem: { flex: 1, alignItems: "center" }, fixtureOverviewValue: { color: "#DDFB72", fontSize: 17, fontWeight: "900" }, fixtureOverviewLabel: { color: "#AAB8C6", fontSize: 7, fontWeight: "900", marginTop: 3, letterSpacing: 0.4 }, fixtureOverviewDivider: { width: 1, height: 28, backgroundColor: "#34465B" },
+  fixtureFilterScroller: { height: 47, flexGrow: 0, flexShrink: 0 }, fixtureFilters: { height: 47, alignItems: "flex-start", gap: 7, paddingBottom: 13 }, fixtureFilter: { height: 34, borderRadius: 17, borderWidth: 1, borderColor: "#D7DFDB", backgroundColor: "#FFFFFF", paddingHorizontal: 13, alignItems: "center", justifyContent: "center" }, fixtureFilterActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, fixtureFilterText: { color: "#5C6D67", fontSize: 9, fontWeight: "900" }, fixtureFilterTextActive: { color: "#DDFB72" },
   empty: { backgroundColor: "white", borderRadius: 14, padding: 18, alignItems: "center", marginVertical: 8 }, emptyText: { color: "#718079", fontSize: 11, lineHeight: 16, marginTop: 5, textAlign: "center" },
-  card: { backgroundColor: "white", borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#E7EAF0" }, cardBlock: { backgroundColor: "white", borderRadius: 17, overflow: "hidden", marginBottom: 11, borderWidth: 1, borderColor: "#E7EAF0" }, row: { flexDirection: "row", alignItems: "center", padding: 13, borderBottomWidth: 1, borderBottomColor: "#ECEFF3" }, matchHeader: { flexDirection: "row", alignItems: "center", padding: 15 }, matchTeams: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 7 }, vsText: { color: "#687384", fontSize: 9, fontWeight: "900" }, inlineMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 }, grow: { flex: 1 }, name: { color: "#18223B", fontSize: 13, lineHeight: 17, fontWeight: "900" }, meta: { color: "#758091", fontSize: 10, lineHeight: 14, marginTop: 3 }, value: { color: "#273652", fontSize: 12, fontWeight: "900", marginHorizontal: 7 }, chevron: { color: "#687384", fontSize: 11 }, rank: { width: 34, color: "#687384", fontWeight: "900" }, avatar: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#EEF0FA", alignItems: "center", justifyContent: "center", marginRight: 9 }, avatarText: { color: "#5364A0", fontWeight: "900" },
+  card: { backgroundColor: "white", borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#E7EAF0" }, cardBlock: { backgroundColor: "white", borderRadius: 17, overflow: "hidden", marginBottom: 11, borderWidth: 1, borderColor: "#E0E6E2", shadowColor: "#14273F", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 1 }, row: { flexDirection: "row", alignItems: "center", padding: 13, borderBottomWidth: 1, borderBottomColor: "#ECEFF3" }, matchHeader: { flexDirection: "row", alignItems: "center", padding: 13 }, matchNumberBadge: { width: 43, height: 43, borderRadius: 13, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginRight: 11 }, matchNumberLabel: { color: "#7B8983", fontSize: 6, fontWeight: "900", letterSpacing: 0.4 }, matchNumberValue: { color: "#173F35", fontSize: 16, fontWeight: "900", marginTop: 1 }, matchTeams: { flexDirection: "row", alignItems: "center", gap: 7 }, matchDate: { color: "#758091", fontSize: 9, fontWeight: "700", marginTop: 6 }, matchHeaderEnd: { alignItems: "flex-end", marginLeft: 7 }, matchStatusBadge: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, marginBottom: 8 }, matchStatusPublished: { backgroundColor: "#E3F3E5" }, matchStatusCompleted: { backgroundColor: "#E8ECF5" }, matchStatusUpcoming: { backgroundColor: "#FFF2D7" }, matchStatusText: { fontSize: 6, fontWeight: "900", letterSpacing: 0.25 }, matchStatusPublishedText: { color: "#2D6A3B" }, matchStatusCompletedText: { color: "#52627F" }, matchStatusUpcomingText: { color: "#8A6112" }, vsText: { color: "#687384", fontSize: 9, fontWeight: "900" }, inlineMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 }, grow: { flex: 1 }, name: { color: "#18223B", fontSize: 13, lineHeight: 17, fontWeight: "900" }, meta: { color: "#758091", fontSize: 10, lineHeight: 14, marginTop: 3 }, value: { color: "#273652", fontSize: 12, fontWeight: "900", marginHorizontal: 7 }, chevron: { color: "#687384", fontSize: 11 }, rank: { width: 34, color: "#687384", fontWeight: "900" }, avatar: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#EEF0FA", alignItems: "center", justifyContent: "center", marginRight: 9 }, avatarText: { color: "#5364A0", fontWeight: "900" },
+  ownerSubmissionBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 42, paddingHorizontal: 13, paddingVertical: 8, backgroundColor: "#F7F9F7", borderTopWidth: 1, borderTopColor: "#E7ECE9" },
+  ownerSubmissionIdentity: { flexDirection: "row", alignItems: "center", gap: 7 }, ownerSubmissionLabel: { color: "#6E7D77", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 }, ownerSubmissionPill: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4 }, ownerSubmissionDone: { backgroundColor: "#E1F2E4" }, ownerSubmissionNeeded: { backgroundColor: "#FFF0C8" }, ownerSubmissionMissed: { backgroundColor: "#F7E5E2" }, ownerSubmissionLater: { backgroundColor: "#E8EDF2" }, ownerSubmissionPillText: { fontSize: 7, fontWeight: "900", letterSpacing: 0.25 }, ownerSubmissionDoneText: { color: "#2D6A3B" }, ownerSubmissionNeededText: { color: "#8A6112" }, ownerSubmissionMissedText: { color: "#8B4439" }, ownerSubmissionLaterText: { color: "#617080" },
+  ownerSubmissionAction: { flexDirection: "row", alignItems: "center", backgroundColor: "#174D3D", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7 }, ownerSubmissionActionText: { color: "#DDFB72", fontSize: 8, fontWeight: "900" }, ownerSubmissionActionArrow: { color: "#DDFB72", fontSize: 14, lineHeight: 14, fontWeight: "900", marginLeft: 5 }, ownerSubmissionLocked: { color: "#8B9691", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
   chips: { gap: 7, paddingBottom: 12 }, chip: { backgroundColor: "#E5ECE8", borderRadius: 11, paddingHorizontal: 13, paddingVertical: 9 }, chipActive: { backgroundColor: "#174D3D" }, chipLabel: { color: "#315047", fontSize: 10, fontWeight: "900" }, chipLabelActive: { color: "#DDFB72" }, chipDetail: { color: "#82918B", fontSize: 7, marginTop: 2 },
   pointHead: { flexDirection: "row", padding: 9, backgroundColor: "#EEF2EF" }, pointRow: { flexDirection: "row", alignItems: "center", padding: 9, borderTopWidth: 1, borderTopColor: "#EDF0EA" }, pointPlayer: { flex: 1, minWidth: 0, paddingRight: 5 }, pointCell: { width: 27, textAlign: "right", color: "#61736C", fontSize: 8 }, royaltyColumn: { color: "#704091", fontWeight: "900" }, pointTotal: { width: 35, textAlign: "right", color: "#173028", fontSize: 9, fontWeight: "900" },
   ownerTotalsSection: { backgroundColor: "#F8FAF7", borderTopWidth: 1, borderTopColor: "#E2E8E4", paddingHorizontal: 12, paddingVertical: 8 }, ownerTotalRow: { flexDirection: "row", alignItems: "center", minHeight: 40, paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: "#E8EDE9" }, ownerTotalValues: { flexDirection: "row", alignItems: "center", gap: 9 }, ownerTotalName: { color: "#173028", fontSize: 10, fontWeight: "800" }, ownerTotalPoints: { color: "#174D3D", fontSize: 12, fontWeight: "900", marginLeft: 10 }, ownerRoyaltyMeta: { color: "#704091", fontSize: 8, fontWeight: "800", marginTop: 2 },
