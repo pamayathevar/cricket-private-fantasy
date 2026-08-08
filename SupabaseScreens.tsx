@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import type { Player } from "./squadData";
 import { supabase } from "./supabase";
+import { userActionError } from "./errorMessages";
 
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
 const fmt = (value: unknown) => Math.round(Number(value ?? 0)).toLocaleString("en-US");
@@ -21,17 +22,30 @@ export const IPL_TEAM_BADGES: Record<string, { backgroundColor: string; color: s
 export const teamBadge = (code?: string) => IPL_TEAM_BADGES[code ?? ""] ?? { backgroundColor: "#546A61", color: "#FFFFFF", borderColor: "#546A61" };
 export function IplTeamBadge({ code }: { code?: string }) { return <Text style={[x.teamBadge, teamBadge(code)]}>{code ?? "TBD"}</Text>; }
 export function SpecialPlayerBadge({ label }: { label?: string }) { return label ? <Text style={[x.specialPlayerBadge, label === "MARQUEE" && x.marqueePlayerBadge]}>{label}</Text> : null; }
+const FIXTURE_LABEL_CACHE_MS = 30_000;
+const fixtureSpecialLabelCache = new Map<string, { loadedAt: number; labels: Record<string, string[]> }>();
 function useFixtureSpecialLabels(fixtureIds: string[]) {
   const [labels, setLabels] = useState<Record<string, Record<string, string[]>>>({});
   const key = fixtureIds.join(",");
   useEffect(() => {
     let mounted = true;
     if (!fixtureIds.length) { setLabels({}); return () => { mounted = false; }; }
-    Promise.all(fixtureIds.map(async fixtureId => {
+    const now = Date.now();
+    const cached = Object.fromEntries(fixtureIds.flatMap(fixtureId => {
+      const value = fixtureSpecialLabelCache.get(fixtureId);
+      return value && now - value.loadedAt < FIXTURE_LABEL_CACHE_MS ? [[fixtureId, value.labels] as const] : [];
+    }));
+    setLabels(cached);
+    const missingFixtureIds = fixtureIds.filter(fixtureId => {
+      const value = fixtureSpecialLabelCache.get(fixtureId);
+      return !value || now - value.loadedAt >= FIXTURE_LABEL_CACHE_MS;
+    });
+    Promise.all(missingFixtureIds.map(async fixtureId => {
       const { data } = await supabase.rpc("special_player_labels_for_fixture", { p_fixture_id: fixtureId });
       const byName = ((data ?? []) as Array<{ full_name: string; label: string }>).reduce((result, row) => ({ ...result, [row.full_name]: [...(result[row.full_name] ?? []), row.label] }), {} as Record<string, string[]>);
+      fixtureSpecialLabelCache.set(fixtureId, { loadedAt: Date.now(), labels: byName });
       return [fixtureId, byName] as const;
-    })).then(rows => { if (mounted) setLabels(Object.fromEntries(rows)); });
+    })).then(rows => { if (mounted && rows.length) setLabels(current => ({ ...current, ...Object.fromEntries(rows) })); });
     return () => { mounted = false; };
   }, [key]);
   return labels;
@@ -50,26 +64,39 @@ function useLeagueSpecialLabels(leagueId: string) {
 }
 const Empty = ({ text }: { text: string }) => <View style={x.empty}><Text style={x.emptyText}>{text}</Text></View>;
 const Loading = () => <View style={x.empty}><ActivityIndicator color="#174D3D" /><Text style={x.emptyText}>Loading league data…</Text></View>;
+const LoadError = ({ message, onRetry }: { message: string; onRetry: () => void }) => <View style={x.loadError}><View style={x.loadErrorIcon}><Text style={x.loadErrorIconText}>!</Text></View><Text style={x.loadErrorTitle}>We couldn’t load this screen</Text><Text style={x.loadErrorText}>Check your connection and try again.</Text><TouchableOpacity style={x.loadErrorRetry} onPress={onRetry}><Text style={x.loadErrorRetryText}>Retry</Text></TouchableOpacity>{__DEV__ ? <Text style={x.loadErrorDetail}>{message}</Text> : null}</View>;
 
 export function ProductionDashboard({ leagueId, leagueName, memberName, openTeam }: { leagueId: string; leagueName: string; memberName: string; openTeam: () => void }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
-    Promise.all([
-      supabase.from("fixtures").select("match_number,scheduled_start,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueId).eq("status", "scheduled").order("match_number").limit(1).maybeSingle(),
-      supabase.from("league_standings").select("display_name,total_points,matches_scored,rank").eq("league_id", leagueId).eq("display_name", memberName).maybeSingle(),
-      supabase.from("league_members").select("id").eq("league_id", leagueId).eq("display_name", memberName).single(),
-      supabase.from("league_transfer_periods").select("id,name,start_match_number,end_match_number,transfer_limit").eq("league_id", leagueId).eq("active", true).order("sort_order"),
-    ]).then(async ([fixture, standing, member, periods]) => {
-      const firstError = fixture.error ?? standing.error ?? member.error ?? periods.error;
-      if (firstError) { setError(firstError.message); return; }
-      if (!member.data) { setError("League member record was not found."); return; }
-      const transfers = await supabase.from("transfer_events").select("transfer_period_id,transfer_count").eq("member_id", member.data.id).eq("reason", "lineup_change");
-      if (transfers.error) { setError(transfers.error.message); return; }
-      setData({ fixture: fixture.data, standing: standing.data, periods: periods.data ?? [], transfers: transfers.data ?? [] });
-    });
-  }, [leagueId, memberName]);
-  if (error) return <Empty text={error} />;
+    let cancelled = false;
+    setData(null); setError("");
+    const load = async () => {
+      try {
+        const [fixture, standing, member, periods] = await Promise.all([
+          supabase.from("fixtures").select("match_number,scheduled_start,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueId).eq("status", "scheduled").order("match_number").limit(1).maybeSingle(),
+          supabase.from("league_standings").select("display_name,total_points,matches_scored,rank").eq("league_id", leagueId).eq("display_name", memberName).maybeSingle(),
+          supabase.from("league_members").select("id").eq("league_id", leagueId).eq("display_name", memberName).single(),
+          supabase.from("league_transfer_periods").select("id,name,start_match_number,end_match_number,transfer_limit").eq("league_id", leagueId).eq("active", true).order("sort_order"),
+        ]);
+        if (cancelled) return;
+        const firstError = fixture.error ?? standing.error ?? member.error ?? periods.error;
+        if (firstError) { setError(firstError.message); return; }
+        if (!member.data) { setError("League member record was not found."); return; }
+        const transfers = await supabase.from("transfer_events").select("transfer_period_id,transfer_count").eq("member_id", member.data.id).eq("reason", "lineup_change");
+        if (cancelled) return;
+        if (transfers.error) { setError(transfers.error.message); return; }
+        setData({ fixture: fixture.data, standing: standing.data, periods: periods.data ?? [], transfers: transfers.data ?? [] });
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Dashboard data could not be loaded.");
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [leagueId, memberName, reloadKey]);
+  if (error) return <LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} />;
   if (!data) return <Loading />;
   const fixture = data.fixture;
   const start = fixture ? new Date(fixture.scheduled_start) : null;
@@ -83,22 +110,38 @@ export function ProductionDashboard({ leagueId, leagueName, memberName, openTeam
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) { return <View style={x.metric}><Text style={x.metricLabel}>{label}</Text><Text style={x.metricValue}>{value}</Text><Text style={x.meta}>{detail}</Text></View>; }
 
-export function ProductionRanking({ leagueId }: { leagueId: string }) {
+export function ProductionRanking({ leagueId, currentOwner }: { leagueId: string; currentOwner: string }) {
   const [phases, setPhases] = useState<any[]>([]);
   const [selected, setSelected] = useState("overall");
   const [overall, setOverall] = useState<any[]>([]);
   const [phaseRows, setPhaseRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  useEffect(() => { Promise.all([
-    supabase.from("league_phases").select("id,code,name,start_match_number,end_match_number,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
-    supabase.from("league_standings").select("member_id,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
-    supabase.from("league_phase_standings").select("phase_id,member_id,phase_code,phase_name,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
-  ]).then(([p, o, r]) => { const e = p.error ?? o.error ?? r.error; if (e) setError(e.message); else { setPhases(p.data ?? []); setOverall(o.data ?? []); setPhaseRows(r.data ?? []); } setLoading(false); }); }, [leagueId]);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setError(""); setPhases([]); setOverall([]); setPhaseRows([]);
+    Promise.all([
+      supabase.from("league_phases").select("id,code,name,start_match_number,end_match_number,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
+      supabase.from("league_standings").select("member_id,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
+      supabase.from("league_phase_standings").select("phase_id,member_id,phase_code,phase_name,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
+    ]).then(([p, o, r]) => {
+      if (cancelled) return;
+      const e = p.error ?? o.error ?? r.error;
+      if (e) setError(e.message);
+      else { setPhases(p.data ?? []); setOverall(o.data ?? []); setPhaseRows(r.data ?? []); }
+    }).catch(loadError => {
+      if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Ranking data could not be loaded.");
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [leagueId, reloadKey]);
   if (loading) return <Loading />;
-  if (error) return <Empty text={error} />;
+  if (error) return <LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} />;
   const rows = selected === "overall" ? overall : phaseRows.filter(row => row.phase_code === selected);
-  return <View><Text style={x.section}>League Ranking</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.chips}><Chip active={selected === "overall"} label="Overall" detail="All published" onPress={() => setSelected("overall")} />{phases.map((phase, index) => <Chip key={phase.id ?? `${phase.code}:${index}`} active={selected === phase.code} label={phase.name} detail={`M${phase.start_match_number}–${phase.end_match_number}`} onPress={() => setSelected(phase.code)} />)}</ScrollView>{rows.length ? <View style={x.card}>{rows.map((row, index) => <View key={`${selected}:${row.member_id ?? index}`} style={x.row}><Text style={x.rank}>#{row.rank}</Text><View style={x.avatar}><Text style={x.avatarText}>{row.display_name[0]}</Text></View><View style={x.grow}><Text style={x.ownerDisplayName}>{row.display_name}</Text><Text style={x.meta}>{row.matches_scored} scored matches</Text></View><Text style={x.value}>{fmt(row.total_points)} pts</Text></View>)}</View> : <Empty text="No published match scores in this ranking period." />}</View>;
+  const normalizedOwner = currentOwner.trim().toLocaleLowerCase();
+  return <View><Text style={x.section}>League Ranking</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.chips}><Chip active={selected === "overall"} label="Overall" detail="All published" onPress={() => setSelected("overall")} />{phases.map((phase, index) => <Chip key={phase.id ?? `${phase.code}:${index}`} active={selected === phase.code} label={phase.name} detail={`M${phase.start_match_number}–${phase.end_match_number}`} onPress={() => setSelected(phase.code)} />)}</ScrollView>{rows.length ? <View style={x.card}>{rows.map((row, index) => { const isCurrentOwner = String(row.display_name ?? "").trim().toLocaleLowerCase() === normalizedOwner; const rank = Number(row.rank); const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : ""; return <View key={`${selected}:${row.member_id ?? index}`} style={[x.row, isCurrentOwner && x.currentRankingRow]}><View style={x.rankSlot}>{medal ? <Text accessibilityLabel={`Rank ${rank}`} style={x.rankMedal}>{medal}</Text> : <Text style={[x.rank, isCurrentOwner && x.currentRankingRank]}>#{row.rank}</Text>}</View><View style={[x.avatar, isCurrentOwner && x.currentRankingAvatar]}><Text style={[x.avatarText, isCurrentOwner && x.currentRankingAvatarText]}>{row.display_name[0]}</Text></View><View style={x.grow}><View style={x.rankingOwnerLine}><Text style={x.ownerDisplayName}>{row.display_name}</Text>{isCurrentOwner ? <View style={x.youBadge}><Text style={x.youBadgeText}>YOU</Text></View> : null}</View><Text style={[x.meta, isCurrentOwner && x.currentRankingMeta]}>{row.matches_scored} scored matches</Text></View><Text style={[x.value, isCurrentOwner && x.currentRankingValue]}>{fmt(row.total_points)} pts</Text></View>; })}</View> : <Empty text="No published match scores in this ranking period." />}</View>;
 }
 
 function Chip({ active, label, detail, onPress }: { active: boolean; label: string; detail: string; onPress: () => void }) { return <TouchableOpacity style={[x.chip, active && x.chipActive]} onPress={onPress}><Text style={[x.chipLabel, active && x.chipLabelActive]}>{label}</Text><Text style={[x.chipDetail, active && x.chipLabelActive]}>{detail}</Text></TouchableOpacity>; }
@@ -109,8 +152,10 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
   const [royaltyMode, setRoyaltyMode] = useState(false);
   const [expanded, setExpanded] = useState("");
   const [matchFilter, setMatchFilter] = useState<"ALL" | "UPCOMING" | "COMPLETED" | "PUBLISHED">("ALL");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  useEffect(() => { let cancelled = false; setMatches([]); setRoyalties([]); setRoyaltyMode(false); setError(""); Promise.all([
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { let cancelled = false; setLoading(true); setMatches([]); setRoyalties([]); setRoyaltyMode(false); setError(""); Promise.all([
     supabase.from("fixtures").select("id,match_number,scheduled_start,lineup_lock_at,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),lineup_submissions(id,member_id,status,submitted_at),player_match_points(player_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at,player:players(full_name))").eq("league_id", leagueId).order("match_number"),
     supabase.from("special_player_score_adjustments").select("fixture_id,player_id,source_member_id,recipient_member_id,adjustment_type,final_player_contribution,rate_percent,minimum_fee,adjustment_points").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
     supabase.from("special_player_rule_sets").select("marquee_mode_enabled").eq("league_id", leagueId).eq("active", true).maybeSingle(),
@@ -123,8 +168,14 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
       setRoyalties(royaltyResult.data ?? []);
       setRoyaltyMode(ruleResult.data?.marquee_mode_enabled === true);
     }
-  }); return () => { cancelled = true; }; }, [leagueId]);
-  const specialLabels = useFixtureSpecialLabels(matches.map(match => match.id));
+    setLoading(false);
+  }).catch(reason => {
+    if (!cancelled) {
+      setError(reason instanceof Error ? reason.message : "Could not load fixtures.");
+      setLoading(false);
+    }
+  }); return () => { cancelled = true; }; }, [leagueId, reloadKey]);
+  const specialLabels = useFixtureSpecialLabels(expanded ? [expanded] : []);
   const visibleMatches = useMemo(() => matches.filter(match => {
     if (matchFilter === "UPCOMING") return match.status === "scheduled";
     if (matchFilter === "COMPLETED") return match.status === "completed";
@@ -134,7 +185,8 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
   const upcomingCount = matches.filter(match => match.status === "scheduled").length;
   const completedCount = matches.filter(match => match.status === "completed").length;
   const publishedCount = matches.filter(match => match.scoring_status === "published").length;
-  if (error) return <ScrollView contentContainerStyle={x.screen}><Empty text={error} /></ScrollView>;
+  if (loading) return <ScrollView contentContainerStyle={x.screen}><Loading /></ScrollView>;
+  if (error) return <ScrollView contentContainerStyle={x.screen}><LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} /></ScrollView>;
   return <ScrollView contentContainerStyle={x.screen}>
     <Text style={x.title}>Fixtures</Text>
     <Text style={x.subtitle}>Schedule, match status and published player points</Text>
@@ -183,31 +235,44 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
 type SpecialSelectionConfig = { type: "unique" | "marquee"; required: number };
 type SpecialSelectionPhase = { id: string; name: string; sort_order: number; is_final_phase: boolean; opensAt: string | null; closesAt: string | null };
 export function ProductionSquads({ leagueId, currentOwner, roster, specialSelection }: { leagueId: string; currentOwner: string; roster: Player[]; specialSelection?: SpecialSelectionConfig | null }) {
+  const specialActionLock = useRef(false);
   const [points, setPoints] = useState<any[]>([]);
   const [royalties, setRoyalties] = useState<any[]>([]);
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState(currentOwner);
   const [expandedPlayer, setExpandedPlayer] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
   const leagueSpecialLabels = useLeagueSpecialLabels(leagueId);
   const [specialPhase, setSpecialPhase] = useState<SpecialSelectionPhase | null>(null);
   const [specialSelected, setSpecialSelected] = useState<string[]>([]);
   const [specialPlayerIds, setSpecialPlayerIds] = useState<Record<string, string>>({});
   const [specialBusy, setSpecialBusy] = useState(false);
   const [specialMessage, setSpecialMessage] = useState("");
-  useEffect(() => { Promise.all([
-    supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name),fixture:fixtures!inner(league_id)").eq("fixture.league_id", leagueId).not("published_at", "is", null),
-    supabase.from("special_player_score_adjustments").select("fixture_id,player_id,source_member_id,recipient_member_id,adjustment_type,final_player_contribution,rate_percent,minimum_fee,adjustment_points,player:players(full_name)").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
-    supabase.from("league_members").select("id,display_name").eq("league_id", leagueId),
-  ]).then(([pointResult, royaltyResult, memberResult]) => {
-    const e = pointResult.error ?? royaltyResult.error ?? memberResult.error;
-    if (e) setError(e.message);
-    else {
-      setPoints(pointResult.data ?? []);
-      setRoyalties(royaltyResult.data ?? []);
-      setMemberNames(Object.fromEntries((memberResult.data ?? []).map((member: any) => [member.id, member.display_name])));
-    }
-  }); }, [leagueId]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setError(""); setPoints([]); setRoyalties([]); setMemberNames({});
+    Promise.all([
+      supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name),fixture:fixtures!inner(league_id)").eq("fixture.league_id", leagueId).not("published_at", "is", null),
+      supabase.from("special_player_score_adjustments").select("fixture_id,player_id,source_member_id,recipient_member_id,adjustment_type,final_player_contribution,rate_percent,minimum_fee,adjustment_points,player:players(full_name)").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
+      supabase.from("league_members").select("id,display_name").eq("league_id", leagueId),
+    ]).then(([pointResult, royaltyResult, memberResult]) => {
+      if (cancelled) return;
+      const e = pointResult.error ?? royaltyResult.error ?? memberResult.error;
+      if (e) setError(e.message);
+      else {
+        setPoints(pointResult.data ?? []);
+        setRoyalties(royaltyResult.data ?? []);
+        setMemberNames(Object.fromEntries((memberResult.data ?? []).map((member: any) => [member.id, member.display_name])));
+      }
+    }).catch(loadError => {
+      if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Owner squads could not be loaded.");
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [leagueId, reloadKey]);
   useEffect(() => {
     let mounted = true;
     setSpecialPhase(null); setSpecialSelected([]); setSpecialPlayerIds({}); setSpecialMessage("");
@@ -254,14 +319,21 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
   };
   const saveSpecial = async () => {
     if (!specialPhase || !specialSelection || specialSelected.length !== specialSelection.required) return;
+    if (specialActionLock.current) return;
+    specialActionLock.current = true;
     setSpecialBusy(true); setSpecialMessage("");
-    const { error: saveError } = await supabase.rpc("set_phase_special_players", { p_phase_id: specialPhase.id, p_selection_type: specialSelection.type, p_player_ids: specialSelected });
-    setSpecialBusy(false);
-    setSpecialMessage(saveError ? saveError.message : `Saved ${specialSelection.required} ${specialSelection.type === "unique" ? "Unique" : "Marquee"} Players for ${specialPhase.name}.`);
+    try {
+      const { error: saveError } = await supabase.rpc("set_phase_special_players", { p_phase_id: specialPhase.id, p_selection_type: specialSelection.type, p_player_ids: specialSelected });
+      setSpecialMessage(saveError ? saveError.message : `Saved ${specialSelection.required} ${specialSelection.type === "unique" ? "Unique" : "Marquee"} Players for ${specialPhase.name}.`);
+    } finally {
+      specialActionLock.current = false;
+      setSpecialBusy(false);
+    }
   };
   const totals = useMemo(() => { const latest = new Map<string, any>(); for (const row of points) { const key = `${row.fixture_id}:${row.player?.full_name}`; if (!latest.has(key) || latest.get(key).calculation_version < row.calculation_version) latest.set(key, row); } const map = new Map<string, any>(); for (const row of latest.values()) { const name = row.player?.full_name; const current = map.get(name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; map.set(name, { matches: current.matches + 1, batting: current.batting + Number(row.batting_points), bowling: current.bowling + Number(row.bowling_points), fielding: current.fielding + Number(row.fielding_points), bonus: current.bonus + Number(row.bonus_points), total: current.total + Number(row.total_points) }); } return map; }, [points]);
   const royaltyTotals = useMemo(() => { const map = new Map<string, { total: number; rows: any[] }>(); for (const row of royalties) { const owner = memberNames[row.recipient_member_id]; const name = row.player?.full_name; if (!owner || !name) continue; const key = `${owner}:${name}`; const current = map.get(key) ?? { total: 0, rows: [] }; map.set(key, { total: current.total + Number(row.adjustment_points), rows: [...current.rows, row] }); } return map; }, [royalties, memberNames]);
-  if (error) return <Empty text={error} />;
+  if (loading) return <Loading />;
+  if (error) return <LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} />;
   const owners = Array.from(new Set(roster.filter(p => p.owner !== "Available").map(p => p.owner))).sort((a, b) => a === currentOwner ? -1 : b === currentOwner ? 1 : a.localeCompare(b));
   const royaltyMode = specialSelection?.type === "marquee";
   return <View>
@@ -315,6 +387,7 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
 type LeagueSquadPlayer = Player & { leaguePlayerId: string; playerId: string; active: boolean; bidPrice: number | null; ownerId: string };
 type LeagueSquadOwner = { id: string; display_name: string };
 export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged }: { leagueId: string; canEdit: boolean; onAvailabilityChanged: () => void }) {
+  const playerActionLock = useRef(false);
   const [expandedTeams, setExpandedTeams] = useState<string[]>([]);
   const [expandedPlayer, setExpandedPlayer] = useState("");
   const [pointRows, setPointRows] = useState<any[]>([]);
@@ -339,6 +412,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const [editActive, setEditActive] = useState(true);
   const [editBusy, setEditBusy] = useState(false);
   const [loadVersion, setLoadVersion] = useState(0);
+  const [loading, setLoading] = useState(true);
   const leagueSpecialLabels = useLeagueSpecialLabels(leagueId);
   const teams = useMemo(() => Array.from(new Set(squadPlayers.map(player => player.team))).sort((a, b) => a.localeCompare(b)), [squadPlayers]);
   useEffect(() => {
@@ -352,6 +426,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setPointsError("");
     setAvailabilityMessage("");
     setExpandedPlayer("");
+    setLoading(true);
     Promise.all([
       supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name,team:cricket_teams(code)),fixture:fixtures!inner(league_id)").eq("fixture.league_id", leagueId).not("published_at", "is", null),
       supabase.from("league_players").select("id,player_id,active,acquisition_price,bid_price,owner:league_members(id,display_name),player:players(full_name,role,team:cricket_teams(code))").eq("league_id", leagueId),
@@ -371,6 +446,10 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
           setSquadPlayers((squadResult.data as any[] ?? []).map(row => ({ leaguePlayerId: row.id, playerId: row.player_id, active: row.active, name: row.player.full_name, team: row.player.team?.code ?? "—", role: row.player.role as Player["role"], price: Number(row.acquisition_price), bidPrice: row.bid_price == null ? null : Number(row.bid_price), ownerId: row.owner?.id ?? "", owner: row.owner?.display_name ?? "Available" })).sort((a, b) => a.team.localeCompare(b.team) || a.name.localeCompare(b.name)));
           setOwners((ownerResult.data ?? []) as LeagueSquadOwner[]);
         }
+      }).catch(loadError => {
+        if (!cancelled) setPointsError(loadError instanceof Error ? loadError.message : "IPL squad could not be loaded.");
+      }).finally(() => {
+        if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
   }, [leagueId, loadVersion]);
@@ -413,10 +492,17 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     const cost = Number(editCost);
     if (!editName.trim()) { setAvailabilityMessage("Player name is required."); return; }
     if (!Number.isFinite(cost) || cost < 0) { setAvailabilityMessage("Selection cost must be zero or greater."); return; }
+    if (playerActionLock.current) return;
+    playerActionLock.current = true;
     setEditBusy(true); setAvailabilityMessage("");
-    const { error } = await supabase.rpc("edit_league_player", { p_league_player_id: player.leaguePlayerId, p_full_name: editName.trim(), p_role: editRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? editOwnerId || null : null, p_active: editActive });
-    setEditBusy(false);
-    if (error) { setAvailabilityMessage(error.message); Alert.alert("Edit player", error.message); return; }
+    let error: any = null;
+    try {
+      ({ error } = await supabase.rpc("edit_league_player", { p_league_player_id: player.leaguePlayerId, p_full_name: editName.trim(), p_role: editRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? editOwnerId || null : null, p_active: editActive }));
+    } finally {
+      playerActionLock.current = false;
+      setEditBusy(false);
+    }
+    if (error) { const detail = userActionError(error, "Player update"); setAvailabilityMessage(detail); Alert.alert("Player not updated", detail); return; }
     setEditingPlayerId("");
     setAvailabilityMessage(`${editName.trim()} updated. Auction bid price was preserved.`);
     setLoadVersion(version => version + 1);
@@ -431,20 +517,28 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     const cost = Number(newPlayerCost);
     if (!newPlayerName.trim()) { setAvailabilityMessage("Player name is required."); return; }
     if (!Number.isFinite(cost) || cost < 0) { setAvailabilityMessage("Selection cost must be zero or greater."); return; }
+    if (playerActionLock.current) return;
+    playerActionLock.current = true;
     setAddBusy(true); setAvailabilityMessage("");
-    const { error } = await supabase.rpc("add_league_replacement_player", { p_league_id: leagueId, p_team_code: addingTeam, p_full_name: newPlayerName.trim(), p_role: newPlayerRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? newPlayerOwnerId || null : null });
-    setAddBusy(false);
-    if (error) { setAvailabilityMessage(error.message); Alert.alert("Add player", error.message); return; }
+    let error: any = null;
+    try {
+      ({ error } = await supabase.rpc("add_league_replacement_player", { p_league_id: leagueId, p_team_code: addingTeam, p_full_name: newPlayerName.trim(), p_role: newPlayerRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? newPlayerOwnerId || null : null }));
+    } finally {
+      playerActionLock.current = false;
+      setAddBusy(false);
+    }
+    if (error) { const detail = userActionError(error, "Player addition"); setAvailabilityMessage(detail); Alert.alert("Player not added", detail); return; }
     const addedName = newPlayerName.trim();
     setAddingTeam(""); setNewPlayerName(""); setNewPlayerOwnerId("");
     setAvailabilityMessage(`${addedName} added to ${addingTeam}.`);
     setLoadVersion(version => version + 1);
     onAvailabilityChanged();
   };
+  if (loading) return <Loading />;
+  if (pointsError) return <LoadError message={pointsError} onRetry={() => setLoadVersion(version => version + 1)} />;
   return <View>
     <View style={x.squadTitleRow}><View style={x.grow}><Text style={x.section}>IPL Squad</Text><Text style={x.subtitle}>{squadPlayers.filter(player => player.active).length} active · {squadPlayers.filter(player => !player.active).length} inactive</Text></View>{teams.length ? <TouchableOpacity style={x.squadToggle} onPress={() => setExpandedTeams(allExpanded ? [] : teams)}><Text style={x.squadToggleText}>{allExpanded ? "Collapse all" : "Expand all"}</Text></TouchableOpacity> : null}</View>
     {availabilityMessage ? <View style={x.squadAvailabilityMessage}><Text style={x.squadAvailabilityMessageText}>{availabilityMessage}</Text></View> : null}
-    {pointsError ? <View style={x.squadPointsWarning}><Text style={x.squadPointsWarningText}>Points unavailable: {pointsError}</Text></View> : null}
     {!squadPlayers.length ? <Empty text="No squad players have been imported for this league." /> : teams.map(team => {
       const teamPlayers = squadPlayers.filter(player => player.team === team).sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
       const collapsed = !expandedTeams.includes(team);
@@ -527,8 +621,10 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
   const [expandedMatch, setExpandedMatch] = useState("");
   const [expandedOwner, setExpandedOwner] = useState("");
   const [expandedPlayer, setExpandedPlayer] = useState("");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const specialLabels = useFixtureSpecialLabels(matches.map(match => match.id));
+  const [reloadKey, setReloadKey] = useState(0);
+  const specialLabels = useFixtureSpecialLabels(expandedMatch ? [expandedMatch] : []);
   useEffect(() => {
     if (!requestedFixtureId || !matches.some(match => match.id === requestedFixtureId)) return;
     setExpandedMatch(requestedFixtureId);
@@ -536,6 +632,10 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
     setExpandedPlayer("");
   }, [requestedFixtureId, matches]);
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setMatches([]);
     Promise.all([
       supabase.from("fixtures").select("id,match_number,stage,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),player_match_points(player_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at),member_match_scores(lineup_id,total_points,rank,calculation_breakdown),lineup_submissions(id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,member:league_members(id,display_name),lineup_players(slot,player:players(id,full_name,role,team:cricket_teams(code))),lineup_boosters(target_player_id,booster:booster_rules(code,player_multiplier,match_multiplier)))").eq("league_id", leagueId).order("match_number", { ascending: false }),
       supabase.from("transfer_events").select("member_id,transfer_count,transfer_period_id,reason,fixture:fixtures(match_number)").eq("league_id", leagueId).eq("reason", "lineup_change"),
@@ -545,8 +645,9 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
       supabase.from("league_format_configs").select("ownership_enabled,other_owner_deductions_enabled").eq("league_id", leagueId).maybeSingle(),
       supabase.from("special_player_rule_sets").select("version,effective_from_match_number,unique_mode_enabled,marquee_mode_enabled,other_player_fee_percent,other_player_minimum_fee").eq("league_id", leagueId).order("effective_from_match_number").order("version"),
     ]).then(([matchResult, transferResult, periodResult, ownershipResult, ruleResult, formatResult, specialRuleResult]) => {
+      if (cancelled) return;
       const firstError = matchResult.error ?? transferResult.error ?? periodResult.error ?? ownershipResult.error ?? ruleResult.error ?? formatResult.error ?? specialRuleResult.error;
-      if (firstError) { setError(firstError.message); return; }
+      if (firstError) { setError(firstError.message); setLoading(false); return; }
       setMatches((matchResult.data ?? []).filter((match: any) => match.status !== "scheduled" || (match.lineup_submissions?.length ?? 0) > 0));
       setTransfers(transferResult.data ?? []);
       setTransferPeriods(periodResult.data ?? []);
@@ -554,9 +655,17 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
       setSpecialRules(specialRuleResult.data ?? []);
       if (formatResult.data) setLeagueFormat(formatResult.data);
       setPlayerOwners(Object.fromEntries((ownershipResult.data ?? []).map((row: any) => [row.player_id, row.owner?.display_name ?? ""])));
+      setLoading(false);
+    }).catch(reason => {
+      if (!cancelled) {
+        setError(reason instanceof Error ? reason.message : "Could not load team history.");
+        setLoading(false);
+      }
     });
-  }, [leagueId]);
-  if (error) return <ScrollView contentContainerStyle={x.screen}><Empty text={error} /></ScrollView>;
+    return () => { cancelled = true; };
+  }, [leagueId, reloadKey]);
+  if (loading) return <ScrollView contentContainerStyle={x.screen}><Loading /></ScrollView>;
+  if (error) return <ScrollView contentContainerStyle={x.screen}><LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} /></ScrollView>;
   return <ScrollView ref={historyScrollRef} contentContainerStyle={x.screen}>
     <Text style={x.title}>Team History</Text>
     <Text style={x.subtitle}>Your submitted XIs and owner teams visible after lock</Text>
@@ -635,7 +744,9 @@ const x = StyleSheet.create({
   fixtureOverview: { flexDirection: "row", alignItems: "center", backgroundColor: "#14273F", borderRadius: 17, paddingVertical: 13, marginBottom: 12 }, fixtureOverviewItem: { flex: 1, alignItems: "center" }, fixtureOverviewValue: { color: "#DDFB72", fontSize: 17, fontWeight: "900" }, fixtureOverviewLabel: { color: "#AAB8C6", fontSize: 7, fontWeight: "900", marginTop: 3, letterSpacing: 0.4 }, fixtureOverviewDivider: { width: 1, height: 28, backgroundColor: "#34465B" },
   fixtureFilterScroller: { height: 47, flexGrow: 0, flexShrink: 0 }, fixtureFilters: { height: 47, alignItems: "flex-start", gap: 7, paddingBottom: 13 }, fixtureFilter: { height: 34, borderRadius: 17, borderWidth: 1, borderColor: "#D7DFDB", backgroundColor: "#FFFFFF", paddingHorizontal: 13, alignItems: "center", justifyContent: "center" }, fixtureFilterActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, fixtureFilterText: { color: "#5C6D67", fontSize: 9, fontWeight: "900" }, fixtureFilterTextActive: { color: "#DDFB72" },
   empty: { backgroundColor: "white", borderRadius: 14, padding: 18, alignItems: "center", marginVertical: 8 }, emptyText: { color: "#718079", fontSize: 11, lineHeight: 16, marginTop: 5, textAlign: "center" },
+  loadError: { backgroundColor: "white", borderRadius: 18, borderWidth: 1, borderColor: "#E7E2DF", paddingHorizontal: 22, paddingVertical: 26, alignItems: "center", marginVertical: 8 }, loadErrorIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFF0EC", alignItems: "center", justifyContent: "center" }, loadErrorIconText: { color: "#9A4B3E", fontSize: 22, fontWeight: "900" }, loadErrorTitle: { color: "#18223B", fontSize: 17, fontWeight: "900", marginTop: 13 }, loadErrorText: { color: "#718079", fontSize: 11, lineHeight: 16, textAlign: "center", marginTop: 5 }, loadErrorRetry: { minWidth: 120, backgroundColor: "#174D3D", borderRadius: 11, alignItems: "center", paddingHorizontal: 18, paddingVertical: 11, marginTop: 16 }, loadErrorRetryText: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, loadErrorDetail: { color: "#9A8580", fontSize: 7, lineHeight: 10, textAlign: "center", marginTop: 13 },
   card: { backgroundColor: "white", borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#E7EAF0" }, cardBlock: { backgroundColor: "white", borderRadius: 17, overflow: "hidden", marginBottom: 11, borderWidth: 1, borderColor: "#E0E6E2", shadowColor: "#14273F", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 1 }, row: { flexDirection: "row", alignItems: "center", padding: 13, borderBottomWidth: 1, borderBottomColor: "#ECEFF3" }, matchHeader: { flexDirection: "row", alignItems: "center", padding: 13 }, matchNumberBadge: { width: 43, height: 43, borderRadius: 13, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginRight: 11 }, matchNumberLabel: { color: "#7B8983", fontSize: 6, fontWeight: "900", letterSpacing: 0.4 }, matchNumberValue: { color: "#173F35", fontSize: 16, fontWeight: "900", marginTop: 1 }, matchTeams: { flexDirection: "row", alignItems: "center", gap: 7 }, matchDate: { color: "#758091", fontSize: 9, fontWeight: "700", marginTop: 6 }, matchHeaderEnd: { alignItems: "flex-end", marginLeft: 7 }, matchStatusBadge: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, marginBottom: 8 }, matchStatusPublished: { backgroundColor: "#E3F3E5" }, matchStatusCompleted: { backgroundColor: "#E8ECF5" }, matchStatusUpcoming: { backgroundColor: "#FFF2D7" }, matchStatusText: { fontSize: 6, fontWeight: "900", letterSpacing: 0.25 }, matchStatusPublishedText: { color: "#2D6A3B" }, matchStatusCompletedText: { color: "#52627F" }, matchStatusUpcomingText: { color: "#8A6112" }, vsText: { color: "#687384", fontSize: 9, fontWeight: "900" }, inlineMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 }, grow: { flex: 1 }, name: { color: "#18223B", fontSize: 13, lineHeight: 17, fontWeight: "900" }, meta: { color: "#758091", fontSize: 10, lineHeight: 14, marginTop: 3 }, value: { color: "#273652", fontSize: 12, fontWeight: "900", marginHorizontal: 7 }, chevron: { color: "#687384", fontSize: 11 }, rank: { width: 34, color: "#687384", fontWeight: "900" }, avatar: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#EEF0FA", alignItems: "center", justifyContent: "center", marginRight: 9 }, avatarText: { color: "#5364A0", fontWeight: "900" },
+  currentRankingRow: { backgroundColor: "#F4F0FF", borderLeftWidth: 4, borderLeftColor: "#6D44C5", paddingLeft: 9 }, currentRankingRank: { color: "#6D44C5" }, currentRankingAvatar: { backgroundColor: "#6D44C5" }, currentRankingAvatarText: { color: "#FFFFFF" }, currentRankingMeta: { color: "#655E75" }, currentRankingValue: { color: "#6D44C5" }, rankSlot: { width: 34, alignItems: "flex-start", justifyContent: "center" }, rankMedal: { fontSize: 22, lineHeight: 27 }, rankingOwnerLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }, youBadge: { backgroundColor: "#E6DCFF", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 3 }, youBadgeText: { color: "#5C37AE", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
   ownerSubmissionBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 42, paddingHorizontal: 13, paddingVertical: 8, backgroundColor: "#F7F9F7", borderTopWidth: 1, borderTopColor: "#E7ECE9" },
   ownerSubmissionIdentity: { flexDirection: "row", alignItems: "center", gap: 7 }, ownerSubmissionLabel: { color: "#6E7D77", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 }, ownerSubmissionPill: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4 }, ownerSubmissionDone: { backgroundColor: "#E1F2E4" }, ownerSubmissionNeeded: { backgroundColor: "#FFF0C8" }, ownerSubmissionMissed: { backgroundColor: "#F7E5E2" }, ownerSubmissionLater: { backgroundColor: "#E8EDF2" }, ownerSubmissionPillText: { fontSize: 7, fontWeight: "900", letterSpacing: 0.25 }, ownerSubmissionDoneText: { color: "#2D6A3B" }, ownerSubmissionNeededText: { color: "#8A6112" }, ownerSubmissionMissedText: { color: "#8B4439" }, ownerSubmissionLaterText: { color: "#617080" },
   ownerSubmissionAction: { flexDirection: "row", alignItems: "center", backgroundColor: "#174D3D", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7 }, ownerSubmissionActionText: { color: "#DDFB72", fontSize: 8, fontWeight: "900" }, ownerSubmissionActionArrow: { color: "#DDFB72", fontSize: 14, lineHeight: 14, fontWeight: "900", marginLeft: 5 }, ownerSubmissionLocked: { color: "#8B9691", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },

@@ -1,5 +1,57 @@
 # Prioritized implementation plan
 
+## Tomorrow's worklist
+
+### 1. Verify today's performance change
+
+- [ ] Open Fixtures with all 74 IPL matches and confirm the screen loads normally.
+- [ ] Expand several matches and confirm Unique, Auto Unique and Marquee badges appear correctly.
+- [ ] Reopen the same match and confirm it responds quickly.
+- [ ] Repeat the checks in History.
+- [ ] Test on Android, iPhone and web.
+
+### 2. Fixtures and History usability
+
+- [ ] Verify **Submit XI** and **Edit XI** appear only for the seven selectable unlocked fixtures.
+- [ ] Verify selecting a fixture opens League with the correct match clearly selected and visible.
+- [ ] Verify locked/completed fixtures show **View XI** and published fixtures show **View scores**.
+- [ ] Add or improve phase, date and status grouping if the 74-match list remains difficult to scan.
+- [ ] Review History filters for match, phase and owner.
+
+### 3. Loading and reliability
+
+- [ ] Measure load time for League, Fixtures, Squad, Owner and History on a physical phone.
+- [ ] Identify screens taking longer than three seconds.
+- [x] Add consistent loading indicators and retry states where content previously appeared blank. Verified across League, Fixtures, History, Squad and Owner.
+- [x] Replace technical Supabase/database errors with clear user-facing messages and retry actions where a reload is possible.
+- [x] Prevent duplicate submission and admin-action taps while a request is running.
+
+### 4. Ranking, Owner and Rules polish
+
+- [x] Highlight the logged-in owner in overall and phase rankings.
+- [ ] Review tied rankings and match-to-match position movement.
+- [ ] Add Owner sorting by player points, royalty, cost and name where still missing.
+- [ ] Confirm Unique/Marquee phase selection and deadline wording is easy to understand.
+- [ ] Add confirmation before an administrator publishes a new rule version.
+
+### 5. Cross-platform layout review
+
+- [ ] Check Android system-navigation spacing and sticky Submit XI visibility.
+- [ ] Check iPhone safe areas, numeric OTP keyboard and modal buttons.
+- [ ] Check mobile web, tablet and desktop widths.
+- [ ] Test long league names, owner names and player names without overlap.
+
+### 6. Deferred until a fixture locks and publishes
+
+- [ ] Run the detailed **Deferred QA — fixture links after lock and publication** checklist under Milestone 5.
+
+### 7. End-of-session checks
+
+- [ ] Run `npm run typecheck`.
+- [ ] Run `git diff --check`.
+- [ ] Review changed files and preserve unrelated user files.
+- [ ] Commit and push the verified changes.
+
 ## Milestone 1 — league configuration foundation
 
 Status: implemented; staging regression evidence remains required.

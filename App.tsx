@@ -8,6 +8,7 @@ import { iplFixtures } from "./iplFixtures";
 import { ipl2026Members } from "./leagueMembers";
 import { supabase } from "./supabase";
 import { IplTeamBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
+import { userActionError } from "./errorMessages";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
@@ -31,6 +32,14 @@ const standardTabs: Tab[] = ["Ranking", "Team", "Matches", "PlayerSquad", "Squad
 const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Matches: "Fixtures", Ranking: "Ranking", PlayerSquad: "Squad", Squads: "Owner", Admin: "Rules" };
 const IPL_2026_DATABASE_ID = "10000000-0000-4000-8000-000000002026";
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
+const useActionGuard = () => {
+  const locked = useRef(false);
+  return async (action: () => Promise<void>) => {
+    if (locked.current) return;
+    locked.current = true;
+    try { await action(); } finally { locked.current = false; }
+  };
+};
 const UI = {
   canvas: "#E9EEEA",
   surface: "#F7F8F4",
@@ -161,7 +170,7 @@ function MembershipGate({ session }: { session: Session }) {
     const { data, error } = await supabase.from("league_members")
       .select("id,league_id,display_name,email,role,status,league:leagues(id,slug,name,competition,season_year,status,timezone)")
       .eq("user_id", session.user.id).order("created_at");
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "League list refresh"));
     else setMemberships((data ?? []) as unknown as DatabaseMembership[]);
     setBusy(false);
   };
@@ -247,11 +256,11 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     if (tab !== "Team" || !leagueDatabaseId) return;
     setRulesLoadMessage("");
     supabase.from("lineup_rule_sets").select("version,effective_from_match_number,lineup_size,lineup_budget,min_batters,min_bowlers,min_wicketkeepers,min_all_rounders,max_from_one_team,captain_multiplier,vice_captain_multiplier").eq("league_id", leagueDatabaseId).order("effective_from_match_number").then(({ data, error }) => {
-      if (error) setRulesLoadMessage(`Could not refresh playing rules: ${error.message}`);
+      if (error) setRulesLoadMessage(userActionError(error, "Playing rules refresh"));
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle="light-content" />
     <View style={s.appShell}>
@@ -308,7 +317,7 @@ function LoginScreen() {
     setBusy(true); setMessage("");
     const { error } = await supabase.auth.signInWithOtp({ email: normalizedEmail, options: { shouldCreateUser: true } });
     setBusy(false);
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Login code request"));
     else { setCodeSent(true); setMessage("A login code was sent to your email."); }
   };
   const verifyCode = async () => {
@@ -316,7 +325,7 @@ function LoginScreen() {
     setBusy(true); setMessage("");
     const { error } = await supabase.auth.verifyOtp({ email: normalizedEmail, token: code.trim(), type: "email" });
     setBusy(false);
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Sign in"));
   };
 
   return <SafeAreaView style={s.authSafe}><StatusBar barStyle="light-content" /><KeyboardAvoidingView style={s.authKeyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}><ScrollView contentContainerStyle={s.authScroll} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets><View style={s.authCard}><View style={s.authLogo}><Text style={s.authLogoText}>CP</Text></View><Text style={s.authTitle}>Cricket Private Fantasy</Text><Text style={s.authSubtitle}>{codeSent ? `Enter the code sent to ${normalizedEmail}` : "Sign in with your registered league email"}</Text><TextInput value={email} onChangeText={value => { setEmail(value); setCodeSent(false); setCode(""); setMessage(""); }} editable={!busy} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" style={s.authInput} />{codeSent && <TextInput value={code} onChangeText={setCode} editable={!busy} keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" placeholder="Email code" placeholderTextColor="#8B9893" style={s.authInput} />}{message ? <Text style={[s.authMessage, message.startsWith("A login") && s.authSuccess]}>{message}</Text> : null}<TouchableOpacity disabled={busy} style={[s.authButton, busy && s.disabled]} onPress={codeSent ? verifyCode : sendCode}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.authButtonText}>{codeSent ? "Verify and sign in" : "Send login code"}</Text>}</TouchableOpacity>{codeSent && <TouchableOpacity disabled={busy} onPress={sendCode}><Text style={s.authLink}>Send a new code</Text></TouchableOpacity>}</View></ScrollView></KeyboardAvoidingView></SafeAreaView>;
@@ -332,7 +341,7 @@ function LeaguePicker({ memberships, activeLeagueId, onSelect, onChanged }: { me
   const respond = async (membership: DatabaseMembership, accept: boolean) => {
     setResponding(membership.id); setMessage("");
     const { error } = await supabase.rpc("respond_to_league_invitation", { p_league_id: membership.league_id, p_accept: accept });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, accept ? "Invitation acceptance" : "Invitation decline"));
     else { setMessage(accept ? `Accepted ${membership.league.name}. Waiting for administrator activation.` : `Declined ${membership.league.name}.`); await onChanged(); }
     setResponding("");
   };
@@ -386,10 +395,11 @@ function OwnerManagement({ leagueId, canEdit, onMembersChanged }: { leagueId: st
   const [message, setMessage] = useState("");
   const [editingMemberId, setEditingMemberId] = useState("");
   const [editingName, setEditingName] = useState("");
+  const runAction = useActionGuard();
   const load = async () => {
     const { data, error } = await supabase.from("league_members")
       .select("id,display_name,email,role,status").eq("league_id", leagueId).order("display_name");
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Owner list refresh"));
     else setMembers((data ?? []) as ManagedLeagueMember[]);
   };
   useEffect(() => {
@@ -410,14 +420,14 @@ function OwnerManagement({ leagueId, canEdit, onMembersChanged }: { leagueId: st
       p_league_id: leagueId, p_email: email.trim().toLowerCase(), p_display_name: name.trim(),
       p_role: role, p_invitation_expires_at: null,
     });
-    if (error) { setMessage(error.message); Alert.alert("Invitation not created", error.message); }
+    if (error) { const detail = userActionError(error, "Invitation"); setMessage(detail); Alert.alert("Invitation not created", detail); }
     else { setEmail(""); setName(""); setMessage(`Invitation created for ${name.trim()}.`); await load(); }
     setBusy(false);
   };
   const changeStatus = async (member: ManagedLeagueMember, status: "active" | "suspended" | "withdrawn") => {
     setBusy(true); setMessage("");
     const { error } = await supabase.rpc("set_league_member_participation", { p_league_id: leagueId, p_member_id: member.id, p_status: status });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Member status change"));
     else { setMessage(status === "suspended" ? `${member.display_name} has been deactivated.` : status === "active" ? `${member.display_name} has been activated.` : `${member.display_name} is now ${status}.`); await load(); }
     setBusy(false);
   };
@@ -429,14 +439,14 @@ function OwnerManagement({ leagueId, canEdit, onMembersChanged }: { leagueId: st
     if (duplicate) { setMessage(`Owner name “${nextName}” is already used by ${duplicate.email}.`); return; }
     setBusy(true); setMessage("");
     const { error } = await supabase.rpc("rename_league_member", { p_league_id: leagueId, p_member_id: member.id, p_display_name: nextName });
-    if (error) { setMessage(error.message); Alert.alert("Name not changed", error.message); }
+    if (error) { const detail = userActionError(error, "Display-name change"); setMessage(detail); Alert.alert("Name not changed", detail); }
     else { setEditingMemberId(""); setEditingName(""); setMessage(`Display name changed to ${nextName}.`); await Promise.all([load(), onMembersChanged()]); }
     setBusy(false);
   };
   return <View>
-    {canEdit ? <View style={s.adminCard}><Text style={s.adminGroupTitle}>Invite owner</Text><TextInput style={s.ownerAdminInput} value={name} onChangeText={value => { setName(value); setMessage(""); }} placeholder="Owner name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={email} onChangeText={value => { setEmail(value); setMessage(""); }} autoCapitalize="none" keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" /><View style={s.ownerRoleRow}><TouchableOpacity style={[s.ownerRoleButton, role === "owner" && s.ownerRoleButtonActive]} onPress={() => setRole("owner")}><Text style={s.ownerRoleText}>Owner</Text></TouchableOpacity><TouchableOpacity style={[s.ownerRoleButton, role === "league_admin" && s.ownerRoleButtonActive]} onPress={() => setRole("league_admin")}><Text style={s.ownerRoleText}>League admin</Text></TouchableOpacity></View><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={invite}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create invitation</Text>}</TouchableOpacity>{message ? <View style={[s.ownerInviteMessage, message.startsWith("Invitation created") && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}</View> : null}
+    {canEdit ? <View style={s.adminCard}><Text style={s.adminGroupTitle}>Invite owner</Text><TextInput style={s.ownerAdminInput} value={name} onChangeText={value => { setName(value); setMessage(""); }} placeholder="Owner name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={email} onChangeText={value => { setEmail(value); setMessage(""); }} autoCapitalize="none" keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" /><View style={s.ownerRoleRow}><TouchableOpacity style={[s.ownerRoleButton, role === "owner" && s.ownerRoleButtonActive]} onPress={() => setRole("owner")}><Text style={s.ownerRoleText}>Owner</Text></TouchableOpacity><TouchableOpacity style={[s.ownerRoleButton, role === "league_admin" && s.ownerRoleButtonActive]} onPress={() => setRole("league_admin")}><Text style={s.ownerRoleText}>League admin</Text></TouchableOpacity></View><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(invite)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create invitation</Text>}</TouchableOpacity>{message ? <View style={[s.ownerInviteMessage, message.startsWith("Invitation created") && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}</View> : null}
     <View style={s.adminPhaseHeader}><Text style={s.adminGroupTitle}>League participants</Text><TouchableOpacity style={s.resetButton} onPress={load}><Text style={s.resetButtonText}>Refresh</Text></TouchableOpacity></View>
-    {members.map(member => <View key={member.id} style={s.ownerAdminRow}><View style={s.badge}><Text style={s.badgeText}>{member.display_name[0]}</Text></View><View style={{ flex: 1, marginLeft: 9 }}>{editingMemberId === member.id ? <View style={s.ownerRenamePanel}><TextInput autoFocus maxLength={60} selectTextOnFocus style={s.ownerRenameInput} value={editingName} onChangeText={setEditingName} placeholder="Display name" placeholderTextColor="#8B9893" /><View style={s.ownerRenameActions}><TouchableOpacity disabled={busy} style={s.ownerRenameCancel} onPress={() => { setEditingMemberId(""); setEditingName(""); }}><Text style={s.ownerRenameCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity disabled={busy} style={s.ownerRenameSave} onPress={() => renameMember(member)}>{busy ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={s.ownerRenameSaveText}>Save name</Text>}</TouchableOpacity></View></View> : <><Text style={s.ownerDisplayName}>{member.display_name}</Text><Text style={s.meta}>{member.email} · {member.role === "league_admin" ? "Admin" : "Owner"}</Text><Text style={[s.leagueStatus, member.status === "active" ? s.leagueStatusActive : s.leagueStatusPending]}>{member.status === "suspended" ? "deactivated" : member.status}</Text></>}</View>{canEdit && editingMemberId !== member.id ? <View style={s.ownerAdminActions}><TouchableOpacity disabled={busy} style={s.ownerEditName} onPress={() => beginRename(member)}><Text style={s.ownerEditNameText}>Edit name</Text></TouchableOpacity>{member.status === "accepted" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => changeStatus(member, "active")}><Text style={s.ownerActivateText}>Activate</Text></TouchableOpacity> : member.status === "active" && member.role !== "league_admin" ? <TouchableOpacity disabled={busy} style={s.ownerSuspend} onPress={() => changeStatus(member, "suspended")}><Text style={s.ownerSuspendText}>Deactivate</Text></TouchableOpacity> : member.status === "suspended" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => changeStatus(member, "active")}><Text style={s.ownerActivateText}>Reactivate</Text></TouchableOpacity> : null}</View> : null}</View>)}
+    {members.map(member => <View key={member.id} style={s.ownerAdminRow}><View style={s.badge}><Text style={s.badgeText}>{member.display_name[0]}</Text></View><View style={{ flex: 1, marginLeft: 9 }}>{editingMemberId === member.id ? <View style={s.ownerRenamePanel}><TextInput autoFocus maxLength={60} selectTextOnFocus style={s.ownerRenameInput} value={editingName} onChangeText={setEditingName} placeholder="Display name" placeholderTextColor="#8B9893" /><View style={s.ownerRenameActions}><TouchableOpacity disabled={busy} style={s.ownerRenameCancel} onPress={() => { setEditingMemberId(""); setEditingName(""); }}><Text style={s.ownerRenameCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity disabled={busy} style={s.ownerRenameSave} onPress={() => runAction(() => renameMember(member))}>{busy ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={s.ownerRenameSaveText}>Save name</Text>}</TouchableOpacity></View></View> : <><Text style={s.ownerDisplayName}>{member.display_name}</Text><Text style={s.meta}>{member.email} · {member.role === "league_admin" ? "Admin" : "Owner"}</Text><Text style={[s.leagueStatus, member.status === "active" ? s.leagueStatusActive : s.leagueStatusPending]}>{member.status === "suspended" ? "deactivated" : member.status}</Text></>}</View>{canEdit && editingMemberId !== member.id ? <View style={s.ownerAdminActions}><TouchableOpacity disabled={busy} style={s.ownerEditName} onPress={() => beginRename(member)}><Text style={s.ownerEditNameText}>Edit name</Text></TouchableOpacity>{member.status === "accepted" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => runAction(() => changeStatus(member, "active"))}><Text style={s.ownerActivateText}>Activate</Text></TouchableOpacity> : member.status === "active" && member.role !== "league_admin" ? <TouchableOpacity disabled={busy} style={s.ownerSuspend} onPress={() => runAction(() => changeStatus(member, "suspended"))}><Text style={s.ownerSuspendText}>Deactivate</Text></TouchableOpacity> : member.status === "suspended" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => runAction(() => changeStatus(member, "active"))}><Text style={s.ownerActivateText}>Reactivate</Text></TouchableOpacity> : null}</View> : null}</View>)}
     {!canEdit && message ? <View style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}
   </View>;
 }
@@ -454,10 +464,11 @@ function LeagueTemplateManagement({ leagueId, leagueName, canEdit, onLeaguesChan
   const [copyOwners, setCopyOwners] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const runAction = useActionGuard();
   const load = async () => {
     const { data, error } = await supabase.from("league_templates")
       .select("id,name,description,version,source_league_id,created_at").eq("active", true).order("created_at", { ascending: false });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Template list refresh"));
     else { const rows = (data ?? []) as LeagueTemplateSummary[]; setTemplates(rows); setSelectedTemplateId(current => current || rows[0]?.id || ""); }
   };
   useEffect(() => { load(); }, [leagueId]);
@@ -465,7 +476,7 @@ function LeagueTemplateManagement({ leagueId, leagueName, canEdit, onLeaguesChan
     if (!templateName.trim()) { setMessage("Template name is required."); return; }
     setBusy(true); setMessage("");
     const { error } = await supabase.rpc("save_league_template", { p_source_league_id: leagueId, p_name: templateName.trim(), p_description: templateDescription.trim() || null, p_is_public: false });
-    if (error) { setMessage(error.message); Alert.alert("Template not saved", error.message); }
+    if (error) { const detail = userActionError(error, "Template save"); setMessage(detail); Alert.alert("Template not saved", detail); }
     else { setMessage(`Saved a configuration snapshot of ${leagueName}.`); await load(); }
     setBusy(false);
   };
@@ -480,14 +491,14 @@ function LeagueTemplateManagement({ leagueId, leagueName, canEdit, onLeaguesChan
     if (!Number.isInteger(season) || season < 2000 || season > 2200) { setMessage("Enter a valid four-digit season year."); return; }
     setBusy(true); setMessage("");
     const { data, error } = await supabase.rpc("create_league_from_template", { p_template_id: selectedTemplateId, p_slug: newLeagueSlug.trim().toLowerCase(), p_name: newLeagueName.trim(), p_season_year: season, p_copy_owner_invitations: copyOwners });
-    if (error) { setMessage(error.message); Alert.alert("League not created", error.message); }
+    if (error) { const detail = userActionError(error, "League creation"); setMessage(detail); Alert.alert("League not created", detail); }
     else { setMessage(`Created ${newLeagueName.trim()} as a clean draft. No ownership or history was copied.`); setNewLeagueName(""); setNewLeagueSlug(""); await onLeaguesChanged(); Alert.alert("Draft league created", "Open Home to see the new league."); }
     setBusy(false);
   };
   if (!canEdit) return <View style={s.adminCard}><Text style={s.adminNoticeText}>Only a league administrator can save or import league templates.</Text></View>;
   return <View>
-    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Save this league as a template</Text><Text style={s.adminNoticeText}>Copies configuration only. Ownership, bids, fixtures, lineups, points, rankings and usage history are excluded.</Text><TextInput style={s.ownerAdminInput} value={templateName} onChangeText={setTemplateName} placeholder="Template name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={templateDescription} onChangeText={setTemplateDescription} placeholder="Description (optional)" placeholderTextColor="#8B9893" /><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={saveTemplate}><Text style={s.primaryText}>Save configuration template</Text></TouchableOpacity></View>
-    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Create a new league from template</Text>{templates.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.templateChoices}>{templates.map(template => <TouchableOpacity key={template.id} style={[s.templateChoice, selectedTemplateId === template.id && s.templateChoiceActive]} onPress={() => setSelectedTemplateId(template.id)}><Text style={s.templateChoiceName}>{template.name}</Text><Text style={s.meta}>v{template.version}{template.source_league_id === leagueId ? " · this league" : ""}</Text></TouchableOpacity>)}</ScrollView> : <Text style={s.adminNoticeText}>Save a template first.</Text>}<TextInput style={s.ownerAdminInput} value={newLeagueName} onChangeText={updateNewLeagueName} placeholder="New league name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newLeagueSlug} onChangeText={value => setNewLeagueSlug(value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} autoCapitalize="none" placeholder="new-league-slug" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newSeason} onChangeText={setNewSeason} keyboardType="number-pad" placeholder="Season year" placeholderTextColor="#8B9893" /><TouchableOpacity style={s.adminNotice} onPress={() => setCopyOwners(value => !value)}><Text style={s.adminNoticeTitle}>{copyOwners ? "✓" : "○"} Copy owner emails as new invitations</Text><Text style={s.adminNoticeText}>Owners must opt in again. Squads and bidding never carry over.</Text></TouchableOpacity><TouchableOpacity disabled={busy || !templates.length} style={[s.primary, (busy || !templates.length) && s.disabled]} onPress={cloneTemplate}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create clean draft league</Text>}</TouchableOpacity></View>
+    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Save this league as a template</Text><Text style={s.adminNoticeText}>Copies configuration only. Ownership, bids, fixtures, lineups, points, rankings and usage history are excluded.</Text><TextInput style={s.ownerAdminInput} value={templateName} onChangeText={setTemplateName} placeholder="Template name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={templateDescription} onChangeText={setTemplateDescription} placeholder="Description (optional)" placeholderTextColor="#8B9893" /><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(saveTemplate)}><Text style={s.primaryText}>Save configuration template</Text></TouchableOpacity></View>
+    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Create a new league from template</Text>{templates.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.templateChoices}>{templates.map(template => <TouchableOpacity key={template.id} style={[s.templateChoice, selectedTemplateId === template.id && s.templateChoiceActive]} onPress={() => setSelectedTemplateId(template.id)}><Text style={s.templateChoiceName}>{template.name}</Text><Text style={s.meta}>v{template.version}{template.source_league_id === leagueId ? " · this league" : ""}</Text></TouchableOpacity>)}</ScrollView> : <Text style={s.adminNoticeText}>Save a template first.</Text>}<TextInput style={s.ownerAdminInput} value={newLeagueName} onChangeText={updateNewLeagueName} placeholder="New league name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newLeagueSlug} onChangeText={value => setNewLeagueSlug(value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} autoCapitalize="none" placeholder="new-league-slug" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newSeason} onChangeText={setNewSeason} keyboardType="number-pad" placeholder="Season year" placeholderTextColor="#8B9893" /><TouchableOpacity style={s.adminNotice} onPress={() => setCopyOwners(value => !value)}><Text style={s.adminNoticeTitle}>{copyOwners ? "✓" : "○"} Copy owner emails as new invitations</Text><Text style={s.adminNoticeText}>Owners must opt in again. Squads and bidding never carry over.</Text></TouchableOpacity><TouchableOpacity disabled={busy || !templates.length} style={[s.primary, (busy || !templates.length) && s.disabled]} onPress={() => runAction(cloneTemplate)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create clean draft league</Text>}</TouchableOpacity></View>
     {message ? <View style={[s.adminMessage, (message.startsWith("Saved") || message.startsWith("Created")) && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}
   </View>;
 }
@@ -547,7 +558,7 @@ function PhaseSpecialPlayerSelection({ leagueId, rules }: { leagueId: string; ru
     if (!phase || selected.length !== required) { setMessage(`Select exactly ${required} ${selectionType === "unique" ? "Unique" : "Marquee"} Players.`); return; }
     setBusy(true); setMessage("");
     const { error } = await supabase.rpc("set_phase_special_players", { p_phase_id: phase.id, p_selection_type: selectionType, p_player_ids: selected });
-    if (error) setMessage(error.message); else { setSavedByPhase(current => ({ ...current, [phase.id]: selected })); setMessage(`Saved ${required} ${selectionType === "unique" ? "Unique" : "Marquee"} Players for ${phase.name}.`); }
+    if (error) setMessage(userActionError(error, "Special-player selection")); else { setSavedByPhase(current => ({ ...current, [phase.id]: selected })); setMessage(`Saved ${required} ${selectionType === "unique" ? "Unique" : "Marquee"} Players for ${phase.name}.`); }
     setBusy(false);
   };
   return <View style={s.adminCard}><Text style={s.adminGroupTitle}>Your phase {selectionType === "unique" ? "Unique" : "Marquee"} Players</Text><Text style={s.adminNoticeText}>Choose exactly {required} active players owned by you. Final/playoff selections carry forward automatically.</Text>
@@ -567,7 +578,7 @@ function OwnerTabContent({ leagueId, currentOwner, roster }: { leagueId: string;
     setRules(null); setMessage("");
     supabase.from("special_player_rule_sets").select("*").eq("league_id", leagueId).eq("active", true).maybeSingle().then(({ data, error }) => {
       if (!mounted) return;
-      if (error) { setMessage(`Could not load Unique/Marquee selections: ${error.message}`); return; }
+      if (error) { setMessage(userActionError(error, "Special-player selections")); return; }
       if (!data) return;
       const special = data as any;
       setRules({
@@ -613,6 +624,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [scoringFixtures, setScoringFixtures] = useState<any[]>([]);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
+  const runAction = useActionGuard();
 
   useEffect(() => {
     let mounted = true;
@@ -663,7 +675,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     return () => { mounted = false; };
   }, [leagueId]);
   const loadScoringFixtures = () => supabase.from("fixtures").select("id,match_number,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueId).in("status", ["live", "completed", "abandoned"]).order("match_number", { ascending: false }).then(({ data, error }) => {
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Completed matches"));
     else setScoringFixtures(data ?? []);
   });
   useEffect(() => { if (section === "scoring") loadScoringFixtures(); }, [section]);
@@ -672,7 +684,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const publishFormat = async () => {
     setBusy(true); setMessage("");
     const { data, error } = await supabase.rpc("publish_league_format", { p_league_id: leagueId, p_acquisition_mode: leagueFormat.acquisition_mode, p_bidding_enabled: leagueFormat.bidding_enabled, p_other_owner_deductions_enabled: leagueFormat.other_owner_deductions_enabled, p_marquee_enabled: leagueFormat.marquee_enabled, p_unique_players_enabled: leagueFormat.unique_players_enabled, p_unique_scope: leagueFormat.unique_players_enabled ? leagueFormat.unique_scope : null, p_royalty_enabled: leagueFormat.royalty_enabled });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "League-format publication"));
     else { const result = data as any; setLeagueFormat(current => ({ ...current, acquisition_mode: result.acquisition_mode, bidding_enabled: result.bidding_enabled, other_owner_deductions_enabled: result.other_owner_deductions_enabled })); setMessage("Published league format configuration."); }
     setBusy(false);
   };
@@ -687,7 +699,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setBusy(true); setMessage("");
     const payload = Object.fromEntries(Object.entries(specialRules).map(([key, value]) => [key, typeof value === "string" && key !== "royalty_rounding" ? Number(value) : value]));
     const { data, error } = await supabase.rpc("publish_special_player_rules_v2", { p_league_id: leagueId, p_effective_from_match_number: Number(specialEffectiveMatch), p_rules: payload });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Special-player rule publication"));
     else { const result = data as any; setSpecialRulesVersion(result.version); setMessage(`Published special-player rules v${result.version} from Match ${result.effective_from_match_number}.`); }
     setBusy(false);
   };
@@ -699,7 +711,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setBusy(true); setMessage("");
     const nextScoring = { ...(scoringDocument ?? {}), batting: { ...(scoringDocument?.batting ?? {}), run: Number(points.run), four_bonus: Number(points.four_bonus), six_bonus: Number(points.six_bonus), duck_non_bowler: Number(points.duck), golden_or_diamond_duck_non_bowler: Number(points.golden_duck) }, bowling: { ...(scoringDocument?.bowling ?? {}), dismissed_bowler_wicket: Number(points.bowler_wicket), dismissed_non_bowler_wicket: Number(points.non_bowler_wicket), maiden: Number(points.maiden), dot_ball: Number(points.dot_ball) }, fielding: { ...(scoringDocument?.fielding ?? {}), catch: Number(points.catch), stumping: Number(points.stumping), run_out: Number(points.run_out) }, bonus: { ...(scoringDocument?.bonus ?? {}), player_of_match: Number(points.player_of_match), winning_participant: Number(points.winning_participant) } };
     const { data, error } = await supabase.rpc("publish_league_rules_effective", { p_league_id: leagueId, p_lineup_rules: Object.fromEntries(Object.entries(playing).map(([key, value]) => [key, Number(value)])), p_scoring_rules: nextScoring, p_lineup_effective_from_match: Number(playingEffectiveMatch), p_scoring_effective_from_match: Number(pointsEffectiveMatch) });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Rule publication"));
     else { const result = data as any; setVersions({ playing: result.lineup_version, points: result.scoring_version }); setScoringDocument(nextScoring); setMessage(`Published playing rules v${result.lineup_version} and points rules v${result.scoring_version}.`); }
     setBusy(false);
   };
@@ -713,7 +725,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     if (sorted.some((phase, index) => index > 0 && phase.startNumber <= sorted[index - 1].endNumber)) { setMessage("Phase match ranges cannot overlap."); return; }
     setBusy(true); setMessage("");
     const { error } = await supabase.rpc("publish_league_phases", { p_league_id: leagueId, p_phases: phases.map((phase, index) => ({ code: phase.code, name: phase.name.trim(), sort_order: index + 1, start_match_number: Number(phase.start), end_match_number: Number(phase.end) })) });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Phase publication"));
     else setMessage("Published league phase configuration.");
     setBusy(false);
   };
@@ -729,21 +741,21 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     if (gap) { const previous = sorted[sorted.indexOf(gap) - 1]; setMessage(`Transfer periods cannot have a gap. Match ${previous.endNumber + 1} is not covered.`); return; }
     setBusy(true); setMessage("");
     const { data, error } = await supabase.rpc("publish_league_transfer_periods", { p_league_id: leagueId, p_periods: transferPeriods.map((period, index) => ({ code: period.code, name: period.name.trim(), start_match_number: Number(period.start), end_match_number: Number(period.end), transfer_limit: Number(period.limit), first_match_free: period.firstMatchFree, sort_order: index + 1 })) });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Transfer-period publication"));
     else setMessage(`Published ${(data as any)?.period_count ?? transferPeriods.length} configurable transfer periods.`);
     setBusy(false);
   };
   const publishScores = async (fixtureId: string) => {
     setBusy(true); setMessage("");
     const { data, error } = await supabase.rpc("publish_match_scores_safe", { p_fixture_id: fixtureId });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Score publication"));
     else { const result = data as any; setMessage(`Published Match scores for ${result.member_count} owners.`); await loadScoringFixtures(); }
     setBusy(false);
   };
   const settleAbandoned = async (fixtureId: string) => {
     setBusy(true); setMessage("");
     const { data, error } = await supabase.rpc("settle_abandoned_match", { p_fixture_id: fixtureId });
-    if (error) setMessage(error.message);
+    if (error) setMessage(userActionError(error, "Abandoned-match settlement"));
     else { const result = data as any; setMessage(`Published zero points for ${result.member_count} owners and returned transfers and boosters.`); await loadScoringFixtures(); }
     setBusy(false);
   };
@@ -901,9 +913,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <AdminNumberField label="Transfer allowance" detail={`Shared across Matches ${period.firstMatchFree ? Number(period.start) + 1 : period.start}–${period.end}`} value={period.limit} onChange={value => updateTransferPeriod(index, "limit", value)} />
 <TouchableOpacity disabled={!canEdit} style={[s.adminNotice, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.map((item, periodIndex) => periodIndex === index ? { ...item, firstMatchFree: !item.firstMatchFree } : item))}><Text style={s.adminNoticeTitle}>{period.firstMatchFree ? "✓" : "○"} First match is unlimited/free</Text><Text style={s.adminNoticeText}>{period.firstMatchFree ? `Match ${period.start || "—"} resets this period's balance.` : "The first match can consume this period's allowance."}</Text></TouchableOpacity>
 </View>)}<TouchableOpacity disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
-</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => settleAbandoned(fixture.id)}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => publishScores(fixture.id)}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
+</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => settleAbandoned(fixture.id))}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
 <Text style={s.adminMessageText}>{message}</Text>
-</View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={section === "format" ? publishFormat : section === "special" ? publishSpecialRules : section === "phases" ? publishPhases : section === "transfers" ? publishTransfers : publish}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
+</View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(section === "format" ? publishFormat : section === "special" ? publishSpecialRules : section === "phases" ? publishPhases : section === "transfers" ? publishTransfers : publish)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
 <Text style={s.adminFootnote}>{section === "special" ? "Changes apply only from the selected unlocked match. Historical scoring remains pinned to its original version." : section === "phases" ? "Changing phases updates fixture assignments and phase-wise ranking." : section === "transfers" ? "Transfer periods apply immediately to future submissions; recorded usage is regrouped by the published match ranges." : "Milestone, strike-rate and economy tables remain preserved when these headline values are updated."}</Text>
 </ScrollView></AdminEditContext.Provider>;
 }
@@ -984,7 +996,7 @@ function MatchesScreen() {
   const [rulesMessage, setRulesMessage] = useState("");
   useEffect(() => {
     supabase.from("scoring_rule_sets").select("version,effective_from_match_number,rules").eq("league_id", IPL_2026_DATABASE_ID).order("effective_from_match_number").then(({ data, error }) => {
-      if (error) setRulesMessage(`Could not load Points Rules: ${error.message}`);
+      if (error) setRulesMessage(userActionError(error, "Points rules refresh"));
       else setScoringVersions((data ?? []) as Array<{ version: number; effective_from_match_number: number; rules: ScoringRulesDocument }>);
     });
   }, []);
@@ -1017,6 +1029,7 @@ function PointDetailSection({ title, rows, total }: { title: string; rows: Array
 }
 
 function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnabled, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { requestedFixtureId: string; leagueId: string; memberId: string; ownershipEnabled: boolean; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
+  const runAction = useActionGuard();
   const teamScrollRef = useRef<ScrollView>(null);
   const fixtureStripRef = useRef<ScrollView>(null);
   const teamPositions = useRef<Record<string, number>>({});
@@ -1179,18 +1192,18 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     if (firstMissingPriorMatch) { setSubmitMessage(`Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`); setSubmitBusy(false); return; }
     const matchNumber = Number(activeMatchId.replace("M", ""));
     const fixtureResult = await supabase.from("fixtures").select("id").eq("league_id", leagueId).eq("match_number", matchNumber).single();
-    if (fixtureResult.error) { setSubmitMessage(fixtureResult.error.message); setSubmitBusy(false); return; }
+    if (fixtureResult.error) { setSubmitMessage(userActionError(fixtureResult.error, "Match lookup")); setSubmitBusy(false); return; }
     const playerResult = await supabase.from("league_players").select("player_id,player:players!inner(full_name)").eq("league_id", leagueId).eq("active", true).in("player.full_name", selected);
-    if (playerResult.error) { setSubmitMessage(playerResult.error.message); setSubmitBusy(false); return; }
+    if (playerResult.error) { setSubmitMessage(userActionError(playerResult.error, "Squad validation")); setSubmitBusy(false); return; }
     const playerIdByName = new Map((playerResult.data ?? []).map((leaguePlayer: any) => [leaguePlayer.player.full_name, leaguePlayer.player_id] as [string, string]));
     const playerIds = selected.map(name => playerIdByName.get(name)).filter((id): id is string => !!id);
     if (playerIds.length !== selected.length) { setSubmitMessage("Some selected players could not be matched to the active league squad."); setSubmitBusy(false); return; }
     const { data: savedLineupId, error } = await supabase.rpc("submit_lineup_with_transfer_enforcement", { p_fixture_id: fixtureResult.data.id, p_player_ids: playerIds, p_captain_player_id: captain ? playerIdByName.get(captain) ?? null : null, p_vice_captain_player_id: vice ? playerIdByName.get(vice) ?? null : null, p_impact_player_id: impactPlayer ? playerIdByName.get(impactPlayer) ?? null : null, p_impact_type: impactType || null, p_booster_code: boosterCode || null, p_booster_player_id: boosterPlayer ? playerIdByName.get(boosterPlayer) ?? null : null });
-    if (error) { setSubmitMessage(error.message); Alert.alert("Team not submitted", error.message); }
+    if (error) { const detail = userActionError(error, "Team submission"); setSubmitMessage(detail); Alert.alert("Team not submitted", detail); }
     else if (!savedLineupId) { const message = "The lineup could not be confirmed. Please submit again."; setSubmitMessage(message); Alert.alert("Team not submitted", message); }
     else {
       const verification = await supabase.from("lineup_players").select("player_id", { count: "exact" }).eq("lineup_id", savedLineupId);
-      if (verification.error) { const message = `Team was submitted, but verification failed: ${verification.error.message}`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
+      if (verification.error) { const message = "Your lineup was submitted, but confirmation could not be loaded. Refresh the match before submitting again."; if (__DEV__) console.warn("Lineup verification failed:", verification.error.message); setSubmitMessage(message); Alert.alert("Confirmation unavailable", message); }
       else if ((verification.count ?? verification.data?.length ?? 0) !== selected.length) { const message = `Team verification found ${verification.count ?? verification.data?.length ?? 0}/${selected.length} saved players. Please submit again.`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
       else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
     }
@@ -1234,18 +1247,18 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       if (!cancelled && phaseResult.data) setLeaguePhases(phaseResult.data as LeaguePhase[]);
       if (!cancelled && boosterRuleResult.data) setBoosterRuleSettings(boosterRuleResult.data as BoosterRuleSetting[]);
       if (!boosterUsageResult.error && !cancelled) setBoosterUses((boosterUsageResult.data ?? []).map((row: any) => ({ code: row.booster?.code, matchNumber: row.fixture?.match_number })).filter(use => use.code && use.matchNumber));
-      if (earlierFixturesResult.error) { if (!cancelled) { setSubmitMessage(earlierFixturesResult.error.message); setLineupLoadBusy(false); } return; }
+      if (earlierFixturesResult.error) { if (!cancelled) { setSubmitMessage(userActionError(earlierFixturesResult.error, "Previous matches refresh")); setLineupLoadBusy(false); } return; }
       const earlierFixtureIds = (earlierFixturesResult.data ?? []).map(row => row.id);
       const earlierLineupsResult = earlierFixtureIds.length
         ? await supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,fixture_id").eq("member_id", memberId).in("fixture_id", earlierFixtureIds).in("status", ["submitted", "locked"])
         : { data: [], error: null };
-      if (earlierLineupsResult.error) { if (!cancelled) { setSubmitMessage(earlierLineupsResult.error.message); setLineupLoadBusy(false); } return; }
+      if (earlierLineupsResult.error) { if (!cancelled) { setSubmitMessage(userActionError(earlierLineupsResult.error, "Previous lineups refresh")); setLineupLoadBusy(false); } return; }
       const submittedFixtureIds = new Set((earlierLineupsResult.data ?? []).map(row => row.fixture_id));
       const missingPriorMatch = (earlierFixturesResult.data ?? []).find(row => row.status === "scheduled" && new Date(row.lineup_lock_at ?? row.scheduled_start).getTime() > Date.now() && !submittedFixtureIds.has(row.id))?.match_number ?? null;
       const currentPeriod = (periodResult.data ?? []).find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
       const priorPeriodLineup = !!currentPeriod && (earlierFixturesResult.data ?? []).some(row => row.match_number >= currentPeriod.start_match_number && row.match_number <= currentPeriod.end_match_number && submittedFixtureIds.has(row.id));
       if (!cancelled) { setFirstMissingPriorMatch(missingPriorMatch); setHasPriorPeriodLineup(priorPeriodLineup); }
-      if (currentResult.error) { if (!cancelled) { setSubmitMessage(currentResult.error.message); setLineupLoadBusy(false); } return; }
+      if (currentResult.error) { if (!cancelled) { setSubmitMessage(userActionError(currentResult.error, "Saved lineup refresh")); setLineupLoadBusy(false); } return; }
       let source = currentResult.data;
       let isCurrentSubmission = source?.status === "submitted" || source?.status === "locked";
       if (!source) {
@@ -1381,7 +1394,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
 <Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {transfers} transfers</Text>
 </TouchableOpacity>
-<TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : submitXI()}>
+<TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : runAction(submitXI)}>
 {submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : submitted ? "Submitted ✓" : hasSavedCurrentLineup ? "Resubmit XI" : "Submit XI"}</Text>}
 </TouchableOpacity>
 </View><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowSubmitConfirmation(false)}>
