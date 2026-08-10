@@ -4,6 +4,7 @@ import type { Player } from "./squadData";
 import { supabase } from "./supabase";
 import { userActionError } from "./errorMessages";
 import { ownerTheme } from "./ownerTheme";
+import { fixtureOwnerAction, fixtureOwnerActionLabel } from "./lineupWorkflowRules";
 
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
 const fmt = (value: unknown) => Math.round(Number(value ?? 0)).toLocaleString("en-US");
@@ -228,6 +229,8 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
       const ownerSubmission = (match.lineup_submissions ?? []).find((lineup: any) => lineup.member_id === memberId);
       const locked = match.status !== "scheduled" || (match.lineup_lock_at && new Date(match.lineup_lock_at).getTime() <= Date.now());
       const availableForSelection = availableFixtureIds.includes(match.id);
+      const ownerAction = fixtureOwnerAction({ availableForSelection, locked, completed, published, hasSubmission: !!ownerSubmission });
+      const ownerActionLabel = fixtureOwnerActionLabel({ action: ownerAction, published });
       const ownerStatus = ownerSubmission ? "SUBMITTED" : locked ? "NOT SUBMITTED" : availableForSelection ? "ACTION NEEDED" : "NOT OPEN";
       const statusLabel = published ? "POINTS PUBLISHED" : completed ? "COMPLETED" : "UPCOMING";
       const scheduled = match.scheduled_start ? new Date(match.scheduled_start).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "Time to be confirmed";
@@ -237,7 +240,7 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
           <View style={x.grow}><View style={x.matchTeams}><IplTeamBadge code={match.home?.code} /><Text style={x.vsText}>VS</Text><IplTeamBadge code={match.away?.code} /></View><Text style={x.matchDate}>{scheduled}</Text></View>
           <View style={x.matchHeaderEnd}><View style={[x.matchStatusBadge, published ? x.matchStatusPublished : completed ? x.matchStatusCompleted : x.matchStatusUpcoming]}><Text style={[x.matchStatusText, published ? x.matchStatusPublishedText : completed ? x.matchStatusCompletedText : x.matchStatusUpcomingText]}>{statusLabel}</Text></View><Text style={x.chevron}>{open ? "▲" : "▼"}</Text></View>
         </TouchableOpacity>
-        <View style={x.ownerSubmissionBar}><View style={x.ownerSubmissionIdentity}><Text style={x.ownerSubmissionLabel}>YOUR XI</Text><View style={[x.ownerSubmissionPill, ownerSubmission ? x.ownerSubmissionDone : locked ? x.ownerSubmissionMissed : availableForSelection ? x.ownerSubmissionNeeded : x.ownerSubmissionLater]}><Text style={[x.ownerSubmissionPillText, ownerSubmission ? x.ownerSubmissionDoneText : locked ? x.ownerSubmissionMissedText : availableForSelection ? x.ownerSubmissionNeededText : x.ownerSubmissionLaterText]}>{ownerStatus}</Text></View></View>{!locked && availableForSelection ? <TouchableOpacity style={x.ownerSubmissionAction} onPress={() => openTeam(match.id)}><Text style={x.ownerSubmissionActionText}>{ownerSubmission ? "Edit XI" : "Submit XI"}</Text><Text style={x.ownerSubmissionActionArrow}>›</Text></TouchableOpacity> : locked || completed || published ? <TouchableOpacity style={x.ownerSubmissionAction} onPress={() => openHistory(match.id)}><Text style={x.ownerSubmissionActionText}>{published ? "View scores" : "View XI"}</Text><Text style={x.ownerSubmissionActionArrow}>›</Text></TouchableOpacity> : <Text style={x.ownerSubmissionLocked}>OPENS LATER</Text>}</View>
+        <View style={x.ownerSubmissionBar}><View style={x.ownerSubmissionIdentity}><Text style={x.ownerSubmissionLabel}>YOUR XI</Text><View style={[x.ownerSubmissionPill, ownerSubmission ? x.ownerSubmissionDone : locked ? x.ownerSubmissionMissed : availableForSelection ? x.ownerSubmissionNeeded : x.ownerSubmissionLater]}><Text style={[x.ownerSubmissionPillText, ownerSubmission ? x.ownerSubmissionDoneText : locked ? x.ownerSubmissionMissedText : availableForSelection ? x.ownerSubmissionNeededText : x.ownerSubmissionLaterText]}>{ownerStatus}</Text></View></View>{ownerAction === "submit" || ownerAction === "edit" ? <TouchableOpacity style={x.ownerSubmissionAction} onPress={() => openTeam(match.id)}><Text style={x.ownerSubmissionActionText}>{ownerActionLabel}</Text><Text style={x.ownerSubmissionActionArrow}>›</Text></TouchableOpacity> : ownerAction === "history" ? <TouchableOpacity style={x.ownerSubmissionAction} onPress={() => openHistory(match.id)}><Text style={x.ownerSubmissionActionText}>{ownerActionLabel}</Text><Text style={x.ownerSubmissionActionArrow}>›</Text></TouchableOpacity> : <Text style={x.ownerSubmissionLocked}>{ownerActionLabel}</Text>}</View>
         {open ? points.length ? <View>
           <View style={x.pointHead}><Text style={x.pointPlayer}>PLAYER</Text><Text style={x.pointCell}>BAT</Text><Text style={x.pointCell}>BOWL</Text><Text style={x.pointCell}>FLD</Text><Text style={x.pointCell}>BON</Text>{royaltyMode ? <Text style={x.pointCell}>ROY</Text> : null}<Text style={x.pointTotal}>TOTAL</Text></View>
           {points.map(point => {

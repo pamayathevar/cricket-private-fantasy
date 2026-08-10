@@ -1,5 +1,18 @@
 # Prioritized implementation plan
 
+## Ordered engineering backlog — 2026-08-09
+
+Work through these in order, keeping each change independently testable:
+
+1. **Deferred pending a measured bottleneck — list performance:** virtualize Fixtures first, followed by History, Squad and Owner lists. Avoid an invasive renderer rewrite until physical-device timings identify a screen above the three-second target.
+2. **In progress — automated app tests:** 29 unit tests now cover scoring, fantasy markers, lineup lock timing, sequential submission, skipped locked matches, transfer-period resets, Super Transfer availability, submission/resubmission labels, fixture Submit/Edit/View routing, pre-lock privacy, post-lock visibility, single-match booster behavior and Unique/Auto Unique power restrictions. Next cover database integration paths.
+3. **Module boundaries:** split oversized `App.tsx` and `SupabaseScreens.tsx` into screen, hook and shared-component modules without changing behavior.
+4. **Player discovery:** add consistent player search alongside the existing role, ownership, availability, marquee and sorting controls.
+5. **Screen-state consistency:** standardize pull-to-refresh, loading, empty, offline and permission-error treatments.
+6. **Accessibility and device QA:** label interactive controls, verify touch targets, contrast, long owner/player names, keyboard behavior and Android/iOS safe areas.
+7. **Dense-screen navigation:** make filters collapsible/persistent and add anchors or section navigation to the long Rules screen.
+8. **Regression and release checks:** run type checking, secret checks, web export and targeted manual smoke tests after each group of fixes.
+
 ## Tomorrow's worklist
 
 ### 1. Verify today's performance change
@@ -12,7 +25,7 @@
 
 ### 2. Fixtures and History usability
 
-- [ ] Verify **Submit XI** and **Edit XI** appear only for the seven selectable unlocked fixtures.
+- [x] Centralize **Submit XI**, **Edit XI**, **View XI**, **View scores** and **Opens later** routing, with unit coverage. Physical-device verification remains in the deferred QA checklist.
 - [ ] Verify selecting a fixture opens League with the correct match clearly selected and visible.
 - [ ] Verify locked/completed fixtures show **View XI** and published fixtures show **View scores**.
 - [ ] Add or improve phase, date and status grouping if the 74-match list remains difficult to scan.

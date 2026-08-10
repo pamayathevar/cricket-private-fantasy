@@ -9,6 +9,7 @@ import { ipl2026Members } from "./leagueMembers";
 import { supabase } from "./supabase";
 import { IplTeamBadge, OwnerBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
 import { userActionError } from "./errorMessages";
+import { boosterForFixture, firstMissingOpenPriorMatch, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
@@ -1158,7 +1159,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     const restricted = (name: string) => {
       const labels = specialLabels[name] ?? [];
       const player = roster.find(item => item.name === name);
-      return (labels.includes("UNIQUE") || labels.includes("AUTO UNIQUE")) && player?.owner !== ownerName;
+      return isPowerRoleRestricted({ labels, playerOwner: player?.owner, currentOwner: ownerName });
     };
     if (captain && restricted(captain)) setCaptain("");
     if (vice && restricted(vice)) setVice("");
@@ -1178,7 +1179,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     ? new Date(immediateNextFixture.lineupLockAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })
     : nextLockCountdown;
   const activeMatchNumber = Number(activeMatchId.replace("M", ""));
-  const fixtureLocked = !!fixture.lineupLockAt && Date.now() >= new Date(fixture.lineupLockAt).getTime();
+  const fixtureLocked = isLineupLocked(fixture.lineupLockAt);
   const rules = [...ruleVersions].filter(rule => rule.effective_from_match_number <= activeMatchNumber).sort((a, b) => b.effective_from_match_number - a.effective_from_match_number || b.version - a.version)[0] ?? defaultSelectionRules;
   const matchTeams = [fixture.home, fixture.away];
   const otherTeams = allTeams.filter(team => !matchTeams.includes(team));
@@ -1189,7 +1190,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const maxTeam = Math.max(0, ...teams.map(team => chosen.filter(p => p.team === team).length));
   const activeTransferPeriod = transferPeriods.find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
   const initialLineupFree = !!activeTransferPeriod?.first_match_free && !hasPriorPeriodLineup;
-  const freeTransferMatch = initialLineupFree && !firstMissingPriorMatch && !lineupLoadBusy;
+  const freeTransferMatch = isFreeTransferSubmission({ period: activeTransferPeriod, hasPriorPeriodLineup, firstMissingPriorMatch, loading: lineupLoadBusy });
   const transfers = freeTransferMatch ? 0 : chosen.filter(p => (ownershipEnabled ? p.owner !== ownerName : true) && !carriedForwardNames.has(p.name)).length;
   const transferLimit = activeTransferPeriod?.transfer_limit ?? 0;
   const alreadyUsedTransfers = activeTransferPeriod ? transferUsage[activeTransferPeriod.id] ?? 0 : 0;
@@ -1202,7 +1203,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const doubleUpUsesInPhase = boosterUses.filter(use => use.code === "2UP" && leaguePhases.find(phase => use.matchNumber >= phase.start_match_number && use.matchNumber <= phase.end_match_number)?.code === currentPhase?.code);
   const doubleUpAvailable = !!currentPhase && doubleUpPhaseLimit > doubleUpUsesInPhase.length && boosterUses.filter(use => use.code === "2UP").length < Number(doubleUpRule?.total_usage_limit ?? 0);
   const superTransferUsed = boosterUses.find(use => use.code === "SUP-TR");
-  const superTransferAvailable = !initialLineupFree && !firstMissingPriorMatch && !superTransferUsed;
+  const superTransferAvailable = isSuperTransferAvailable({ period: activeTransferPeriod, hasPriorPeriodLineup, firstMissingPriorMatch, alreadyUsed: !!superTransferUsed });
   const myPlayers = chosen.filter(p => p.owner === ownerName).length;
   const openPlayers = chosen.filter(p => p.owner === "Available").length;
   const otherOwnerPlayers = chosen.filter(p => p.owner !== ownerName && p.owner !== "Available").length;
@@ -1248,7 +1249,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     }
     setSubmitBusy(false);
   };
-  const chooseBooster = (code: BoosterCode) => { if ((code === "3X" && !tripleImpactAvailable) || (code === "2UP" && !doubleUpAvailable) || (code === "SUP-TR" && !superTransferAvailable)) return; const next = boosterCode === code ? "" : code; setBoosterCode(next); if (next !== "3X") setBoosterPlayer(""); setSubmitted(false); };
+  const chooseBooster = (code: BoosterCode) => { if ((code === "3X" && !tripleImpactAvailable) || (code === "2UP" && !doubleUpAvailable) || (code === "SUP-TR" && !superTransferAvailable)) return; const next = selectSingleMatchBooster(boosterCode, code) as BoosterCode; setBoosterCode(next); if (next !== "3X") setBoosterPlayer(""); setSubmitted(false); };
   useEffect(() => {
     if (initialLineupFree && boosterCode === "SUP-TR") {
       setBoosterCode("");
@@ -1293,9 +1294,9 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
         : { data: [], error: null };
       if (earlierLineupsResult.error) { if (!cancelled) { setSubmitMessage(userActionError(earlierLineupsResult.error, "Previous lineups refresh")); setLineupLoadBusy(false); } return; }
       const submittedFixtureIds = new Set((earlierLineupsResult.data ?? []).map(row => row.fixture_id));
-      const missingPriorMatch = (earlierFixturesResult.data ?? []).find(row => row.status === "scheduled" && new Date(row.lineup_lock_at ?? row.scheduled_start).getTime() > Date.now() && !submittedFixtureIds.has(row.id))?.match_number ?? null;
+      const missingPriorMatch = firstMissingOpenPriorMatch(earlierFixturesResult.data ?? [], submittedFixtureIds);
       const currentPeriod = (periodResult.data ?? []).find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
-      const priorPeriodLineup = !!currentPeriod && (earlierFixturesResult.data ?? []).some(row => row.match_number >= currentPeriod.start_match_number && row.match_number <= currentPeriod.end_match_number && submittedFixtureIds.has(row.id));
+      const priorPeriodLineup = hasSubmittedInTransferPeriod(earlierFixturesResult.data ?? [], submittedFixtureIds, currentPeriod);
       if (!cancelled) { setFirstMissingPriorMatch(missingPriorMatch); setHasPriorPeriodLineup(priorPeriodLineup); }
       if (currentResult.error) { if (!cancelled) { setSubmitMessage(userActionError(currentResult.error, "Saved lineup refresh")); setLineupLoadBusy(false); } return; }
       let source = currentResult.data;
@@ -1323,7 +1324,8 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       if (!cancelled) {
         submittedSnapshots.current[activeMatchId] = snapshot;
         setSelected(names); setCaptain(snapshot.captain); setVice(snapshot.vice); setImpactPlayer(snapshot.impactPlayer); setImpactType(snapshot.impactType);
-        setBoosterCode(isCurrentSubmission ? ((currentBoosterResult.data as any)?.booster?.code ?? "") : ""); setBoosterPlayer(isCurrentSubmission ? markerName(boosterTargetId) : ""); setHasSavedCurrentLineup(isCurrentSubmission); setSubmitted(isCurrentSubmission); setCarriedForwardNames(new Set(names)); setLineupLoadBusy(false);
+        const loadedBooster = boosterForFixture<BoosterCode>({ isCurrentSubmission, savedCode: (currentBoosterResult.data as any)?.booster?.code, savedPlayer: markerName(boosterTargetId) });
+        setBoosterCode(loadedBooster.code as BoosterCode); setBoosterPlayer(loadedBooster.player); setHasSavedCurrentLineup(isCurrentSubmission); setSubmitted(isCurrentSubmission); setCarriedForwardNames(new Set(names)); setLineupLoadBusy(false);
       }
     };
     loadLineup();
@@ -1362,7 +1364,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     const selectedFromTeam = selected.filter(name => allTeamPlayers.some(player => player.name === name)).length;
     return <View key={team} style={s.teamGroup} onLayout={event => { teamPositions.current[team] = event.nativeEvent.layout.y; }}>
       <TouchableOpacity style={[s.teamHeader, s.teamHeaderModern, expanded && s.teamHeaderExpanded, { backgroundColor: brand.backgroundColor, borderColor: brand.borderColor }]} onPress={() => toggleTeam(team)}><Text style={[s.teamHeaderName, { color: brand.color }]}>{team}</Text><Text style={[s.teamHeaderCount, { color: brand.color }]}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{teamPlayers.length}{teamPlayers.length !== allTeamPlayers.length ? ` of ${allTeamPlayers.length}` : ""} players</Text><Text style={[s.teamChevron, { color: brand.color }]}>{expanded ? "▲" : "▼"}</Text></TouchableOpacity>
-      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = (labels.includes("UNIQUE") || labels.includes("AUTO UNIQUE")) && p.owner !== ownerName; return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, s.playerRowModern, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
+      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = isPowerRoleRestricted({ labels, playerOwner: p.owner, currentOwner: ownerName }); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, s.playerRowModern, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
 <TouchableOpacity style={s.playerMain} onPress={() => { setFocusedPlayer(p.name); toggle(p.name); }}>
 <View style={[s.checkbox, active && s.checkboxActive]}>
 <Text style={s.check}>{active ? "✓" : ""}</Text>
@@ -1434,7 +1436,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {transfers} this match</Text>
 </TouchableOpacity>
 <TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : runAction(submitXI)}>
-{submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : submitted ? "Submitted ✓" : hasSavedCurrentLineup ? "Resubmit XI" : "Submit XI"}</Text>}
+{submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : lineupSubmitActionLabel({ hasSavedLineup: hasSavedCurrentLineup, unchanged: submitted })}</Text>}
 </TouchableOpacity>
 </View><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowSubmitConfirmation(false)}>
 <View style={s.submitModalOverlay}><View style={s.submitModalCard}>
