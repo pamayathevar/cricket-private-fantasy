@@ -127,6 +127,7 @@ Never copied: player ownership, bids, budgets, lineups, transfer/booster usage, 
 - Lineup size, budget, roles, team limits and eligibility come from the fixture-effective playing rules.
 - C, VC, BAI and BOI are optional and mutually exclusive on a player.
 - A submitted XI carries forward; boosters never carry forward.
+- Resubmitting an earlier unlocked XI resets every later unlocked submission for that owner, including its transfer and booster usage. The revised XI becomes the carry-forward starting point, and later matches must be submitted again in order.
 - Reset restores the last submission/carried team; Clear removes all players.
 - Fresh non-owned, non-playing-match selection warns; carried-forward selections do not.
 - Lock uses server time. Other owners' lineups become visible only under the configured post-start rule.

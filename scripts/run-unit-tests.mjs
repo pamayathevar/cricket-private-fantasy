@@ -34,6 +34,7 @@ const {
 const {
   boosterForFixture,
   canViewSubmittedLineup,
+  countLineupChanges,
   firstMissingOpenPriorMatch,
   fixtureOwnerAction,
   fixtureOwnerActionLabel,
@@ -226,6 +227,13 @@ const tests = [
     assert.equal(isFreeTransferSubmission({ period, hasPriorPeriodLineup: false, firstMissingPriorMatch: null, loading: false }), true);
     assert.equal(isFreeTransferSubmission({ period, hasPriorPeriodLineup: true, firstMissingPriorMatch: null, loading: false }), false);
     assert.equal(isFreeTransferSubmission({ period, hasPriorPeriodLineup: false, firstMissingPriorMatch: 1, loading: false }), false);
+  }],
+  ["lineup changes compare the current XI with the previous submitted XI", () => {
+    const previous = new Set(["A", "B", "C", "D"]);
+    assert.equal(countLineupChanges(["A", "B", "E", "F"], previous), 2);
+    assert.equal(countLineupChanges(["A", "B", "C", "D"], previous), 0);
+    const ownedPlayers = new Set(["E"]);
+    assert.equal(countLineupChanges(["A", "B", "E", "F"], previous, player => !ownedPlayers.has(player)), 1);
   }],
   ["a submitted lineup is detected only inside the active transfer period", () => {
     const fixtures = [

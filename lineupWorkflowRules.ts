@@ -50,6 +50,12 @@ export const isFreeTransferSubmission = ({
   loading: boolean;
 }) => !!period?.first_match_free && !hasPriorPeriodLineup && !firstMissingPriorMatch && !loading;
 
+export const countLineupChanges = (
+  currentPlayers: readonly string[],
+  previousPlayers: ReadonlySet<string>,
+  isChargeable: (player: string) => boolean = () => true,
+) => currentPlayers.filter(player => isChargeable(player) && !previousPlayers.has(player)).length;
+
 export const isSuperTransferAvailable = ({
   period,
   hasPriorPeriodLineup,

@@ -9,7 +9,7 @@ import { ipl2026Members } from "./leagueMembers";
 import { supabase } from "./supabase";
 import { IplTeamBadge, OwnerBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
 import { userActionError } from "./errorMessages";
-import { boosterForFixture, firstMissingOpenPriorMatch, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
+import { boosterForFixture, countLineupChanges, firstMissingOpenPriorMatch, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
@@ -736,6 +736,14 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   };
   const updateTransferPeriod = (index: number, key: "name" | "start" | "end" | "limit", value: string) => setTransferPeriods(current => current.map((period, periodIndex) => periodIndex === index ? { ...period, [key]: value } : period));
   const addTransferPeriod = () => setTransferPeriods(current => { const nextNumber = Math.max(0, ...current.map(period => Number(period.code.match(/\d+$/)?.[0] ?? 0))) + 1; return [...current, { code: `period${nextNumber}`, name: `Transfer Period ${nextNumber}`, start: "", end: "", limit: "", firstMatchFree: true }]; });
+  const transferAllowanceDetail = (period: TransferPeriodForm) => {
+    const start = Number(period.start);
+    const end = Number(period.end);
+    if (!period.start || !period.end || !Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) return "Set a valid match range";
+    if (period.firstMatchFree && start === end) return `Match ${start} is free; the allowance is not charged`;
+    const chargedStart = period.firstMatchFree ? start + 1 : start;
+    return `Shared across Match${chargedStart === end ? "" : "es"} ${chargedStart}${chargedStart === end ? "" : `–${end}`}`;
+  };
   const publishTransfers = async () => {
     if (!transferPeriods.length) { setMessage("At least one transfer period is required."); return; }
     if (transferPeriods.some(period => !period.name.trim() || !Number.isInteger(Number(period.start)) || !Number.isInteger(Number(period.end)) || !Number.isInteger(Number(period.limit)) || Number(period.start) < 1 || Number(period.end) < Number(period.start) || Number(period.limit) < 0)) { setMessage("Every transfer period needs a name, valid match range, and a whole-number limit."); return; }
@@ -745,9 +753,12 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     const gap = sorted.find((period, index) => index > 0 && period.startNumber !== sorted[index - 1].endNumber + 1);
     if (gap) { const previous = sorted[sorted.indexOf(gap) - 1]; setMessage(`Transfer periods cannot have a gap. Match ${previous.endNumber + 1} is not covered.`); return; }
     setBusy(true); setMessage("");
-    const { data, error } = await supabase.rpc("publish_league_transfer_periods", { p_league_id: leagueId, p_periods: transferPeriods.map((period, index) => ({ code: period.code, name: period.name.trim(), start_match_number: Number(period.start), end_match_number: Number(period.end), transfer_limit: Number(period.limit), first_match_free: period.firstMatchFree, sort_order: index + 1 })) });
+    const { data, error } = await supabase.rpc("publish_league_transfer_periods", { p_league_id: leagueId, p_periods: sorted.map((period, index) => ({ code: period.code, name: period.name.trim(), start_match_number: period.startNumber, end_match_number: period.endNumber, transfer_limit: Number(period.limit), first_match_free: period.firstMatchFree, sort_order: index + 1 })) });
     if (error) setMessage(userActionError(error, "Transfer-period publication"));
-    else setMessage(`Published ${(data as any)?.period_count ?? transferPeriods.length} configurable transfer periods.`);
+    else {
+      setTransferPeriods(sorted.map(({ startNumber: _startNumber, endNumber: _endNumber, ...period }) => period));
+      setMessage(`Published ${(data as any)?.period_count ?? transferPeriods.length} configurable transfer periods.`);
+    }
     setBusy(false);
   };
   const publishScores = async (fixtureId: string) => {
@@ -946,13 +957,13 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <Text style={s.adminAddPhaseText}>＋ Add another phase</Text>
 </TouchableOpacity>
 </View> : section === "transfers" ? <View>
-<View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Configurable transfer periods</Text><Text style={s.adminNoticeText}>Each period has its own balance. A free first match resets the carried team and does not charge transfers. Period ranges cannot overlap.</Text></View>
-{transferPeriods.map((period, index) => <View key={period.code} style={s.adminPhaseCard}>
-<View style={s.adminPhaseHeader}><TextInput editable={canEdit} style={[s.adminPhaseNameInput, !canEdit && s.adminInputReadOnly]} value={period.name} onChangeText={value => updateTransferPeriod(index, "name", value)} /><TouchableOpacity disabled={!canEdit || transferPeriods.length === 1} style={[s.adminPhaseRemove, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.filter((_, periodIndex) => periodIndex !== index))}><Text style={s.adminPhaseRemoveText}>Remove</Text></TouchableOpacity></View>
+<View style={s.transferScreenIntro}><View style={s.transferScreenIntroRow}><View style={s.transferScreenIcon}><Text style={s.transferScreenIconText}>↔</Text></View><View style={{ flex: 1 }}><Text style={s.transferScreenTitle}>Transfer periods</Text><Text style={s.transferScreenSubtitle}>{transferPeriods.length} period{transferPeriods.length === 1 ? "" : "s"} configured</Text></View></View><Text style={s.transferScreenHelp}>Each period has a separate allowance. Its first match can reset the carried XI without using that balance. Periods must cover every match in order, without overlaps or gaps.</Text></View>
+{transferPeriods.map((period, index) => { const removeDisabled = !canEdit || transferPeriods.length === 1; return <View key={period.code} style={s.transferPeriodCard}>
+<View style={s.transferPeriodHeader}><View style={s.transferPeriodIndex}><Text style={s.transferPeriodIndexText}>{index + 1}</Text></View><View style={{ flex: 1 }}><Text style={s.transferPeriodEyebrow}>PERIOD {index + 1}</Text><TextInput accessibilityLabel={`Transfer period ${index + 1} name`} editable={canEdit} style={[s.transferPeriodNameInput, !canEdit && s.adminInputReadOnly]} value={period.name} onChangeText={value => updateTransferPeriod(index, "name", value)} placeholder="Period name" placeholderTextColor="#8B9893" /></View><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove ${period.name || `transfer period ${index + 1}`}`} disabled={removeDisabled} style={[s.transferPeriodRemove, removeDisabled && s.transferPeriodRemoveDisabled]} onPress={() => setTransferPeriods(current => current.filter((_, periodIndex) => periodIndex !== index))}><Text style={[s.transferPeriodRemoveText, removeDisabled && s.transferPeriodRemoveTextDisabled]}>Remove</Text></TouchableOpacity></View>
 <View style={s.adminPhaseRange}><View style={{ flex: 1 }}><Text style={s.adminFieldDetail}>START MATCH</Text><TextInput editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={period.start} onChangeText={value => updateTransferPeriod(index, "start", value)} keyboardType="number-pad" /></View><Text style={s.adminPhaseTo}>to</Text><View style={{ flex: 1 }}><Text style={s.adminFieldDetail}>END MATCH</Text><TextInput editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={period.end} onChangeText={value => updateTransferPeriod(index, "end", value)} keyboardType="number-pad" /></View></View>
-<AdminNumberField label="Transfer allowance" detail={`Shared across Matches ${period.firstMatchFree ? Number(period.start) + 1 : period.start}–${period.end}`} value={period.limit} onChange={value => updateTransferPeriod(index, "limit", value)} />
-<TouchableOpacity disabled={!canEdit} style={[s.adminNotice, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.map((item, periodIndex) => periodIndex === index ? { ...item, firstMatchFree: !item.firstMatchFree } : item))}><Text style={s.adminNoticeTitle}>{period.firstMatchFree ? "✓" : "○"} First match is unlimited/free</Text><Text style={s.adminNoticeText}>{period.firstMatchFree ? `Match ${period.start || "—"} resets this period's balance.` : "The first match can consume this period's allowance."}</Text></TouchableOpacity>
-</View>)}<TouchableOpacity disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
+<AdminNumberField label="Transfer allowance" detail={transferAllowanceDetail(period)} value={period.limit} onChange={value => updateTransferPeriod(index, "limit", value)} />
+<TouchableOpacity accessibilityRole="switch" accessibilityState={{ checked: period.firstMatchFree, disabled: !canEdit }} accessibilityLabel={`Free first match for ${period.name || `period ${index + 1}`}`} disabled={!canEdit} style={[s.transferFreeToggle, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.map((item, periodIndex) => periodIndex === index ? { ...item, firstMatchFree: !item.firstMatchFree } : item))}><View style={{ flex: 1 }}><Text style={s.transferFreeTitle}>Free first match</Text><Text style={s.transferFreeText}>{period.firstMatchFree ? `Match ${period.start || "—"} resets the carried XI and does not use this allowance.` : "Changes in the first match use this period's allowance."}</Text></View><View style={[s.transferSwitch, period.firstMatchFree && s.transferSwitchActive]}><View style={[s.transferSwitchThumb, period.firstMatchFree && s.transferSwitchThumbActive]} /></View></TouchableOpacity>
+</View>; })}<TouchableOpacity accessibilityRole="button" disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
 </View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => settleAbandoned(fixture.id))}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
 <Text style={s.adminMessageText}>{message}</Text>
 </View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={requestPublicationConfirmation}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
@@ -1087,6 +1098,8 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const [lineupLoadBusy, setLineupLoadBusy] = useState(false);
   const [hasSavedCurrentLineup, setHasSavedCurrentLineup] = useState(false);
   const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
+  const [showFutureResetWarning, setShowFutureResetWarning] = useState(false);
+  const [futureSubmittedMatches, setFutureSubmittedMatches] = useState<number[]>([]);
   const [showWarnings, setShowWarnings] = useState(false);
   const [firstMissingPriorMatch, setFirstMissingPriorMatch] = useState<number | null>(null);
   const [carriedForwardNames, setCarriedForwardNames] = useState<Set<string>>(new Set());
@@ -1191,10 +1204,12 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const activeTransferPeriod = transferPeriods.find(period => activeMatchNumber >= period.start_match_number && activeMatchNumber <= period.end_match_number);
   const initialLineupFree = !!activeTransferPeriod?.first_match_free && !hasPriorPeriodLineup;
   const freeTransferMatch = isFreeTransferSubmission({ period: activeTransferPeriod, hasPriorPeriodLineup, firstMissingPriorMatch, loading: lineupLoadBusy });
-  const transfers = freeTransferMatch ? 0 : chosen.filter(p => (ownershipEnabled ? p.owner !== ownerName : true) && !carriedForwardNames.has(p.name)).length;
+  const chargeablePlayerNames = new Set(chosen.filter(player => !ownershipEnabled || player.owner !== ownerName).map(player => player.name));
+  const chargeableTransfers = freeTransferMatch ? 0 : countLineupChanges(selected, carriedForwardNames, player => chargeablePlayerNames.has(player));
+  const matchTransfers = chargeableTransfers;
   const transferLimit = activeTransferPeriod?.transfer_limit ?? 0;
   const alreadyUsedTransfers = activeTransferPeriod ? transferUsage[activeTransferPeriod.id] ?? 0 : 0;
-  const displayedTransfers = freeTransferMatch ? "Free" : boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + transfers} used / ${transferLimit}`;
+  const displayedTransfers = freeTransferMatch ? "Free" : boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + chargeableTransfers} / ${transferLimit}`;
   const used3X = boosterUses.find(use => use.code === "3X");
   const tripleImpactAvailable = !used3X;
   const currentPhase = leaguePhases.find(phase => activeMatchNumber >= phase.start_match_number && activeMatchNumber <= phase.end_match_number);
@@ -1213,11 +1228,11 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const selectionScopeWarnings = ownershipEnabled ? chosen.filter(player => player.owner !== ownerName && !matchTeams.includes(player.team) && !carriedForwardNames.has(player.name)).map(player => `${player.name} is not your player and is not playing in ${fixture.home} vs ${fixture.away}.`) : [];
   const optionalMarkerWarnings = [!captain && "Captain not selected", !vice && "Vice-Captain not selected", !impactPlayer && "BAI/BOI not selected"].filter(Boolean) as string[];
   const submissionWarnings = [...selectionScopeWarnings, ...impactWarnings, ...optionalMarkerWarnings];
-  const errors = [fixtureLocked && "Lineup is locked", firstMissingPriorMatch && `Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`, !activeTransferPeriod && `No transfer period is configured for Match ${activeMatchNumber}`, selected.length !== rules.lineup_size && `Select exactly ${rules.lineup_size} players (${selected.length}/${rules.lineup_size})`, count("BA") < rules.min_batters && `At least ${rules.min_batters} batters required`, count("BO") < rules.min_bowlers && `At least ${rules.min_bowlers} bowlers required`, count("WK") < rules.min_wicketkeepers && `At least ${rules.min_wicketkeepers} wicketkeeper${rules.min_wicketkeepers === 1 ? "" : "s"} required`, count("AL") < rules.min_all_rounders && `At least ${rules.min_all_rounders} all-rounder${rules.min_all_rounders === 1 ? "" : "s"} required`, maxTeam > rules.max_from_one_team && `Maximum ${rules.max_from_one_team} from one IPL team`, total > rules.lineup_budget && `₹${(total - rules.lineup_budget).toFixed(1)}m over budget`, initialLineupFree && boosterCode === "SUP-TR" && "Super Transfer is unavailable because this lineup already has free transfers", activeTransferPeriod && boosterCode !== "SUP-TR" && alreadyUsedTransfers + transfers > transferLimit && `${activeTransferPeriod.name} transfer limit of ${transferLimit} exceeded`, captain && vice && captain === vice && "Captain and vice-captain must differ", impactPlayer && !impactType && "Choose BAI or BOI for the Impact player", impactPlayer && (impactPlayer === captain || impactPlayer === vice) && "Impact player cannot be captain or vice-captain", boosterCode === "3X" && !boosterPlayer && "Select the player who receives 3X", boosterCode === "3X" && boosterPlayer && !selected.includes(boosterPlayer) && "The 3X player must be in your XI"].filter(Boolean) as string[];
+  const errors = [fixtureLocked && "Lineup is locked", firstMissingPriorMatch && `Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`, !activeTransferPeriod && `No transfer period is configured for Match ${activeMatchNumber}`, selected.length !== rules.lineup_size && `Select exactly ${rules.lineup_size} players (${selected.length}/${rules.lineup_size})`, count("BA") < rules.min_batters && `At least ${rules.min_batters} batters required`, count("BO") < rules.min_bowlers && `At least ${rules.min_bowlers} bowlers required`, count("WK") < rules.min_wicketkeepers && `At least ${rules.min_wicketkeepers} wicketkeeper${rules.min_wicketkeepers === 1 ? "" : "s"} required`, count("AL") < rules.min_all_rounders && `At least ${rules.min_all_rounders} all-rounder${rules.min_all_rounders === 1 ? "" : "s"} required`, maxTeam > rules.max_from_one_team && `Maximum ${rules.max_from_one_team} from one IPL team`, total > rules.lineup_budget && `₹${(total - rules.lineup_budget).toFixed(1)}m over budget`, initialLineupFree && boosterCode === "SUP-TR" && "Super Transfer is unavailable because this lineup already has free transfers", activeTransferPeriod && boosterCode !== "SUP-TR" && alreadyUsedTransfers + chargeableTransfers > transferLimit && `${activeTransferPeriod.name} transfer limit of ${transferLimit} exceeded`, captain && vice && captain === vice && "Captain and vice-captain must differ", impactPlayer && !impactType && "Choose BAI or BOI for the Impact player", impactPlayer && (impactPlayer === captain || impactPlayer === vice) && "Impact player cannot be captain or vice-captain", boosterCode === "3X" && !boosterPlayer && "Select the player who receives 3X", boosterCode === "3X" && boosterPlayer && !selected.includes(boosterPlayer) && "The 3X player must be in your XI"].filter(Boolean) as string[];
   const toggle = (name: string) => {
     const player = roster.find(item => item.name === name);
     const freshExternalPlayer = player && (ownershipEnabled ? player.owner !== ownerName : true) && !carriedForwardNames.has(name);
-    if (activeTransferPeriod && !selected.includes(name) && !initialLineupFree && boosterCode !== "SUP-TR" && freshExternalPlayer && alreadyUsedTransfers + transfers >= transferLimit) {
+    if (activeTransferPeriod && !selected.includes(name) && !initialLineupFree && boosterCode !== "SUP-TR" && freshExternalPlayer && alreadyUsedTransfers + chargeableTransfers >= transferLimit) {
       setSubmitMessage(`No ${activeTransferPeriod?.name ?? "period"} transfers remain. Retain a carried-forward player or use SUP-TR.`);
       return;
     }
@@ -1227,10 +1242,16 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   };
   const resetXI = () => { const snapshot = submittedSnapshots.current[activeMatchId]; if (!snapshot) return; setSelected([...snapshot.players]); setCaptain(snapshot.captain); setVice(snapshot.vice); setImpactPlayer(snapshot.impactPlayer); setImpactType(snapshot.impactType); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(hasSavedCurrentLineup); setShowIssues(false); };
   const clearXI = () => { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setSubmitted(false); setShowIssues(false); };
-  const submitXI = async () => {
+  const submitXI = async (futureResetConfirmed = false) => {
     setSubmitBusy(true); setSubmitMessage("");
     if (firstMissingPriorMatch) { setSubmitMessage(`Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`); setSubmitBusy(false); return; }
     const matchNumber = Number(activeMatchId.replace("M", ""));
+    if (hasSavedCurrentLineup && !futureResetConfirmed) {
+      const futureResult = await supabase.from("lineup_submissions").select("fixture:fixtures!inner(match_number)").eq("league_id", leagueId).eq("member_id", memberId).eq("status", "submitted").gt("fixture.match_number", matchNumber);
+      if (futureResult.error) { setSubmitMessage(userActionError(futureResult.error, "Future lineup check")); setSubmitBusy(false); return; }
+      const futureMatches = Array.from(new Set((futureResult.data ?? []).map((row: any) => Number(row.fixture?.match_number)).filter(Number.isFinite))).sort((left, right) => left - right);
+      if (futureMatches.length) { setFutureSubmittedMatches(futureMatches); setShowFutureResetWarning(true); setSubmitBusy(false); return; }
+    }
     const fixtureResult = await supabase.from("fixtures").select("id").eq("league_id", leagueId).eq("match_number", matchNumber).single();
     if (fixtureResult.error) { setSubmitMessage(userActionError(fixtureResult.error, "Match lookup")); setSubmitBusy(false); return; }
     const playerResult = await supabase.from("league_players").select("player_id,player:players!inner(full_name)").eq("league_id", leagueId).eq("active", true).in("player.full_name", selected);
@@ -1245,7 +1266,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       const verification = await supabase.from("lineup_players").select("player_id", { count: "exact" }).eq("lineup_id", savedLineupId);
       if (verification.error) { const message = "Your lineup was submitted, but confirmation could not be loaded. Refresh the match before submitting again."; if (__DEV__) console.warn("Lineup verification failed:", verification.error.message); setSubmitMessage(message); Alert.alert("Confirmation unavailable", message); }
       else if ((verification.count ?? verification.data?.length ?? 0) !== selected.length) { const message = `Team verification found ${verification.count ?? verification.data?.length ?? 0}/${selected.length} saved players. Please submit again.`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
-      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
+      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setFutureSubmittedMatches([]); setShowFutureResetWarning(false); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
     }
     setSubmitBusy(false);
   };
@@ -1275,7 +1296,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       setLineupLoadBusy(true); setFirstMissingPriorMatch(null); setHasPriorPeriodLineup(false); setHasSavedCurrentLineup(false); setSubmitMessage("");
       const [periodResult, transferResult, phaseResult, boosterRuleResult, boosterUsageResult, earlierFixturesResult, currentResult] = await Promise.all([
         supabase.from("league_transfer_periods").select("id,code,name,start_match_number,end_match_number,transfer_limit,first_match_free").eq("league_id", leagueId).eq("active", true).order("sort_order"),
-        supabase.from("transfer_events").select("transfer_period_id,transfer_count").eq("league_id", leagueId).eq("member_id", memberId).eq("reason", "lineup_change"),
+        supabase.from("transfer_events").select("fixture_id,transfer_period_id,transfer_count,fixture:fixtures(match_number)").eq("league_id", leagueId).eq("member_id", memberId).eq("reason", "lineup_change"),
         supabase.from("league_phases").select("code,name,start_match_number,end_match_number").eq("league_id", leagueId).eq("active", true).order("sort_order"),
         supabase.from("booster_rules").select("code,total_usage_limit,phase_usage_limits").eq("league_id", leagueId).eq("active", true),
         supabase.from("lineup_boosters").select("booster:booster_rules(code),fixture:fixtures(match_number)").eq("member_id", memberId),
@@ -1283,7 +1304,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
         supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type").eq("fixture_id", fixture.databaseId).eq("member_id", memberId).maybeSingle(),
       ]);
       if (!cancelled && periodResult.data) setTransferPeriods(periodResult.data as TransferPeriod[]);
-      if (!cancelled && transferResult.data) setTransferUsage(transferResult.data.reduce((usage: Record<string, number>, event: any) => event.transfer_period_id ? { ...usage, [event.transfer_period_id]: (usage[event.transfer_period_id] ?? 0) + event.transfer_count } : usage, {}));
+      if (!cancelled && transferResult.data) setTransferUsage(transferResult.data.reduce((usage: Record<string, number>, event: any) => event.transfer_period_id && Number(event.fixture?.match_number ?? Number.POSITIVE_INFINITY) < activeMatchNumber ? { ...usage, [event.transfer_period_id]: (usage[event.transfer_period_id] ?? 0) + event.transfer_count } : usage, {}));
       if (!cancelled && phaseResult.data) setLeaguePhases(phaseResult.data as LeaguePhase[]);
       if (!cancelled && boosterRuleResult.data) setBoosterRuleSettings(boosterRuleResult.data as BoosterRuleSetting[]);
       if (!boosterUsageResult.error && !cancelled) setBoosterUses((boosterUsageResult.data ?? []).map((row: any) => ({ code: row.booster?.code, matchNumber: row.fixture?.match_number })).filter(use => use.code && use.matchNumber));
@@ -1299,25 +1320,26 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       const priorPeriodLineup = hasSubmittedInTransferPeriod(earlierFixturesResult.data ?? [], submittedFixtureIds, currentPeriod);
       if (!cancelled) { setFirstMissingPriorMatch(missingPriorMatch); setHasPriorPeriodLineup(priorPeriodLineup); }
       if (currentResult.error) { if (!cancelled) { setSubmitMessage(userActionError(currentResult.error, "Saved lineup refresh")); setLineupLoadBusy(false); } return; }
+      const previousSource = [...earlierFixtureIds].reverse().map(id => (earlierLineupsResult.data ?? []).find(lineup => lineup.fixture_id === id)).find(Boolean) ?? null;
       let source = currentResult.data;
       let isCurrentSubmission = source?.status === "submitted" || source?.status === "locked";
-      if (!source) {
-        const priorIds = [...earlierFixtureIds].reverse();
-        source = priorIds.map(id => (earlierLineupsResult.data ?? []).find(lineup => lineup.fixture_id === id)).find(Boolean) ?? null;
-      }
+      if (!source) source = previousSource;
       if (!source) { if (!cancelled) { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setCarriedForwardNames(new Set()); setLineupLoadBusy(false); } return; }
-      const [lineupPlayersResult, currentBoosterResult] = await Promise.all([
+      const [lineupPlayersResult, currentBoosterResult, previousLineupPlayersResult] = await Promise.all([
         supabase.from("lineup_players").select("slot,player_id").eq("lineup_id", source.id).order("slot"),
         isCurrentSubmission ? supabase.from("lineup_boosters").select("target_player_id,booster:booster_rules(code)").eq("lineup_id", source.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+        previousSource && previousSource.id !== source.id ? supabase.from("lineup_players").select("slot,player_id").eq("lineup_id", previousSource.id).order("slot") : Promise.resolve({ data: null, error: null }),
       ]);
       const boosterTargetId = (currentBoosterResult.data as any)?.target_player_id ?? null;
       const markerIds = [source.captain_player_id, source.vice_captain_player_id, source.impact_player_id, boosterTargetId].filter((id): id is string => !!id);
       const lineupPlayerIds = (lineupPlayersResult.data ?? []).map(row => row.player_id);
-      const relevantPlayerIds = Array.from(new Set([...lineupPlayerIds, ...markerIds]));
+      const previousLineupPlayerIds = previousSource?.id === source.id ? lineupPlayerIds : (previousLineupPlayersResult.data ?? []).map(row => row.player_id);
+      const relevantPlayerIds = Array.from(new Set([...lineupPlayerIds, ...previousLineupPlayerIds, ...markerIds]));
       const playerNamesResult = relevantPlayerIds.length ? await supabase.from("players").select("id,full_name").in("id", relevantPlayerIds) : { data: [], error: null };
-      if (lineupPlayersResult.error || playerNamesResult.error) { if (!cancelled) { setSubmitMessage(lineupPlayersResult.error?.message ?? playerNamesResult.error?.message ?? "Could not load lineup"); setLineupLoadBusy(false); } return; }
+      if (lineupPlayersResult.error || previousLineupPlayersResult.error || playerNamesResult.error) { if (!cancelled) { setSubmitMessage(lineupPlayersResult.error?.message ?? previousLineupPlayersResult.error?.message ?? playerNamesResult.error?.message ?? "Could not load lineup"); setLineupLoadBusy(false); } return; }
       const nameById = new Map((playerNamesResult.data ?? []).map(player => [player.id, player.full_name]));
       const names = lineupPlayerIds.map(id => nameById.get(id)).filter((name): name is string => !!name);
+      const previousNames = previousLineupPlayerIds.map(id => nameById.get(id)).filter((name): name is string => !!name);
       if (isCurrentSubmission && names.length === 0) { if (!cancelled) { setSubmitMessage("Saved XI was found, but its players could not be loaded. Please refresh and try again."); setLineupLoadBusy(false); } return; }
       const markerName = (id: string | null) => id ? nameById.get(id) ?? "" : "";
       const snapshot = { players: names, captain: markerName(source.captain_player_id), vice: markerName(source.vice_captain_player_id), impactPlayer: markerName(source.impact_player_id), impactType: (source.impact_type ?? "") as ImpactType };
@@ -1325,14 +1347,14 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
         submittedSnapshots.current[activeMatchId] = snapshot;
         setSelected(names); setCaptain(snapshot.captain); setVice(snapshot.vice); setImpactPlayer(snapshot.impactPlayer); setImpactType(snapshot.impactType);
         const loadedBooster = boosterForFixture<BoosterCode>({ isCurrentSubmission, savedCode: (currentBoosterResult.data as any)?.booster?.code, savedPlayer: markerName(boosterTargetId) });
-        setBoosterCode(loadedBooster.code as BoosterCode); setBoosterPlayer(loadedBooster.player); setHasSavedCurrentLineup(isCurrentSubmission); setSubmitted(isCurrentSubmission); setCarriedForwardNames(new Set(names)); setLineupLoadBusy(false);
+        setBoosterCode(loadedBooster.code as BoosterCode); setBoosterPlayer(loadedBooster.player); setHasSavedCurrentLineup(isCurrentSubmission); setSubmitted(isCurrentSubmission); setCarriedForwardNames(new Set(previousNames)); setLineupLoadBusy(false);
       }
     };
     loadLineup();
     return () => { cancelled = true; };
   }, [fixture.databaseId, activeMatchId, activeMatchNumber, leagueId, memberId]);
   if (!fixtures.length) return <ScrollView contentContainerStyle={s.content}><View style={s.pendingLeague}><Text style={s.pendingLeagueEyebrow}>{scheduledFixtureCount ? "LINEUPS CLOSED" : "FIXTURES REQUIRED"}</Text><Text style={s.pendingLeagueTitle}>{scheduledFixtureCount ? "No unlocked upcoming matches" : "No fixtures imported"}</Text><Text style={s.pendingLeagueText}>{scheduledFixtureCount ? "Scheduled fixtures exist, but their lineup lock times have passed. Owners cannot submit or change teams after lock." : "This league does not have scheduled fixtures yet. A league administrator must import or configure its fixtures before owners can select a team."}</Text></View></ScrollView>;
-  const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setShowIssues(false); setShowWarnings(false); };
+  const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setShowIssues(false); setShowWarnings(false); setShowFutureResetWarning(false); setFutureSubmittedMatches([]); };
   const focusPlayerInTeamList = (name: string, team: string) => {
     setFocusedPlayer(name);
     setExpandedTeams(current => current.includes(team) ? current : [...current, team]);
@@ -1362,9 +1384,32 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     const expanded = expandedTeams.includes(team);
     const brand = teamBadge(team);
     const selectedFromTeam = selected.filter(name => allTeamPlayers.some(player => player.name === name)).length;
-    return <View key={team} style={s.teamGroup} onLayout={event => { teamPositions.current[team] = event.nativeEvent.layout.y; }}>
-      <TouchableOpacity style={[s.teamHeader, s.teamHeaderModern, expanded && s.teamHeaderExpanded, { backgroundColor: brand.backgroundColor, borderColor: brand.borderColor }]} onPress={() => toggleTeam(team)}><Text style={[s.teamHeaderName, { color: brand.color }]}>{team}</Text><Text style={[s.teamHeaderCount, { color: brand.color }]}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{teamPlayers.length}{teamPlayers.length !== allTeamPlayers.length ? ` of ${allTeamPlayers.length}` : ""} players</Text><Text style={[s.teamChevron, { color: brand.color }]}>{expanded ? "▲" : "▼"}</Text></TouchableOpacity>
-      {expanded && teamPlayers.map(p => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = isPowerRoleRestricted({ labels, playerOwner: p.owner, currentOwner: ownerName }); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, s.playerRowModern, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
+    const activeRoleSummary = ["BA", "WK", "AL", "BO"]
+      .map(role => `${allTeamPlayers.filter(player => player.role === role).length} ${role}`)
+      .join(" · ");
+    const playerCountSummary = teamPlayers.length !== allTeamPlayers.length
+      ? `${teamPlayers.length}/${allTeamPlayers.length} shown`
+      : `${allTeamPlayers.length} players`;
+    return <View key={team} style={[s.teamGroup, expanded && s.teamGroupExpanded]} onLayout={event => { teamPositions.current[team] = event.nativeEvent.layout.y; }}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`${expanded ? "Collapse" : "Expand"} ${team} squad`}
+        style={[s.teamHeader, s.teamHeaderModern, expanded && s.teamHeaderExpanded, expanded && s.teamHeaderInGroup]}
+        onPress={() => toggleTeam(team)}
+      >
+        <View style={[s.teamHeaderAccent, { backgroundColor: brand.backgroundColor }]} />
+        <View style={[s.teamHeaderBadge, { backgroundColor: brand.backgroundColor, borderColor: brand.borderColor }]}>
+          <Text style={[s.teamHeaderBadgeText, { color: brand.color }]}>{team}</Text>
+        </View>
+        <View style={s.teamHeaderIdentity}>
+          <Text style={s.teamHeaderName}>{team} squad</Text>
+          <Text style={s.teamHeaderCount}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{playerCountSummary} · {activeRoleSummary}</Text>
+        </View>
+        <View style={[s.teamHeaderToggle, expanded && s.teamHeaderToggleExpanded]}>
+          <Text style={s.teamChevron}>{expanded ? "▲" : "▼"}</Text>
+        </View>
+      </TouchableOpacity>
+      {expanded && teamPlayers.map((p, playerIndex) => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = isPowerRoleRestricted({ labels, playerOwner: p.owner, currentOwner: ownerName }); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, s.playerRowModern, s.playerRowInGroup, playerIndex === teamPlayers.length - 1 && s.playerRowLastInGroup, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
 <TouchableOpacity style={s.playerMain} onPress={() => { setFocusedPlayer(p.name); toggle(p.name); }}>
 <View style={[s.checkbox, active && s.checkboxActive]}>
 <Text style={s.check}>{active ? "✓" : ""}</Text>
@@ -1403,9 +1448,27 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     {!submitted && selected.length === rules.lineup_size && <View style={s.carryForward}><Text style={s.carryForwardText}>↳ Your latest submitted XI was carried forward. You can alter it before submitting this match.</Text></View>}
     <Text style={s.selectedTitle}>Selected Players ({chosen.length}/{rules.lineup_size})</Text>
     {chosen.length ? <View style={s.selectedList}>{chosen.map((player, index) => { const marker = captain === player.name ? "C" : vice === player.name ? "VC" : impactPlayer === player.name ? impactType : ""; const triple = boosterCode === "3X" && boosterPlayer === player.name; return <View key={player.name} style={[s.selectedListRow, marker === "C" && s.rowCaptain, marker === "VC" && s.rowVice, marker === "BAI" && s.rowBai, marker === "BOI" && s.rowBoi]}><Text style={s.selectedNumber}>{index + 1}</Text><TouchableOpacity style={{ flex: 1 }} onPress={() => focusPlayerInTeamList(player.name, player.team)}><View style={s.specialNameRow}><Text style={s.selectedChipName}>{player.name}</Text>{(specialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={s.teamSubMeta}><IplTeamBadge code={player.team} /><Text style={s.selectedChipMeta}>{player.role}</Text><Text style={s.selectedCost}>₹{Number(player.price).toFixed(1)}m</Text><Text style={s.selectedEditHint}>Tap to edit C/VC/BAI/BOI</Text></View></TouchableOpacity>{marker ? <MarkerBadge marker={marker} /> : null}{triple ? <MarkerBadge marker="3X" /> : null}<TouchableOpacity style={s.removeSelected} onPress={() => toggle(player.name)}><Text style={s.removeSelectedText}>×</Text></TouchableOpacity></View>; })}</View> : <View style={s.emptySelected}><Text style={s.emptySelectedText}>No players selected. Choose players from the team sections below.</Text></View>}
-    <View style={[s.selectionSummary, s.selectionSummaryModern]}><Summary label="PLAYERS" value={`${selected.length}/${rules.lineup_size}`} bad={selected.length !== rules.lineup_size} /><Summary label="COST" value={`₹${total.toFixed(1)}m`} bad={total > rules.lineup_budget} /><Summary label="PERIOD TRANSFERS" value={displayedTransfers} bad={false} /></View>
-    {ownershipEnabled ? <View style={s.ownershipSummary}><OwnershipSummary label="MY PLAYERS" value={myPlayers} tone="mine" /><OwnershipSummary label="OPENPLAYERS" value={openPlayers} tone="open" /><OwnershipSummary label="OTHER OWNERS" value={otherOwnerPlayers} tone="other" /><OwnershipSummary label={`${fixture.home} + ${fixture.away}`} value={currentMatchPlayers} tone="match" /></View> : <View style={s.openLeagueMatchSummary}><View style={[s.ownershipDot, s.dotMatch]} /><Text style={s.openLeagueMatchLabel}>{fixture.home} + {fixture.away} players in your XI</Text><Text style={s.openLeagueMatchValue}>{currentMatchPlayers}</Text></View>}
-    <View style={s.roles}>{(["WK", "BA", "AL", "BO"] as Role[]).map(r => <Text key={r} style={s.roleChip}>{r} {count(r)}</Text>)}</View>
+    <View style={s.lineupSummaryCard}>
+      <View style={s.summaryHeaderGrid}>
+        <Summary icon="◎" label="PLAYERS" value={`${selected.length}`} suffix={` / ${rules.lineup_size}`} detail={selected.length === rules.lineup_size ? "Full squad" : `${rules.lineup_size - selected.length} still needed`} tone="players" bad={selected.length !== rules.lineup_size} />
+        <Summary icon="₹" label="COST" value={`₹${total.toFixed(1)}m`} detail="Total spent" tone="cost" bad={total > rules.lineup_budget} />
+        <Summary icon="↔" label="MATCH TRANS." value={`${matchTransfers}`} detail="This match" tone="match" bad={false} />
+        <Summary icon="▦" label="PERIOD TRANS." value={displayedTransfers.includes(" / ") ? displayedTransfers.split(" / ")[0] : displayedTransfers} suffix={displayedTransfers.includes(" / ") ? ` / ${displayedTransfers.split(" / ")[1]}` : ""} detail="This period" tone="period" bad={false} />
+      </View>
+      <View style={s.summaryBody}>
+        <View style={s.compactSummaryRow}>
+          <Text style={s.compactSummaryRowLabel}>OWNERSHIP</Text>
+          <View style={s.compositionGrid}>
+            {ownershipEnabled ? <><OwnershipSummary icon="♙" label="Mine" value={myPlayers} total={selected.length} tone="mine" /><OwnershipSummary icon="◎" label="Open" value={openPlayers} total={selected.length} tone="open" /><OwnershipSummary icon="♟" label="Others" value={otherOwnerPlayers} total={selected.length} tone="other" /><OwnershipSummary icon="◆" label={`${fixture.home}+${fixture.away}`} value={currentMatchPlayers} total={selected.length} tone="match" /></> : <><OwnershipSummary icon="◎" label="Open" value={selected.length} total={selected.length} tone="open" /><OwnershipSummary icon="◆" label={`${fixture.home}+${fixture.away}`} value={currentMatchPlayers} total={selected.length} tone="match" /></>}
+          </View>
+        </View>
+        <View style={s.summarySectionDivider} />
+        <View style={s.compactSummaryRow}>
+          <Text style={s.compactSummaryRowLabel}>ROLE MIX</Text>
+          <View style={s.roleMixGrid}>{(["BA", "BO", "AL", "WK"] as Role[]).map(role => <RoleSummary key={role} role={role} value={count(role)} />)}</View>
+        </View>
+      </View>
+    </View>
     {submissionWarnings.length ? <View style={s.combinedWarning}><TouchableOpacity style={s.combinedWarningHeader} onPress={() => setShowWarnings(value => !value)}><View style={s.combinedWarningIcon}><Text style={s.combinedWarningIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.combinedWarningTitle}>{submissionWarnings.length} selection notice{submissionWarnings.length > 1 ? "s" : ""}</Text><Text style={s.combinedWarningSummary}>{submissionWarnings[0]}</Text></View><Text style={s.combinedWarningChevron}>{showWarnings ? "▲" : "▼"}</Text></TouchableOpacity>{showWarnings ? <View style={s.combinedWarningBody}>{submissionWarnings.map(warning => <Text key={warning} style={s.combinedWarningText}>• {warning}</Text>)}</View> : null}</View> : null}
     <View style={s.playerFiltersCard}>
       <View style={s.playerFiltersHeading}><View><Text style={s.playerFiltersTitle}>Filter & sort players</Text><Text style={s.playerFiltersHint}>Find the right players without changing your XI</Text></View>{roleFilter !== "ALL" || ownershipFilter !== "ALL" ? <TouchableOpacity onPress={() => { setRoleFilter("ALL"); setOwnershipFilter("ALL"); }}><Text style={s.clearFiltersText}>Clear filters</Text></TouchableOpacity> : null}</View>
@@ -1433,18 +1496,27 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowIssues(!showIssues)}>
 <Text style={s.stickyMatch}>MATCH {activeMatchNumber} · {fixture.home} VS {fixture.away}</Text>
 <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
-<Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {transfers} this match</Text>
+<Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {matchTransfers} transfer{matchTransfers === 1 ? "" : "s"} vs previous XI</Text>
 </TouchableOpacity>
 <TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : runAction(submitXI)}>
 {submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : lineupSubmitActionLabel({ hasSavedLineup: hasSavedCurrentLineup, unchanged: submitted })}</Text>}
 </TouchableOpacity>
-</View><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowSubmitConfirmation(false)}>
+</View><Modal visible={showFutureResetWarning} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}>
+<View style={s.submitModalOverlay}><View style={s.submitModalCard}>
+<View style={s.futureResetIcon}><Text style={s.futureResetIconText}>!</Text></View>
+<Text style={s.submitModalEyebrow}>RESUBMISSION WARNING</Text>
+<Text style={s.submitModalTitle}>Later teams will be reset</Text>
+<Text style={s.futureResetText}>Resubmitting Match {activeMatchNumber} will reset submitted Match{futureSubmittedMatches.length === 1 ? "" : "es"} {futureSubmittedMatches.join(", ")}.</Text>
+<View style={s.futureResetDetails}><Text style={s.futureResetDetail}>• Their transfers and boosters will be refunded.</Text><Text style={s.futureResetDetail}>• This revised XI will carry forward.</Text><Text style={s.futureResetDetail}>• You must submit those matches again in order.</Text></View>
+<View style={s.futureResetActions}><TouchableOpacity style={s.futureResetCancel} onPress={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}><Text style={s.futureResetCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={s.futureResetConfirm} onPress={() => { setShowFutureResetWarning(false); runAction(() => submitXI(true)); }}><Text style={s.futureResetConfirmText}>Reset & resubmit</Text></TouchableOpacity></View>
+</View></View>
+</Modal><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowSubmitConfirmation(false)}>
 <View style={s.submitModalOverlay}><View style={s.submitModalCard}>
 <View style={s.submitModalCheck}><Text style={s.submitModalCheckText}>✓</Text></View>
 <Text style={s.submitModalEyebrow}>LINEUP CONFIRMED</Text>
 <Text style={s.submitModalTitle}>Match {activeMatchNumber} submitted</Text>
 <View style={s.submitModalTeams}><IplTeamBadge code={fixture.home} /><Text style={s.submitModalVs}>VS</Text><IplTeamBadge code={fixture.away} /></View>
-<View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{transfers}</Text><Text style={s.submitModalStatLabel}>THIS MATCH</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
+<View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{matchTransfers}</Text><Text style={s.submitModalStatLabel}>TRANSFERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
 {submissionWarnings.length ? <View style={s.submitModalWarning}><View style={s.submitModalWarningHeading}><View style={s.submitModalWarningIcon}><Text style={s.submitModalWarningIconText}>!</Text></View><Text style={s.submitModalWarningTitle}>Submitted with {submissionWarnings.length} notice{submissionWarnings.length > 1 ? "s" : ""}</Text></View>{submissionWarnings.map(warning => <Text key={warning} style={s.submitModalWarningText}>• {warning}</Text>)}</View> : null}
 <Text style={s.submitModalNote}>Your XI is confirmed. You can make changes and resubmit until the lineup locks.</Text>
 <TouchableOpacity style={s.submitModalButton} onPress={() => setShowSubmitConfirmation(false)}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
@@ -1527,8 +1599,15 @@ function HistoryScreen({ selected, captain, vice, submitted }: { selected: strin
   const total = chosen.reduce((sum, player) => sum + player.price, 0);
   return <><Text style={s.greeting}>Team history</Text><Text style={s.subtitle}>Submitted and locked match lineups</Text>{submitted ? <View style={s.historyCard}><View style={s.historyHeader}><View><Text style={s.historyMatch}>RCB vs SRH</Text><Text style={s.historyDate}>Match 1 · Mar 28 · 7:30 PM</Text></View><Text style={s.historyStatus}>SUBMITTED</Text></View><View style={s.historyStats}><Text style={s.historyStat}>11 players</Text><Text style={s.historyStat}>₹{total.toFixed(1)}m</Text></View>{chosen.map(player => <View key={player.name} style={s.historyPlayer}><Text style={s.historyPlayerName}>{player.name}</Text><Text style={s.historyPlayerMeta}>{player.team} · {player.role}{captain === player.name ? " · C" : vice === player.name ? " · VC" : ""}</Text></View>)}</View> : <View style={s.emptyHistory}><Text style={s.emptyHistoryTitle}>No submitted teams yet</Text><Text style={s.emptyHistoryText}>Submitted or locked match teams will appear here and remain view-only.</Text></View>}</>;
 }
-function Summary({ label, value, bad }: { label: string; value: string; bad: boolean }) { return <View style={s.summary}><Text style={s.summaryLabel}>{label}</Text><Text style={[s.summaryValue, bad && { color: "#FFB4A8" }]}>{value}</Text></View>; }
-function OwnershipSummary({ label, value, tone }: { label: string; value: number; tone: "mine" | "open" | "other" | "match" }) { return <View style={s.ownershipItem}><View style={[s.ownershipDot, tone === "mine" ? s.dotMine : tone === "open" ? s.dotOpen : tone === "other" ? s.dotOther : s.dotMatch]} /><View><Text style={s.ownershipLabel}>{label}</Text><Text style={s.ownershipValue}>{value}</Text></View></View>; }
+type SummaryTone = "players" | "cost" | "match" | "period";
+function Summary({ label, value, suffix = "", tone, bad }: { icon: string; label: string; value: string; suffix?: string; detail: string; tone: SummaryTone; bad: boolean }) { const palette = tone === "players" ? { color: "#B866E8" } : tone === "cost" ? { color: "#78D951" } : tone === "match" ? { color: "#32B4F4" } : { color: "#FF6543" }; const centered = tone === "match"; return <View style={[s.summaryMetric, centered && s.summaryMetricCentered]}><View style={[s.summaryMetricDot, centered && s.summaryMetricDotCentered, { backgroundColor: palette.color }]} /><View style={[s.summaryMetricText, centered && s.summaryMetricTextCentered]}><Text numberOfLines={1} style={[s.summaryMetricLabel, centered && s.summaryMetricCenteredText]}>{label}</Text><Text numberOfLines={1} style={[s.summaryMetricValue, centered && s.summaryMetricCenteredText, { color: palette.color }, bad && s.summaryMetricBad]}>{value}<Text style={s.summaryMetricSuffix}>{suffix}</Text></Text></View></View>; }
+function OwnershipSummary({ label, value, tone }: { icon: string; label: string; value: number; total: number; tone: "mine" | "open" | "other" | "match" }) { const palette = tone === "mine" ? { color: "#24934A", wash: "#F0F8F2", border: "#CDE5D3" } : tone === "open" ? { color: "#C99200", wash: "#FFF9EA", border: "#F0DFAD" } : tone === "other" ? { color: "#D94A16", wash: "#FFF4EF", border: "#F0D2C6" } : { color: "#1264C4", wash: "#F0F5FC", border: "#CBDCF2" }; return <View style={[s.compositionCard, { backgroundColor: palette.wash, borderColor: palette.border }]}><Text style={[s.compositionValue, { color: palette.color }]}>{value}</Text><Text numberOfLines={1} style={s.compositionLabel}>{label}</Text></View>; }
+function RoleGlyph({ role, color }: { role: Role; color: string }) {
+  if (role === "BO") return <View style={s.roleGlyph}><View style={[s.roleBall, { borderColor: color }]}><View style={[s.roleBallSeam, { backgroundColor: color }]} /></View></View>;
+  if (role === "WK") return <View style={s.roleGlyph}><View style={[s.roleGloveLeft, { backgroundColor: color }]} /><View style={[s.roleGloveRight, { backgroundColor: color }]} /><View style={[s.roleGloveCuff, { backgroundColor: color }]} /></View>;
+  return <View style={s.roleGlyph}><View style={[s.roleBatBlade, role === "AL" && s.roleBatBladeAllRounder, { backgroundColor: color }]} /><View style={[s.roleBatHandle, role === "AL" && s.roleBatHandleAllRounder, { backgroundColor: color }]} />{role === "AL" ? <View style={[s.roleAllRounderBall, { backgroundColor: color }]} /> : null}</View>;
+}
+function RoleSummary({ role, value }: { role: Role; value: number }) { const detail = role === "WK" ? { color: "#209447", wash: "#F0F8F2" } : role === "BA" ? { color: "#C99200", wash: "#FFF9EA" } : role === "AL" ? { color: "#6B35C6", wash: "#F6F1FC" } : { color: "#1264C4", wash: "#F0F5FC" }; return <View style={[s.roleSummaryCard, { borderColor: detail.color, backgroundColor: detail.wash }]}><RoleGlyph role={role} color={detail.color} /><Text style={[s.roleSummaryCode, { color: detail.color }]}>{role}</Text><Text style={[s.roleSummaryValue, { color: detail.color }]}>{value}</Text></View>; }
 function BoosterCard({ code, name, detail, active, disabled = false, onPress }: { code: Exclude<BoosterCode, "">; name: string; detail: string; active: boolean; disabled?: boolean; onPress: () => void }) { return <TouchableOpacity disabled={disabled} style={[s.boosterCard, disabled && s.boosterCardDisabled, active && s.boosterCardActive]} onPress={onPress}><Text style={[s.boosterCode, disabled && s.boosterTextDisabled, active && s.boosterCodeActive]}>{code}</Text><Text style={[s.boosterName, disabled && s.boosterTextDisabled, active && s.boosterNameActive]}>{name}</Text><Text style={[s.boosterDetail, active && s.boosterDetailActive]}>{detail}</Text></TouchableOpacity>; }
 function Marker({ text, active, disabled = false, onPress }: { text: string; active: boolean; disabled?: boolean; onPress: () => void }) { return <TouchableOpacity disabled={disabled} style={[s.marker, disabled && s.markerDisabled, active && (text === "C" ? s.badgeCaptain : text === "VC" ? s.badgeVice : text === "BAI" ? s.badgeBai : text === "BOI" ? s.badgeBoi : s.badgeTriple)]} onPress={onPress}><Text style={[s.markerText, disabled && s.markerTextDisabled, active && s.activeMarkerText]}>{text}</Text></TouchableOpacity>; }
 function MarkerBadge({ marker }: { marker: string }) { return <View style={[s.markerBadge, marker === "C" ? s.badgeCaptain : marker === "VC" ? s.badgeVice : marker === "BAI" ? s.badgeBai : marker === "BOI" ? s.badgeBoi : s.badgeTriple]}><Text style={s.markerBadgeText}>{marker}</Text></View>; }
@@ -1591,8 +1670,14 @@ const s = StyleSheet.create({
   pendingLeagueTitle: { color: "#173028", fontSize: 25, fontWeight: "900", marginTop: 8 },
   pendingLeagueMeta: { color: "#718079", fontSize: 11, marginTop: 5 },
   pendingLeagueText: { color: "#66766F", fontSize: 11, lineHeight: 17, textAlign: "center", marginTop: 18 },
-  teamHeaderExpanded: { borderWidth: 2 },
-  teamChevron: { color: "#527067", fontSize: 9, fontWeight: "900", marginLeft: 8 },
+  teamHeaderExpanded: { borderColor: "#BFCBC5", backgroundColor: "#FBFCFB" },
+  teamHeaderAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 6, borderRadius: 3 },
+  teamHeaderBadge: { minWidth: 48, height: 36, borderRadius: 10, borderWidth: 1.5, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, marginLeft: 3, marginRight: 10 },
+  teamHeaderBadgeText: { fontSize: 11, fontWeight: "900" },
+  teamHeaderIdentity: { flex: 1, minWidth: 0 },
+  teamHeaderToggle: { width: 28, height: 28, borderRadius: 9, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginLeft: 8 },
+  teamHeaderToggleExpanded: { backgroundColor: "#E2EBE6" },
+  teamChevron: { color: "#53645D", fontSize: 9, fontWeight: "900" },
   rowCaptain: { backgroundColor: "#FFF6CF" },
   rowVice: { backgroundColor: "#EAF0FF" },
   rowBai: { backgroundColor: "#FCE8F2" },
@@ -1642,6 +1727,16 @@ const s = StyleSheet.create({
   submitModalNote: { color: "#64756F", fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 18 },
   submitModalButton: { width: "100%", backgroundColor: "#0A4A3B", borderRadius: 15, paddingVertical: 14, alignItems: "center", marginTop: 20 },
   submitModalButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
+  futureResetIcon: { width: 58, height: 58, borderRadius: 29, backgroundColor: "#FFE3D9", borderWidth: 2, borderColor: "#E85D32", alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  futureResetIconText: { color: "#B83C1C", fontSize: 31, fontWeight: "900" },
+  futureResetText: { color: "#4D5D58", fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 14 },
+  futureResetDetails: { width: "100%", backgroundColor: "#FFF3ED", borderWidth: 1, borderColor: "#F2C4B2", borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11, marginTop: 14 },
+  futureResetDetail: { color: "#6B3C2C", fontSize: 11, lineHeight: 17, fontWeight: "700" },
+  futureResetActions: { width: "100%", flexDirection: "row", gap: 9, marginTop: 19 },
+  futureResetCancel: { flex: 1, borderWidth: 1, borderColor: "#CAD6D0", borderRadius: 14, paddingVertical: 13, alignItems: "center" },
+  futureResetCancelText: { color: "#496059", fontSize: 13, fontWeight: "900" },
+  futureResetConfirm: { flex: 1.35, backgroundColor: "#B83C1C", borderRadius: 14, paddingVertical: 13, alignItems: "center" },
+  futureResetConfirmText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
   submitWarningIcon: { color: "#765D16", fontSize: 15, marginRight: 8 },
   submitWarningText: { flex: 1, color: "#765D16", fontSize: 9, lineHeight: 13, fontWeight: "800" },
   stickyTitle: { color: "#173028", fontSize: 13, fontWeight: "900" },
@@ -1770,16 +1865,73 @@ const s = StyleSheet.create({
   priorMatchIconText: { color: "white", fontSize: 16, fontWeight: "900" },
   priorMatchTitle: { color: "#873D28", fontSize: 11, fontWeight: "900", letterSpacing: 0.6 },
   priorMatchText: { color: "#865A4B", fontSize: 9, lineHeight: 13, marginTop: 3 },
-  ownershipSummary: { flexDirection: "row", gap: 0, marginTop: 8, marginBottom: 2, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E4E8EE", borderRadius: 13, padding: 4 },
-  openLeagueMatchSummary: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E4E8EE", borderRadius: 13, paddingHorizontal: 14, paddingVertical: 11, marginTop: 8, marginBottom: 2 },
+  lineupSummaryCard: { marginBottom: 2, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#D6DEE8", borderRadius: 12, overflow: "hidden", shadowColor: "#071D3A", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 5, elevation: 2 },
+  summaryHeaderGrid: { flexDirection: "row", backgroundColor: "#071C3B", paddingHorizontal: 4, paddingVertical: 6 },
+  summaryMetric: { flex: 1, minWidth: 0, minHeight: 42, flexDirection: "row", alignItems: "center", paddingHorizontal: 5, borderRightWidth: 1, borderRightColor: "rgba(171, 190, 218, 0.22)" },
+  summaryMetricCentered: { justifyContent: "center" },
+  summaryMetricDot: { width: 5, height: 5, borderRadius: 3, marginRight: 4 },
+  summaryMetricDotCentered: { position: "absolute", left: 5, marginRight: 0 },
+  summaryMetricText: { flex: 1, minWidth: 0 },
+  summaryMetricTextCentered: { flex: 0, alignItems: "center" },
+  summaryMetricCenteredText: { textAlign: "center" },
+  summaryMetricLabel: { color: "#D7DCE8", fontSize: 6, fontWeight: "900", letterSpacing: 0.15 },
+  summaryMetricValue: { fontSize: 14, lineHeight: 17, fontWeight: "900", marginTop: 1 },
+  summaryMetricSuffix: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
+  summaryMetricBad: { color: "#FF9C8A" },
+  summaryMetricDetailRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
+  summaryMetricDetailDot: { width: 5, height: 5, borderRadius: 3, marginRight: 5 },
+  summaryMetricDetail: { color: "#C8D0DF", fontSize: 7.5, fontWeight: "700" },
+  summaryBody: { backgroundColor: "#FBFCFE", paddingHorizontal: 7, paddingVertical: 6 },
+  compactSummaryRow: { flexDirection: "row", alignItems: "center" },
+  compactSummaryRowLabel: { width: 51, color: "#637087", fontSize: 6.5, fontWeight: "900", letterSpacing: 0.35 },
+  summarySectionHeading: { flexDirection: "row", alignItems: "center" },
+  summarySectionIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: "#F2EDFC", alignItems: "center", justifyContent: "center", marginRight: 8 },
+  summarySectionIconText: { color: "#17254A", fontSize: 9, fontWeight: "900" },
+  summarySectionTitle: { color: "#0C1E42", fontSize: 11, fontWeight: "900" },
+  summarySectionSubtitle: { color: "#77839B", fontSize: 7.5, fontWeight: "700", marginTop: 1 },
+  summaryTotalBadge: { backgroundColor: "#F0F3F8", borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6 },
+  summaryTotalBadgeText: { color: "#17254A", fontSize: 7.5, fontWeight: "800" },
+  summaryTotalBadgeValue: { color: "#0A3F83", fontWeight: "900" },
+  compositionGrid: { flex: 1, flexDirection: "row", gap: 3 },
+  compositionCard: { flex: 1, minWidth: 0, height: 38, borderWidth: 1, borderRadius: 7, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  compositionCardText: { flex: 1, minWidth: 0 },
+  compositionIcon: { width: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 3 },
+  compositionIconText: { color: "#FFFFFF", fontSize: 7, fontWeight: "900" },
+  compositionValue: { fontSize: 14, lineHeight: 16, fontWeight: "900", marginRight: 4 },
+  compositionLabel: { color: "#122044", fontSize: 7.5, fontWeight: "900" },
+  compositionTrack: { height: 3, borderRadius: 2, backgroundColor: "rgba(70, 86, 112, 0.13)", overflow: "hidden", marginTop: 8 },
+  compositionFill: { height: 3, borderRadius: 2 },
+  compositionPercent: { fontSize: 7.5, fontWeight: "900", marginTop: 3 },
+  summarySectionDivider: { height: 1, backgroundColor: "#E2E7ED", marginVertical: 5 },
+  roleMixGrid: { flex: 1, flexDirection: "row", gap: 3 },
+  roleSummaryCard: { flex: 1, minWidth: 0, height: 31, borderWidth: 1, borderRadius: 7, paddingHorizontal: 4, flexDirection: "row", alignItems: "center" },
+  roleGlyph: { position: "relative", width: 16, height: 18, marginRight: 3 },
+  roleBatBlade: { position: "absolute", left: 6, top: 6, width: 5, height: 11, borderRadius: 1.5 },
+  roleBatHandle: { position: "absolute", left: 7.5, top: 1, width: 2, height: 6, borderRadius: 1 },
+  roleBatBladeAllRounder: { left: 3, top: 6, width: 4, height: 10 },
+  roleBatHandleAllRounder: { left: 4, top: 1, height: 6 },
+  roleAllRounderBall: { position: "absolute", right: 0, bottom: 1, width: 7, height: 7, borderRadius: 4 },
+  roleBall: { position: "absolute", left: 1, top: 2, width: 14, height: 14, borderRadius: 7, borderWidth: 1.5, overflow: "hidden" },
+  roleBallSeam: { position: "absolute", left: 5, top: 0, width: 1.5, height: 13, borderRadius: 1, transform: [{ rotate: "24deg" }] },
+  roleGloveLeft: { position: "absolute", left: 1, top: 2, width: 7, height: 11, borderRadius: 3, transform: [{ rotate: "-16deg" }] },
+  roleGloveRight: { position: "absolute", right: 1, top: 2, width: 7, height: 11, borderRadius: 3, transform: [{ rotate: "16deg" }] },
+  roleGloveCuff: { position: "absolute", left: 3, bottom: 1, width: 10, height: 3, borderRadius: 1 },
+  roleSummaryIcon: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.25, alignItems: "center", justifyContent: "center", marginRight: 8 },
+  roleSummaryIconText: { fontSize: 7.5, fontWeight: "900" },
+  roleSummaryCode: { flex: 1, fontSize: 8, fontWeight: "900", marginRight: 2 },
+  roleSummaryValue: { fontSize: 13, fontWeight: "900" },
+  selectionBreakdown: { backgroundColor: "#F1F4F2", paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8 },
+  ownershipSummary: { flexDirection: "row" },
+  openLeagueMatchSummary: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 11, paddingHorizontal: 14, paddingVertical: 11 },
   openLeagueMatchLabel: { flex: 1, color: "#52675F", fontSize: 10, fontWeight: "800", marginLeft: 2 },
   openLeagueMatchValue: { color: "#173F35", fontSize: 18, fontWeight: "900" },
-  ownershipItem: { flex: 1, minHeight: 42, borderRadius: 9, paddingHorizontal: 6, paddingVertical: 6, flexDirection: "row", alignItems: "center" },
-  ownershipDot: { width: 8, height: 8, borderRadius: 4, marginRight: 7 },
-  dotMine: { backgroundColor: "#2B775F" },
-  dotOpen: { backgroundColor: "#C79D25" },
-  dotOther: { backgroundColor: "#A35C72" },
-  dotMatch: { backgroundColor: "#426FC0" },
+  ownershipItem: { flex: 1, minHeight: 48, paddingHorizontal: 12, paddingVertical: 7, flexDirection: "row", alignItems: "center" },
+  ownershipItemDivider: { borderRightWidth: 1, borderRightColor: "#D9E1DD" },
+  ownershipDot: { width: 7, height: 7, borderRadius: 4, marginRight: 8 },
+  dotMine: { backgroundColor: "#226B53" },
+  dotOpen: { backgroundColor: "#829B32" },
+  dotOther: { backgroundColor: "#A9593F" },
+  dotMatch: { backgroundColor: "#405D8E" },
   impactHelp: { backgroundColor: "#EEF1FA", borderRadius: 11, padding: 11, marginTop: 10 },
   impactHelpTitle: { color: "#354C7A", fontSize: 11, fontWeight: "900" },
   impactHelpText: { color: "#65728C", fontSize: 9, lineHeight: 13, marginTop: 3 },
@@ -1847,8 +1999,8 @@ const s = StyleSheet.create({
   removeSelectedText: { color: "#7D4E45", fontSize: 18, lineHeight: 19, fontWeight: "700" },
   emptySelected: { backgroundColor: "#EDF1EF", borderRadius: 10, padding: 11 },
   emptySelectedText: { color: "#77857F", fontSize: 10 },
-  ownershipLabel: { color: "#87938E", fontSize: 7, fontWeight: "900" },
-  ownershipValue: { color: "#173028", fontSize: 15, fontWeight: "900", marginTop: 2 },
+  ownershipLabel: { color: "#697871", fontSize: 7.5, fontWeight: "900", letterSpacing: 0.25 },
+  ownershipValue: { color: "#173F35", fontSize: 16, fontWeight: "900", marginTop: 2 },
   pointsReset: { backgroundColor: "#E8F2ED", borderRadius: 14, padding: 13, marginTop: 12 },
   pointsResetTitle: { color: "#174D3D", fontSize: 12, fontWeight: "900" },
   pointsResetText: { color: "#587068", fontSize: 10, lineHeight: 15, marginTop: 3 },
@@ -1914,6 +2066,30 @@ const s = StyleSheet.create({
   adminPhaseTo: { color: "#7B8983", fontSize: 9, fontWeight: "800", paddingBottom: 14 },
   adminAddPhase: { borderWidth: 1, borderStyle: "dashed", borderColor: "#8FA49B", borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 9 },
   adminAddPhaseText: { color: "#174D3D", fontSize: 10, fontWeight: "900" },
+  transferScreenIntro: { backgroundColor: "#153D33", borderRadius: 18, padding: 16, marginTop: 10 },
+  transferScreenIntroRow: { flexDirection: "row", alignItems: "center" },
+  transferScreenIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center", marginRight: 11 },
+  transferScreenIconText: { color: "#12382F", fontSize: 20, lineHeight: 22, fontWeight: "900" },
+  transferScreenTitle: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
+  transferScreenSubtitle: { color: "#AFC9C0", fontSize: 9, fontWeight: "800", marginTop: 2 },
+  transferScreenHelp: { color: "#C9DCD5", fontSize: 9, lineHeight: 14, marginTop: 12 },
+  transferPeriodCard: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 14, marginTop: 10, borderWidth: 1, borderColor: "#DCE5E0", shadowColor: "#12382F", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+  transferPeriodHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  transferPeriodIndex: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#EAF2EE", alignItems: "center", justifyContent: "center" },
+  transferPeriodIndexText: { color: "#174D3D", fontSize: 12, fontWeight: "900" },
+  transferPeriodEyebrow: { color: "#85928C", fontSize: 7, fontWeight: "900", letterSpacing: 0.8, marginBottom: 3 },
+  transferPeriodNameInput: { height: 36, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#FBFCFB", borderRadius: 9, paddingHorizontal: 10, color: "#173028", fontSize: 11, fontWeight: "900" },
+  transferPeriodRemove: { borderWidth: 1, borderColor: "#E1B9B0", backgroundColor: "#FFF7F5", borderRadius: 9, paddingHorizontal: 9, paddingVertical: 8 },
+  transferPeriodRemoveDisabled: { borderColor: "#E5E9E7", backgroundColor: "#F4F6F5" },
+  transferPeriodRemoveText: { color: "#8D4639", fontSize: 8, fontWeight: "900" },
+  transferPeriodRemoveTextDisabled: { color: "#AAB3AF" },
+  transferFreeToggle: { flexDirection: "row", alignItems: "center", backgroundColor: "#F2F6F3", borderRadius: 12, padding: 12, marginTop: 10, borderWidth: 1, borderColor: "#E0E7E3" },
+  transferFreeTitle: { color: "#24473C", fontSize: 10, fontWeight: "900" },
+  transferFreeText: { color: "#6A7C75", fontSize: 8, lineHeight: 12, marginTop: 3, paddingRight: 12 },
+  transferSwitch: { width: 42, height: 24, borderRadius: 12, backgroundColor: "#CAD3CF", padding: 3, justifyContent: "center" },
+  transferSwitchActive: { backgroundColor: "#174D3D" },
+  transferSwitchThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#FFFFFF" },
+  transferSwitchThumbActive: { alignSelf: "flex-end", backgroundColor: "#DDFB72" },
   rankingPhaseTabs: { gap: 8, paddingRight: 20, marginTop: 4 },
   rankingPhaseTab: { minWidth: 112, borderWidth: 1, borderColor: "#D7E0DB", backgroundColor: "white", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
   rankingPhaseTabActive: { borderColor: "#174D3D", backgroundColor: "#174D3D" },
@@ -2035,10 +2211,14 @@ const s = StyleSheet.create({
   leagueCardModern: { overflow: "hidden", borderRadius: 22, paddingLeft: 18, paddingVertical: 17, shadowColor: "#001A12", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 15, elevation: 7 },
   leagueCardAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 6 },
   pageSurface: { backgroundColor: "#F5F6F8", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18 },
-  selectionSummaryModern: { backgroundColor: "#18223B", borderRadius: 18, borderWidth: 1, borderColor: "#2D3853", shadowColor: "#111827", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.14, shadowRadius: 10, elevation: 4 },
-  teamHeaderModern: { minHeight: 50, borderRadius: 15, paddingHorizontal: 14, paddingVertical: 11, shadowColor: "#111827", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 5, elevation: 2 },
+  selectionSummaryModern: { backgroundColor: "#18223B", borderRadius: 0 },
+  teamGroupExpanded: { backgroundColor: "#FFFFFF", borderRadius: 16, borderWidth: 1, borderColor: "#E0E6E2", overflow: "hidden", shadowColor: "#0E2F25", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+  teamHeaderModern: { minHeight: 65, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#FFFFFF", borderColor: "#E0E6E2", shadowColor: "#0E2F25", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 1 },
+  teamHeaderInGroup: { borderWidth: 0, borderBottomWidth: 1, borderBottomColor: "#E4E9E5", borderRadius: 0, marginBottom: 0, shadowOpacity: 0, shadowRadius: 0, elevation: 0 },
   playerRowModern: { borderRadius: 16, borderColor: "#E4E8EE", shadowColor: "#111827", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.07, shadowRadius: 6, elevation: 2 },
-  safe: { flex: 1, backgroundColor: "#071D17" }, header: { flexDirection: "row", alignItems: "center", padding: 16 }, logo: { width: 42, height: 42, borderRadius: 13, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center" }, logoHomeActive: { borderWidth: 2, borderColor: "white" }, logoText: { fontSize: 26, lineHeight: 28, fontWeight: "900", color: "#071D17", marginTop: -2 }, eyebrow: { color: "#80A399", fontSize: 9, fontWeight: "800", letterSpacing: 1.5 }, brand: { color: "white", fontSize: 18, fontWeight: "900" }, live: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, content: { backgroundColor: "#F4F5EF", borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 110, minHeight: 750 }, greeting: { color: "#10251F", fontSize: 25, fontWeight: "900" }, subtitle: { color: "#718079", fontSize: 13, marginTop: 4, marginBottom: 18 }, hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 31, fontWeight: "900", marginTop: 10 }, vs: { color: "#DDFB72", fontSize: 18 }, heroMeta: { color: "#B7CDC6", fontSize: 12, marginTop: 6 }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" }, stats: { flexDirection: "row", gap: 8, marginTop: 12 }, stat: { flex: 1, backgroundColor: "white", borderRadius: 14, padding: 12 }, statLabel: { color: "#87938E", fontSize: 8, fontWeight: "900" }, statValue: { color: "#10251F", fontSize: 17, fontWeight: "900", marginTop: 5 }, sectionTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 10 }, card: { backgroundColor: "white", borderRadius: 18, paddingHorizontal: 14 }, standing: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#EDF0EA" }, position: { width: 23, color: "#819089", fontWeight: "800" }, badge: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#E8F4EF", alignItems: "center", justifyContent: "center" }, badgeText: { color: "#174D3D", fontWeight: "900" }, owner: { flex: 1, marginLeft: 9, fontWeight: "800", color: "#1B3029" }, points: { color: "#51665F", fontSize: 11 }, auction: { backgroundColor: "white", borderRadius: 20, alignItems: "center", padding: 20 }, timer: { alignSelf: "flex-end", color: "#496209", fontWeight: "900" }, avatar: { width: 66, height: 66, borderRadius: 22, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center" }, avatarText: { color: "#DDFB72", fontSize: 22, fontWeight: "900" }, auctionName: { fontSize: 20, fontWeight: "900", marginTop: 10 }, bidLabel: { color: "#87938E", fontSize: 9, fontWeight: "900", marginTop: 16 }, bid: { fontSize: 30, fontWeight: "900" }, meta: { color: "#7D8B85", fontSize: 9, marginTop: 3 }, selectionSummary: { flexDirection: "row", backgroundColor: "#123C31", borderRadius: 17, paddingVertical: 14 }, summary: { flex: 1, alignItems: "center" }, summaryLabel: { color: "#9BC1B6", fontSize: 8, fontWeight: "900" }, summaryValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900", marginTop: 4 }, roles: { flexDirection: "row", gap: 7, marginTop: 9 }, roleChip: { backgroundColor: "#E4ECE7", color: "#35554B", borderRadius: 9, padding: 7, fontSize: 10, fontWeight: "800" }, helper: { color: "#7D8984", fontSize: 11, marginBottom: 10 }, otherTeamsTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 4 }, teamGroup: { marginBottom: 12 }, teamHeader: { flexDirection: "row", alignItems: "center", backgroundColor: "#E3ECE7", borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 7 }, teamHeaderName: { flex: 1, color: "#174D3D", fontSize: 13, fontWeight: "900" }, teamHeaderCount: { color: "#71827B", fontSize: 10, fontWeight: "700" }, playerRow: { backgroundColor: "white", borderRadius: 13, marginBottom: 8, borderWidth: 1, borderColor: "transparent" }, playerActive: { borderColor: "#9AB64B", backgroundColor: "#FBFDEF" }, playerFocused: { borderColor: "#6A3FB5", borderWidth: 2, backgroundColor: "#F8F1FF" }, playerMain: { flexDirection: "row", alignItems: "center", padding: 11 }, checkbox: { width: 23, height: 23, borderRadius: 7, borderWidth: 1, borderColor: "#B8C3BD", alignItems: "center", justifyContent: "center" }, checkboxActive: { backgroundColor: "#174D3D" }, check: { color: "white", fontWeight: "900" }, playerName: { color: "#173028", fontSize: 13, fontWeight: "800" }, price: { color: "#173028", fontSize: 12, fontWeight: "900" }, markers: { flexDirection: "row", gap: 7, paddingLeft: 44, paddingBottom: 9 }, marker: { borderWidth: 1, borderColor: "#B9C5BF", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 }, markerActive: { backgroundColor: "#DDFB72", borderColor: "#9BB73E" }, markerText: { color: "#253A32", fontSize: 10, fontWeight: "900" }, validation: { borderRadius: 14, padding: 14, marginTop: 12 }, invalid: { backgroundColor: "#FFF0EC" }, valid: { backgroundColor: "#EAF6E5" }, validationTitle: { fontWeight: "900", color: "#263B34" }, validationText: { color: "#5E6D67", fontSize: 11, marginTop: 3 }, submit: { backgroundColor: "#174D3D", borderRadius: 14, padding: 15, alignItems: "center", marginTop: 11 }, disabled: { backgroundColor: "#AAB5B0" }, submitText: { color: "white", fontWeight: "900" }, success: { color: "#2F6B37", textAlign: "center", fontWeight: "800", marginTop: 10 }, tabBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 82, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E9E4", flexDirection: "row", paddingTop: 9 }, tab: { flex: 1, alignItems: "center" }, cricketBallIcon: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#BFC8C4", marginBottom: 5, position: "relative" }, cricketBallIconActive: { backgroundColor: "#C53A45" }, cricketBallIconSeam: { position: "absolute", width: 1.5, height: 17, backgroundColor: "#FFFFFF", left: 9.25, top: 1.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconSeamActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBallIconStitch: { position: "absolute", width: 5, height: 1, backgroundColor: "#FFFFFF", left: 7.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconStitchTop: { top: 6 }, cricketBallIconStitchBottom: { top: 12 }, cricketBallIconStitchActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBatIcon: { width: 20, height: 20, marginBottom: 5, position: "relative", transform: [{ rotate: "-38deg" }] }, cricketBatHandle: { position: "absolute", width: 4, height: 8, borderRadius: 2, backgroundColor: "#8D9A95", top: 0, left: 8 }, cricketBatHandleActive: { backgroundColor: "#174D3D" }, cricketBatBlade: { position: "absolute", width: 9, height: 14, borderRadius: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: "#C7CECA", top: 6, left: 5.5 }, cricketBatBladeActive: { backgroundColor: "#D5A558" }, tabText: { color: "#8A9691", fontSize: 10, fontWeight: "700" }, tabTextActive: { color: "#174D3D", fontWeight: "900" }
+  playerRowInGroup: { borderRadius: 0, marginBottom: 0, borderWidth: 0, borderBottomWidth: 1, borderBottomColor: "#EDF0ED", shadowOpacity: 0, shadowRadius: 0, elevation: 0 },
+  playerRowLastInGroup: { borderBottomWidth: 0 },
+  safe: { flex: 1, backgroundColor: "#071D17" }, header: { flexDirection: "row", alignItems: "center", padding: 16 }, logo: { width: 42, height: 42, borderRadius: 13, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center" }, logoHomeActive: { borderWidth: 2, borderColor: "white" }, logoText: { fontSize: 26, lineHeight: 28, fontWeight: "900", color: "#071D17", marginTop: -2 }, eyebrow: { color: "#80A399", fontSize: 9, fontWeight: "800", letterSpacing: 1.5 }, brand: { color: "white", fontSize: 18, fontWeight: "900" }, live: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, content: { backgroundColor: "#F4F5EF", borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 110, minHeight: 750 }, greeting: { color: "#10251F", fontSize: 25, fontWeight: "900" }, subtitle: { color: "#718079", fontSize: 13, marginTop: 4, marginBottom: 18 }, hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 31, fontWeight: "900", marginTop: 10 }, vs: { color: "#DDFB72", fontSize: 18 }, heroMeta: { color: "#B7CDC6", fontSize: 12, marginTop: 6 }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" }, stats: { flexDirection: "row", gap: 8, marginTop: 12 }, stat: { flex: 1, backgroundColor: "white", borderRadius: 14, padding: 12 }, statLabel: { color: "#87938E", fontSize: 8, fontWeight: "900" }, statValue: { color: "#10251F", fontSize: 17, fontWeight: "900", marginTop: 5 }, sectionTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 10 }, card: { backgroundColor: "white", borderRadius: 18, paddingHorizontal: 14 }, standing: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#EDF0EA" }, position: { width: 23, color: "#819089", fontWeight: "800" }, badge: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#E8F4EF", alignItems: "center", justifyContent: "center" }, badgeText: { color: "#174D3D", fontWeight: "900" }, owner: { flex: 1, marginLeft: 9, fontWeight: "800", color: "#1B3029" }, points: { color: "#51665F", fontSize: 11 }, auction: { backgroundColor: "white", borderRadius: 20, alignItems: "center", padding: 20 }, timer: { alignSelf: "flex-end", color: "#496209", fontWeight: "900" }, avatar: { width: 66, height: 66, borderRadius: 22, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center" }, avatarText: { color: "#DDFB72", fontSize: 22, fontWeight: "900" }, auctionName: { fontSize: 20, fontWeight: "900", marginTop: 10 }, bidLabel: { color: "#87938E", fontSize: 9, fontWeight: "900", marginTop: 16 }, bid: { fontSize: 30, fontWeight: "900" }, meta: { color: "#7D8B85", fontSize: 9, marginTop: 3 }, selectionSummary: { flexDirection: "row", backgroundColor: "#123C31", borderRadius: 17, paddingVertical: 14 }, summary: { flex: 1, alignItems: "center" }, summaryLabel: { color: "#9BC1B6", fontSize: 8, fontWeight: "900" }, summaryValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900", marginTop: 4 }, roles: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 6, paddingTop: 7, paddingHorizontal: 3, borderTopWidth: 1, borderTopColor: "#D8E1DC" }, rolesLabel: { color: "#6B7A73", fontSize: 7.5, fontWeight: "900", letterSpacing: 0.5, marginRight: 3 }, roleChip: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DCE5E0", color: "#365248", borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6, fontSize: 9, fontWeight: "900" }, helper: { color: "#7D8984", fontSize: 11, marginBottom: 10 }, otherTeamsTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 4 }, teamGroup: { marginBottom: 12 }, teamHeader: { flexDirection: "row", alignItems: "center", backgroundColor: "#E3ECE7", borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 7 }, teamHeaderName: { color: "#18223B", fontSize: 12, fontWeight: "900" }, teamHeaderCount: { color: "#758091", fontSize: 7.5, lineHeight: 11, fontWeight: "800", marginTop: 3 }, playerRow: { backgroundColor: "white", borderRadius: 13, marginBottom: 8, borderWidth: 1, borderColor: "transparent" }, playerActive: { borderColor: "#9AB64B", backgroundColor: "#FBFDEF" }, playerFocused: { borderColor: "#6A3FB5", borderWidth: 2, backgroundColor: "#F8F1FF" }, playerMain: { flexDirection: "row", alignItems: "center", padding: 11 }, checkbox: { width: 23, height: 23, borderRadius: 7, borderWidth: 1, borderColor: "#B8C3BD", alignItems: "center", justifyContent: "center" }, checkboxActive: { backgroundColor: "#174D3D" }, check: { color: "white", fontWeight: "900" }, playerName: { color: "#173028", fontSize: 13, fontWeight: "800" }, price: { color: "#173028", fontSize: 12, fontWeight: "900" }, markers: { flexDirection: "row", gap: 7, paddingLeft: 44, paddingBottom: 9 }, marker: { borderWidth: 1, borderColor: "#B9C5BF", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 }, markerActive: { backgroundColor: "#DDFB72", borderColor: "#9BB73E" }, markerText: { color: "#253A32", fontSize: 10, fontWeight: "900" }, validation: { borderRadius: 14, padding: 14, marginTop: 12 }, invalid: { backgroundColor: "#FFF0EC" }, valid: { backgroundColor: "#EAF6E5" }, validationTitle: { fontWeight: "900", color: "#263B34" }, validationText: { color: "#5E6D67", fontSize: 11, marginTop: 3 }, submit: { backgroundColor: "#174D3D", borderRadius: 14, padding: 15, alignItems: "center", marginTop: 11 }, disabled: { backgroundColor: "#AAB5B0" }, submitText: { color: "white", fontWeight: "900" }, success: { color: "#2F6B37", textAlign: "center", fontWeight: "800", marginTop: 10 }, tabBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 82, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E9E4", flexDirection: "row", paddingTop: 9 }, tab: { flex: 1, alignItems: "center" }, cricketBallIcon: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#BFC8C4", marginBottom: 5, position: "relative" }, cricketBallIconActive: { backgroundColor: "#C53A45" }, cricketBallIconSeam: { position: "absolute", width: 1.5, height: 17, backgroundColor: "#FFFFFF", left: 9.25, top: 1.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconSeamActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBallIconStitch: { position: "absolute", width: 5, height: 1, backgroundColor: "#FFFFFF", left: 7.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconStitchTop: { top: 6 }, cricketBallIconStitchBottom: { top: 12 }, cricketBallIconStitchActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBatIcon: { width: 20, height: 20, marginBottom: 5, position: "relative", transform: [{ rotate: "-38deg" }] }, cricketBatHandle: { position: "absolute", width: 4, height: 8, borderRadius: 2, backgroundColor: "#8D9A95", top: 0, left: 8 }, cricketBatHandleActive: { backgroundColor: "#174D3D" }, cricketBatBlade: { position: "absolute", width: 9, height: 14, borderRadius: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: "#C7CECA", top: 6, left: 5.5 }, cricketBatBladeActive: { backgroundColor: "#D5A558" }, tabText: { color: "#8A9691", fontSize: 10, fontWeight: "700" }, tabTextActive: { color: "#174D3D", fontWeight: "900" }
   ,playerMetrics: { minWidth: 58, alignItems: "flex-end", marginLeft: 8 },
   leaguePointValue: { color: "#6A3FB5", fontSize: 9, fontWeight: "900", marginTop: 3 },
 });
