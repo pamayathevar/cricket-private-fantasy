@@ -16,7 +16,7 @@
 - [ ] Verify selecting a fixture opens League with the correct match clearly selected and visible.
 - [ ] Verify locked/completed fixtures show **View XI** and published fixtures show **View scores**.
 - [ ] Add or improve phase, date and status grouping if the 74-match list remains difficult to scan.
-- [ ] Review History filters for match, phase and owner.
+- [x] Add History filters for match, phase, scoring status and owner; preserve direct fixture navigation.
 
 ### 3. Loading and reliability
 
@@ -30,9 +30,9 @@
 
 - [x] Highlight the logged-in owner in overall and phase rankings.
 - [ ] Review tied rankings and match-to-match position movement.
-- [ ] Add Owner sorting by player points, royalty, cost and name where still missing.
+- [x] Add Owner sorting by player points, royalty, cost and name where still missing.
 - [ ] Confirm Unique/Marquee phase selection and deadline wording is easy to understand.
-- [ ] Add confirmation before an administrator publishes a new rule version.
+- [x] Add confirmation before an administrator publishes a new rule version.
 
 ### 5. Cross-platform layout review
 

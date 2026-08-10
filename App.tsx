@@ -7,7 +7,7 @@ import { calculatePlayerPoints, calculatePointDetails, defaultScoringRules, Scor
 import { iplFixtures } from "./iplFixtures";
 import { ipl2026Members } from "./leagueMembers";
 import { supabase } from "./supabase";
-import { IplTeamBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
+import { IplTeamBadge, OwnerBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
 import { userActionError } from "./errorMessages";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Admin";
@@ -171,7 +171,11 @@ function MembershipGate({ session }: { session: Session }) {
       .select("id,league_id,display_name,email,role,status,league:leagues(id,slug,name,competition,season_year,status,timezone)")
       .eq("user_id", session.user.id).order("created_at");
     if (error) setMessage(userActionError(error, "League list refresh"));
-    else setMemberships((data ?? []) as unknown as DatabaseMembership[]);
+    else {
+      const availableMemberships = ((data ?? []) as unknown as DatabaseMembership[])
+        .filter(membership => membership.league.status !== "archived");
+      setMemberships(availableMemberships);
+    }
     setBusy(false);
   };
   useEffect(() => { loadMemberships(); }, [session.user.id]);
@@ -205,7 +209,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const activeLeague = activeMembership?.league;
   const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
   const leagueDatabaseId = activeLeague?.id ?? "";
-  const tabs = ownershipEnabled === true ? standardTabs : standardTabs.filter(item => item !== "Squads");
+  const tabs = ownershipEnabled === false ? standardTabs.filter(item => item !== "Squads") : standardTabs;
   const resetLineupState = () => {
     setSelected([]); setCaptain(""); setVice(""); setLineupSubmitted(false);
     setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer("");
@@ -223,7 +227,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     return () => { cancelled = true; };
   }, [leagueDatabaseId]);
   useEffect(() => {
-    if (!ownershipEnabled && tab === "Squads") setTab("Ranking");
+    if (ownershipEnabled === false && tab === "Squads") setTab("Ranking");
   }, [ownershipEnabled, tab]);
   useEffect(() => {
     if (!leagueDatabaseId) return;
@@ -260,7 +264,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle="light-content" />
     <View style={s.appShell}>
@@ -759,6 +763,41 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     else { const result = data as any; setMessage(`Published zero points for ${result.member_count} owners and returned transfers and boosters.`); await loadScoringFixtures(); }
     setBusy(false);
   };
+  const requestPublicationConfirmation = () => {
+    const publication = section === "format"
+      ? {
+          title: "Publish league format?",
+          detail: "This updates the league mode and enabled features. Confirm that ownership, bidding, and special-player settings are correct before continuing.",
+          action: publishFormat,
+        }
+      : section === "special"
+        ? {
+            title: "Publish Unique & Royalty rules?",
+            detail: `A new rule version will apply from Match ${specialEffectiveMatch}. Previously published match results remain unchanged.`,
+            action: publishSpecialRules,
+          }
+        : section === "phases"
+          ? {
+              title: "Publish league phases?",
+              detail: "This updates fixture phase assignments and phase-wise rankings. Review every match range before continuing.",
+              action: publishPhases,
+            }
+          : section === "transfers"
+            ? {
+                title: "Publish transfer periods?",
+                detail: "This applies the configured limits to future submissions and regroups recorded usage by these match ranges.",
+                action: publishTransfers,
+              }
+            : {
+                title: "Publish playing and points rules?",
+                detail: `New versions will apply from Match ${playingEffectiveMatch} for playing rules and Match ${pointsEffectiveMatch} for points rules. Published results remain unchanged.`,
+                action: publish,
+              };
+    Alert.alert(publication.title, publication.detail, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Publish", onPress: () => runAction(publication.action) },
+    ]);
+  };
 
   if (busy && !scoringDocument) return <View style={s.adminLoading}><ActivityIndicator color="#174D3D" /><Text style={s.adminLoadingText}>Loading active rules…</Text></View>;
   return <AdminEditContext.Provider value={canEdit}><ScrollView contentContainerStyle={[s.content, s.pageSurface]} keyboardShouldPersistTaps="handled">
@@ -915,7 +954,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 </View>)}<TouchableOpacity disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
 </View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => settleAbandoned(fixture.id))}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
 <Text style={s.adminMessageText}>{message}</Text>
-</View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(section === "format" ? publishFormat : section === "special" ? publishSpecialRules : section === "phases" ? publishPhases : section === "transfers" ? publishTransfers : publish)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
+</View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={requestPublicationConfirmation}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
 <Text style={s.adminFootnote}>{section === "special" ? "Changes apply only from the selected unlocked match. Historical scoring remains pinned to its original version." : section === "phases" ? "Changing phases updates fixture assignments and phase-wise ranking." : section === "transfers" ? "Transfer periods apply immediately to future submissions; recorded usage is regrouped by the published match ranges." : "Milestone, strike-rate and economy tables remain preserved when these headline values are updated."}</Text>
 </ScrollView></AdminEditContext.Provider>;
 }
@@ -1154,7 +1193,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const transfers = freeTransferMatch ? 0 : chosen.filter(p => (ownershipEnabled ? p.owner !== ownerName : true) && !carriedForwardNames.has(p.name)).length;
   const transferLimit = activeTransferPeriod?.transfer_limit ?? 0;
   const alreadyUsedTransfers = activeTransferPeriod ? transferUsage[activeTransferPeriod.id] ?? 0 : 0;
-  const displayedTransfers = freeTransferMatch ? "Free" : boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + transfers}/${transferLimit}`;
+  const displayedTransfers = freeTransferMatch ? "Free" : boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + transfers} used / ${transferLimit}`;
   const used3X = boosterUses.find(use => use.code === "3X");
   const tripleImpactAvailable = !used3X;
   const currentPhase = leaguePhases.find(phase => activeMatchNumber >= phase.start_match_number && activeMatchNumber <= phase.end_match_number);
@@ -1330,7 +1369,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 </View>
 <View style={{ flex: 1, marginLeft: 10 }}>
 <View style={s.specialNameRow}><Text style={s.playerName}>{p.name}</Text>{(specialLabels[p.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View>
-<View style={s.teamSubMeta}><IplTeamBadge code={p.team} /><Text style={s.meta}>{p.role} · {ownership}</Text></View>
+<View style={s.teamSubMeta}><IplTeamBadge code={p.team} /><Text style={s.meta}>{p.role}</Text><OwnerBadge owner={p.owner === "Available" ? "OpenPlayer" : p.owner} label={ownership} compact /></View>
 </View>
 <View style={s.playerMetrics}><Text style={s.price}>₹{p.price}m</Text><Text style={s.leaguePointValue}>{Math.round(leaguePlayerPoints[p.name] ?? 0)} pts</Text></View>
 </TouchableOpacity>{active && <View style={s.markers}>
@@ -1355,14 +1394,14 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     {boosterCode === "SUP-TR" && <View style={s.boosterHelp}><Text style={s.boosterHelpTitle}>Unlimited transfers enabled for this match</Text><Text style={s.boosterHelpText}>This submitted XI becomes the carried-forward team for following matches.</Text></View>}
     <View style={s.selectionTitleRow}><View style={{ flex: 1 }}><Text style={s.greeting}>{submitted ? "Your submitted XI" : "Select your XI"}</Text><View style={s.titleTeamRow}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away} /><Text style={s.titleLock}>Locks {fixture.day} at {fixture.time}</Text></View></View><View style={s.selectionActions}><TouchableOpacity style={s.resetButton} onPress={resetXI}><Text style={s.resetButtonText}>Reset XI</Text></TouchableOpacity><TouchableOpacity style={s.clearButton} onPress={clearXI}><Text style={s.clearButtonText}>Clear XI</Text></TouchableOpacity></View></View>
     <View style={s.activeRulesBanner}><View style={s.activeRulesHeading}><View style={s.activeRulesIcon}><Text style={s.activeRulesIconText}>✓</Text></View><View style={{ flex: 1 }}><Text style={s.activeRulesTitle}>Playing Rules v{rules.version}</Text><Text style={s.activeRulesText}>Minimum {rules.min_bowlers} bowlers · {rules.lineup_size} players · ₹{rules.lineup_budget}m budget</Text></View></View><View style={s.activeRulesChips}><View style={s.activeRulesChip}><Text style={s.activeRulesChipText}>C · VC · BAI · BOI optional</Text></View><View style={s.activeRulesChip}><Text style={s.activeRulesChipText}>C/VC cannot combine with BAI/BOI</Text></View></View></View>
-    {firstMissingPriorMatch ? <View style={s.priorMatchBanner}><View style={s.priorMatchIcon}><Text style={s.priorMatchIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.priorMatchTitle}>SUBMIT MATCH {firstMissingPriorMatch} FIRST</Text><Text style={s.priorMatchText}>Match {firstMissingPriorMatch} is still open. Submit that XI before preparing Match {activeMatchNumber}.</Text></View></View> : freeTransferMatch ? <View style={s.freeTransferBanner}><View style={s.freeTransferIcon}><Text style={s.freeTransferIconText}>↔</Text></View><View style={{ flex: 1 }}><Text style={s.freeTransferTitle}>FREE TRANSFER MATCH</Text><Text style={s.freeTransferText}>Your first submitted XI in {activeTransferPeriod?.name ?? "this period"}. All changes are free and your {transferLimit}-transfer balance remains unchanged.</Text></View></View> : null}
+    {firstMissingPriorMatch ? <View style={s.priorMatchBanner}><View style={s.priorMatchIcon}><Text style={s.priorMatchIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.priorMatchTitle}>SUBMIT MATCH {firstMissingPriorMatch} FIRST</Text><Text style={s.priorMatchText}>Match {firstMissingPriorMatch} is still open. Submit that XI before preparing Match {activeMatchNumber}.</Text></View></View> : freeTransferMatch ? <View style={s.freeTransferBanner}><View style={s.freeTransferIcon}><Text style={s.freeTransferIconText}>FREE</Text></View><View style={{ flex: 1 }}><Text style={s.freeTransferTitle}>FREE TRANSFER MATCH</Text><Text style={s.freeTransferText}>Your first submitted XI in {activeTransferPeriod?.name ?? "this period"}. All changes are free and your {transferLimit}-transfer balance remains unchanged.</Text></View></View> : null}
     {lineupLoadBusy ? <View style={s.carryForward}><ActivityIndicator color="#174D3D" /><Text style={s.carryForwardText}>Loading saved or carried-forward XI…</Text></View> : null}
     {rulesLoadMessage ? <View style={s.warningCard}><Text style={s.warningText}>⚠ {rulesLoadMessage}</Text></View> : null}
     {submitted && <View style={s.carryForward}><Text style={s.carryForwardText}>✓ This XI will carry forward to the next match automatically.</Text></View>}
     {!submitted && selected.length === rules.lineup_size && <View style={s.carryForward}><Text style={s.carryForwardText}>↳ Your latest submitted XI was carried forward. You can alter it before submitting this match.</Text></View>}
     <Text style={s.selectedTitle}>Selected Players ({chosen.length}/{rules.lineup_size})</Text>
     {chosen.length ? <View style={s.selectedList}>{chosen.map((player, index) => { const marker = captain === player.name ? "C" : vice === player.name ? "VC" : impactPlayer === player.name ? impactType : ""; const triple = boosterCode === "3X" && boosterPlayer === player.name; return <View key={player.name} style={[s.selectedListRow, marker === "C" && s.rowCaptain, marker === "VC" && s.rowVice, marker === "BAI" && s.rowBai, marker === "BOI" && s.rowBoi]}><Text style={s.selectedNumber}>{index + 1}</Text><TouchableOpacity style={{ flex: 1 }} onPress={() => focusPlayerInTeamList(player.name, player.team)}><View style={s.specialNameRow}><Text style={s.selectedChipName}>{player.name}</Text>{(specialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={s.teamSubMeta}><IplTeamBadge code={player.team} /><Text style={s.selectedChipMeta}>{player.role}</Text><Text style={s.selectedCost}>₹{Number(player.price).toFixed(1)}m</Text><Text style={s.selectedEditHint}>Tap to edit C/VC/BAI/BOI</Text></View></TouchableOpacity>{marker ? <MarkerBadge marker={marker} /> : null}{triple ? <MarkerBadge marker="3X" /> : null}<TouchableOpacity style={s.removeSelected} onPress={() => toggle(player.name)}><Text style={s.removeSelectedText}>×</Text></TouchableOpacity></View>; })}</View> : <View style={s.emptySelected}><Text style={s.emptySelectedText}>No players selected. Choose players from the team sections below.</Text></View>}
-    <View style={[s.selectionSummary, s.selectionSummaryModern]}><Summary label="PLAYERS" value={`${selected.length}/${rules.lineup_size}`} bad={selected.length !== rules.lineup_size} /><Summary label="COST" value={`₹${total.toFixed(1)}m`} bad={total > rules.lineup_budget} /><Summary label="TRANSFERS" value={displayedTransfers} bad={false} /></View>
+    <View style={[s.selectionSummary, s.selectionSummaryModern]}><Summary label="PLAYERS" value={`${selected.length}/${rules.lineup_size}`} bad={selected.length !== rules.lineup_size} /><Summary label="COST" value={`₹${total.toFixed(1)}m`} bad={total > rules.lineup_budget} /><Summary label="PERIOD TRANSFERS" value={displayedTransfers} bad={false} /></View>
     {ownershipEnabled ? <View style={s.ownershipSummary}><OwnershipSummary label="MY PLAYERS" value={myPlayers} tone="mine" /><OwnershipSummary label="OPENPLAYERS" value={openPlayers} tone="open" /><OwnershipSummary label="OTHER OWNERS" value={otherOwnerPlayers} tone="other" /><OwnershipSummary label={`${fixture.home} + ${fixture.away}`} value={currentMatchPlayers} tone="match" /></View> : <View style={s.openLeagueMatchSummary}><View style={[s.ownershipDot, s.dotMatch]} /><Text style={s.openLeagueMatchLabel}>{fixture.home} + {fixture.away} players in your XI</Text><Text style={s.openLeagueMatchValue}>{currentMatchPlayers}</Text></View>}
     <View style={s.roles}>{(["WK", "BA", "AL", "BO"] as Role[]).map(r => <Text key={r} style={s.roleChip}>{r} {count(r)}</Text>)}</View>
     {submissionWarnings.length ? <View style={s.combinedWarning}><TouchableOpacity style={s.combinedWarningHeader} onPress={() => setShowWarnings(value => !value)}><View style={s.combinedWarningIcon}><Text style={s.combinedWarningIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.combinedWarningTitle}>{submissionWarnings.length} selection notice{submissionWarnings.length > 1 ? "s" : ""}</Text><Text style={s.combinedWarningSummary}>{submissionWarnings[0]}</Text></View><Text style={s.combinedWarningChevron}>{showWarnings ? "▲" : "▼"}</Text></TouchableOpacity>{showWarnings ? <View style={s.combinedWarningBody}>{submissionWarnings.map(warning => <Text key={warning} style={s.combinedWarningText}>• {warning}</Text>)}</View> : null}</View> : null}
@@ -1392,7 +1431,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowIssues(!showIssues)}>
 <Text style={s.stickyMatch}>MATCH {activeMatchNumber} · {fixture.home} VS {fixture.away}</Text>
 <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
-<Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {transfers} transfers</Text>
+<Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {transfers} this match</Text>
 </TouchableOpacity>
 <TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : runAction(submitXI)}>
 {submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : submitted ? "Submitted ✓" : hasSavedCurrentLineup ? "Resubmit XI" : "Submit XI"}</Text>}
@@ -1403,7 +1442,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <Text style={s.submitModalEyebrow}>LINEUP CONFIRMED</Text>
 <Text style={s.submitModalTitle}>Match {activeMatchNumber} submitted</Text>
 <View style={s.submitModalTeams}><IplTeamBadge code={fixture.home} /><Text style={s.submitModalVs}>VS</Text><IplTeamBadge code={fixture.away} /></View>
-<View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{transfers}</Text><Text style={s.submitModalStatLabel}>TRANSFERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
+<View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{transfers}</Text><Text style={s.submitModalStatLabel}>THIS MATCH</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
 {submissionWarnings.length ? <View style={s.submitModalWarning}><View style={s.submitModalWarningHeading}><View style={s.submitModalWarningIcon}><Text style={s.submitModalWarningIconText}>!</Text></View><Text style={s.submitModalWarningTitle}>Submitted with {submissionWarnings.length} notice{submissionWarnings.length > 1 ? "s" : ""}</Text></View>{submissionWarnings.map(warning => <Text key={warning} style={s.submitModalWarningText}>• {warning}</Text>)}</View> : null}
 <Text style={s.submitModalNote}>Your XI is confirmed. You can make changes and resubmit until the lineup locks.</Text>
 <TouchableOpacity style={s.submitModalButton} onPress={() => setShowSubmitConfirmation(false)}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
@@ -1720,8 +1759,8 @@ const s = StyleSheet.create({
   activeRulesChip: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DDE6E2", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 },
   activeRulesChipText: { color: "#425D54", fontSize: 8, fontWeight: "800" },
   freeTransferBanner: { flexDirection: "row", alignItems: "center", backgroundColor: "#DDF7E2", borderWidth: 1, borderColor: "#62A970", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 10 },
-  freeTransferIcon: { width: 31, height: 31, borderRadius: 16, backgroundColor: "#277348", alignItems: "center", justifyContent: "center", marginRight: 10 },
-  freeTransferIconText: { color: "white", fontSize: 17, fontWeight: "900" },
+  freeTransferIcon: { minWidth: 42, height: 31, paddingHorizontal: 7, borderRadius: 16, backgroundColor: "#277348", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  freeTransferIconText: { color: "white", fontSize: 10, fontWeight: "900", letterSpacing: 0.5 },
   freeTransferTitle: { color: "#1D603A", fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
   freeTransferText: { color: "#407154", fontSize: 9, lineHeight: 13, marginTop: 3 },
   priorMatchBanner: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFF0E8", borderWidth: 1, borderColor: "#D98763", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 10 },

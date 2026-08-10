@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextI
 import type { Player } from "./squadData";
 import { supabase } from "./supabase";
 import { userActionError } from "./errorMessages";
+import { ownerTheme } from "./ownerTheme";
 
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
 const fmt = (value: unknown) => Math.round(Number(value ?? 0)).toLocaleString("en-US");
@@ -22,6 +23,19 @@ export const IPL_TEAM_BADGES: Record<string, { backgroundColor: string; color: s
 export const teamBadge = (code?: string) => IPL_TEAM_BADGES[code ?? ""] ?? { backgroundColor: "#546A61", color: "#FFFFFF", borderColor: "#546A61" };
 export function IplTeamBadge({ code }: { code?: string }) { return <Text style={[x.teamBadge, teamBadge(code)]}>{code ?? "TBD"}</Text>; }
 export function SpecialPlayerBadge({ label }: { label?: string }) { return label ? <Text style={[x.specialPlayerBadge, label === "MARQUEE" && x.marqueePlayerBadge]}>{label}</Text> : null; }
+export function OwnerBadge({ owner, label, compact = false }: { owner?: string | null; label?: string; compact?: boolean }) {
+  const theme = ownerTheme(owner);
+  const text = label ?? (!owner || owner === "Available" ? "OpenPlayer" : owner);
+  return <View style={[x.ownerBadge, compact && x.ownerBadgeCompact, { backgroundColor: theme.soft, borderColor: theme.border }]}><View style={[x.ownerBadgeDot, { backgroundColor: theme.accent }]} /><Text numberOfLines={1} style={[x.ownerBadgeText, { color: theme.strong }]}>{text}</Text></View>;
+}
+export function OwnerAvatar({ owner, current = false }: { owner?: string | null; current?: boolean }) {
+  const theme = ownerTheme(owner);
+  return <View style={[x.avatar, { backgroundColor: theme.soft, borderColor: theme.border }, current && { borderColor: theme.accent }]}><Text style={[x.avatarText, { color: theme.strong }]}>{String(owner ?? "?").charAt(0).toUpperCase()}</Text></View>;
+}
+function OwnerChoice({ owner, active, onPress }: { owner: string; active: boolean; onPress: () => void }) {
+  const theme = ownerTheme(owner);
+  return <TouchableOpacity style={[x.squadOwnerChoice, { backgroundColor: active ? theme.accent : theme.soft, borderColor: active ? theme.accent : theme.border }]} onPress={onPress}><View style={[x.ownerBadgeDot, { backgroundColor: active ? theme.onAccent : theme.accent }]} /><Text style={[x.squadOwnerChoiceText, { color: active ? theme.onAccent : theme.strong }]}>{owner}</Text></TouchableOpacity>;
+}
 const FIXTURE_LABEL_CACHE_MS = 30_000;
 const fixtureSpecialLabelCache = new Map<string, { loadedAt: number; labels: Record<string, string[]> }>();
 function useFixtureSpecialLabels(fixtureIds: string[]) {
@@ -125,11 +139,17 @@ export function ProductionRanking({ leagueId, currentOwner }: { leagueId: string
       supabase.from("league_phases").select("id,code,name,start_match_number,end_match_number,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
       supabase.from("league_standings").select("member_id,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
       supabase.from("league_phase_standings").select("phase_id,member_id,phase_code,phase_name,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
-    ]).then(([p, o, r]) => {
+      supabase.from("league_members").select("id").eq("league_id", leagueId).eq("status", "active").in("role", ["owner", "league_admin"]),
+    ]).then(([p, o, r, m]) => {
       if (cancelled) return;
-      const e = p.error ?? o.error ?? r.error;
+      const e = p.error ?? o.error ?? r.error ?? m.error;
       if (e) setError(e.message);
-      else { setPhases(p.data ?? []); setOverall(o.data ?? []); setPhaseRows(r.data ?? []); }
+      else {
+        const activeMemberIds = new Set((m.data ?? []).map(member => member.id));
+        setPhases(p.data ?? []);
+        setOverall((o.data ?? []).filter(row => activeMemberIds.has(row.member_id)));
+        setPhaseRows((r.data ?? []).filter(row => activeMemberIds.has(row.member_id)));
+      }
     }).catch(loadError => {
       if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Ranking data could not be loaded.");
     }).finally(() => {
@@ -141,7 +161,7 @@ export function ProductionRanking({ leagueId, currentOwner }: { leagueId: string
   if (error) return <LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} />;
   const rows = selected === "overall" ? overall : phaseRows.filter(row => row.phase_code === selected);
   const normalizedOwner = currentOwner.trim().toLocaleLowerCase();
-  return <View><Text style={x.section}>League Ranking</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.chips}><Chip active={selected === "overall"} label="Overall" detail="All published" onPress={() => setSelected("overall")} />{phases.map((phase, index) => <Chip key={phase.id ?? `${phase.code}:${index}`} active={selected === phase.code} label={phase.name} detail={`M${phase.start_match_number}–${phase.end_match_number}`} onPress={() => setSelected(phase.code)} />)}</ScrollView>{rows.length ? <View style={x.card}>{rows.map((row, index) => { const isCurrentOwner = String(row.display_name ?? "").trim().toLocaleLowerCase() === normalizedOwner; const rank = Number(row.rank); const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : ""; return <View key={`${selected}:${row.member_id ?? index}`} style={[x.row, isCurrentOwner && x.currentRankingRow]}><View style={x.rankSlot}>{medal ? <Text accessibilityLabel={`Rank ${rank}`} style={x.rankMedal}>{medal}</Text> : <Text style={[x.rank, isCurrentOwner && x.currentRankingRank]}>#{row.rank}</Text>}</View><View style={[x.avatar, isCurrentOwner && x.currentRankingAvatar]}><Text style={[x.avatarText, isCurrentOwner && x.currentRankingAvatarText]}>{row.display_name[0]}</Text></View><View style={x.grow}><View style={x.rankingOwnerLine}><Text style={x.ownerDisplayName}>{row.display_name}</Text>{isCurrentOwner ? <View style={x.youBadge}><Text style={x.youBadgeText}>YOU</Text></View> : null}</View><Text style={[x.meta, isCurrentOwner && x.currentRankingMeta]}>{row.matches_scored} scored matches</Text></View><Text style={[x.value, isCurrentOwner && x.currentRankingValue]}>{fmt(row.total_points)} pts</Text></View>; })}</View> : <Empty text="No published match scores in this ranking period." />}</View>;
+  return <View><Text style={x.section}>League Ranking</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.chips}><Chip active={selected === "overall"} label="Overall" detail="All published" onPress={() => setSelected("overall")} />{phases.map((phase, index) => <Chip key={phase.id ?? `${phase.code}:${index}`} active={selected === phase.code} label={phase.name} detail={`M${phase.start_match_number}–${phase.end_match_number}`} onPress={() => setSelected(phase.code)} />)}</ScrollView>{rows.length ? <View style={x.card}>{rows.map((row, index) => { const isCurrentOwner = String(row.display_name ?? "").trim().toLocaleLowerCase() === normalizedOwner; const rank = Number(row.rank); const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : ""; const theme = ownerTheme(row.display_name); return <View key={`${selected}:${row.member_id ?? index}`} style={[x.row, { backgroundColor: theme.soft, borderLeftWidth: isCurrentOwner ? 8 : 5, borderLeftColor: theme.accent, borderBottomColor: theme.border }]}><View style={x.rankSlot}>{medal ? <Text accessibilityLabel={`Rank ${rank}`} style={x.rankMedal}>{medal}</Text> : <Text style={[x.rank, { color: theme.strong }, isCurrentOwner && x.currentRankingRank]}>#{row.rank}</Text>}</View><OwnerAvatar owner={row.display_name} current={isCurrentOwner} /><View style={x.grow}><View style={x.rankingOwnerLine}><Text style={[x.ownerDisplayName, { color: theme.strong }]}>{row.display_name}</Text>{isCurrentOwner ? <View style={[x.youBadge, { backgroundColor: theme.accent }]}><Text style={x.youBadgeText}>YOU</Text></View> : null}</View><Text style={[x.meta, isCurrentOwner && x.currentRankingMeta]}>{row.matches_scored} scored matches</Text></View><Text style={[x.value, { color: theme.strong }]}>{fmt(row.total_points)} pts</Text></View>; })}</View> : <Empty text="No published match scores in this ranking period." />}</View>;
 }
 
 function Chip({ active, label, detail, onPress }: { active: boolean; label: string; detail: string; onPress: () => void }) { return <TouchableOpacity style={[x.chip, active && x.chipActive]} onPress={onPress}><Text style={[x.chipLabel, active && x.chipLabelActive]}>{label}</Text><Text style={[x.chipDetail, active && x.chipLabelActive]}>{detail}</Text></TouchableOpacity>; }
@@ -224,7 +244,7 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
             const player = roster.find(p => p.name === point.player?.full_name);
             const playerRoyalties = matchRoyalties.filter(row => row.player_id === point.player_id);
             const playerRoyaltyTotal = playerRoyalties.reduce((sum, royalty) => sum + Number(royalty.adjustment_points), 0);
-            return <View key={point.player_id ?? point.player?.full_name} style={x.pointRow}><View style={x.pointPlayer}><View style={x.playerLabelRow}><Text style={x.name}>{point.player?.full_name}</Text>{(specialLabels[match.id]?.[point.player?.full_name] ?? []).map(label => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={x.inlineMeta}><IplTeamBadge code={player?.team} /><Text style={x.meta}>{player?.owner === "Available" ? "OpenPlayer" : `Owned by ${player?.owner ?? "—"}`}</Text></View></View><Text style={x.pointCell}>{fmt(point.batting_points)}</Text><Text style={x.pointCell}>{fmt(point.bowling_points)}</Text><Text style={x.pointCell}>{fmt(point.fielding_points)}</Text><Text style={x.pointCell}>{fmt(point.bonus_points)}</Text>{royaltyMode ? <Text style={[x.pointCell, playerRoyaltyTotal > 0 && x.royaltyColumn]}>{fmt(playerRoyaltyTotal)}</Text> : null}<Text style={x.pointTotal}>{fmt(Number(point.total_points) + (royaltyMode ? playerRoyaltyTotal : 0))}</Text></View>;
+            return <View key={point.player_id ?? point.player?.full_name} style={x.pointRow}><View style={x.pointPlayer}><View style={x.playerLabelRow}><Text style={x.name}>{point.player?.full_name}</Text>{(specialLabels[match.id]?.[point.player?.full_name] ?? []).map(label => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={x.inlineMeta}><IplTeamBadge code={player?.team} /><OwnerBadge owner={player?.owner} label={player?.owner === "Available" ? "OpenPlayer" : player?.owner ?? "—"} compact /></View></View><Text style={x.pointCell}>{fmt(point.batting_points)}</Text><Text style={x.pointCell}>{fmt(point.bowling_points)}</Text><Text style={x.pointCell}>{fmt(point.fielding_points)}</Text><Text style={x.pointCell}>{fmt(point.bonus_points)}</Text>{royaltyMode ? <Text style={[x.pointCell, playerRoyaltyTotal > 0 && x.royaltyColumn]}>{fmt(playerRoyaltyTotal)}</Text> : null}<Text style={x.pointTotal}>{fmt(Number(point.total_points) + (royaltyMode ? playerRoyaltyTotal : 0))}</Text></View>;
           })}
         </View> : <Empty text={match.scoring_status === "review" ? "Points are under admin review." : "Points have not been published."} /> : null}
       </View>;
@@ -234,6 +254,9 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
 
 type SpecialSelectionConfig = { type: "unique" | "marquee"; required: number };
 type SpecialSelectionPhase = { id: string; name: string; sort_order: number; is_final_phase: boolean; opensAt: string | null; closesAt: string | null };
+type OwnerPlayerSort = "points" | "royalty" | "cost" | "name";
+type OwnerRoleFilter = "ALL" | Player["role"];
+type OwnerSpecialFilter = "ALL" | "MARQUEE";
 export function ProductionSquads({ leagueId, currentOwner, roster, specialSelection }: { leagueId: string; currentOwner: string; roster: Player[]; specialSelection?: SpecialSelectionConfig | null }) {
   const specialActionLock = useRef(false);
   const [points, setPoints] = useState<any[]>([]);
@@ -246,10 +269,19 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
   const [reloadKey, setReloadKey] = useState(0);
   const leagueSpecialLabels = useLeagueSpecialLabels(leagueId);
   const [specialPhase, setSpecialPhase] = useState<SpecialSelectionPhase | null>(null);
+  const [specialCurrentPhase, setSpecialCurrentPhase] = useState<SpecialSelectionPhase | null>(null);
+  const [specialCurrentSelected, setSpecialCurrentSelected] = useState<string[]>([]);
   const [specialSelected, setSpecialSelected] = useState<string[]>([]);
   const [specialPlayerIds, setSpecialPlayerIds] = useState<Record<string, string>>({});
   const [specialBusy, setSpecialBusy] = useState(false);
   const [specialMessage, setSpecialMessage] = useState("");
+  const [playerSort, setPlayerSort] = useState<OwnerPlayerSort>("points");
+  const [roleFilter, setRoleFilter] = useState<OwnerRoleFilter>("ALL");
+  const [specialFilter, setSpecialFilter] = useState<OwnerSpecialFilter>("ALL");
+  useEffect(() => {
+    setRoleFilter("ALL");
+    setSpecialFilter("ALL");
+  }, [leagueId]);
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(""); setPoints([]); setRoyalties([]); setMemberNames({});
@@ -275,7 +307,7 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
   }, [leagueId, reloadKey]);
   useEffect(() => {
     let mounted = true;
-    setSpecialPhase(null); setSpecialSelected([]); setSpecialPlayerIds({}); setSpecialMessage("");
+    setSpecialPhase(null); setSpecialCurrentPhase(null); setSpecialCurrentSelected([]); setSpecialSelected([]); setSpecialPlayerIds({}); setSpecialMessage("");
     if (!specialSelection) return () => { mounted = false; };
     const load = async () => {
       setSpecialBusy(true);
@@ -304,7 +336,13 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
       const explicit = (selectionResult.data ?? []) as Array<{ phase_id: string; player_id: string }>;
       const targetOrder = target?.sort_order ?? -1;
       const sourcePhase = [...phases].filter(phase => phase.sort_order <= targetOrder && explicit.some(row => row.phase_id === phase.id)).sort((a, b) => b.sort_order - a.sort_order)[0];
+      const priorToTarget = target ? [...phases].filter(phase => phase.sort_order < target.sort_order).sort((a, b) => b.sort_order - a.sort_order)[0] ?? null : null;
+      const latestStartedPhase = [...phases].filter(phase => !!phase.closesAt && new Date(phase.closesAt).getTime() <= now).sort((a, b) => b.sort_order - a.sort_order)[0] ?? null;
+      const currentPhase = priorToTarget ?? (target?.sort_order === phases[0]?.sort_order ? null : latestStartedPhase);
+      const currentSourcePhase = currentPhase ? [...phases].filter(phase => phase.sort_order <= currentPhase.sort_order && explicit.some(row => row.phase_id === phase.id)).sort((a, b) => b.sort_order - a.sort_order)[0] : null;
       setSpecialPhase(target);
+      setSpecialCurrentPhase(currentPhase);
+      setSpecialCurrentSelected(currentSourcePhase ? explicit.filter(row => row.phase_id === currentSourcePhase.id).map(row => row.player_id) : []);
       setSpecialSelected(sourcePhase ? explicit.filter(row => row.phase_id === sourcePhase.id).map(row => row.player_id) : []);
       setSpecialPlayerIds(Object.fromEntries(((playerResult.data ?? []) as any[]).map(row => [row.player?.full_name, row.player_id])));
       setSpecialBusy(false);
@@ -336,33 +374,56 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
   if (error) return <LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} />;
   const owners = Array.from(new Set(roster.filter(p => p.owner !== "Available").map(p => p.owner))).sort((a, b) => a === currentOwner ? -1 : b === currentOwner ? 1 : a.localeCompare(b));
   const royaltyMode = specialSelection?.type === "marquee";
+  const selectedSpecialNames = specialSelected.map(playerId => Object.entries(specialPlayerIds).find(([, id]) => id === playerId)?.[0]).filter((name): name is string => !!name);
+  const currentSpecialNames = specialCurrentSelected.map(playerId => Object.entries(specialPlayerIds).find(([, id]) => id === playerId)?.[0]).filter((name): name is string => !!name);
+  const specialLabel = specialSelection?.type === "unique" ? "Unique" : "Marquee";
   return <View>
 <Text style={x.section}>Owner Squads</Text>
-<Text style={x.subtitle}>Auction squads with player points and royalty earned</Text>{owners.map(owner => { const open = expanded === owner; const isCurrentOwner = owner === currentOwner; const ownerPlayers = roster.filter(p => p.owner === owner).sort((a, b) => (totals.get(b.name)?.total ?? 0) - (totals.get(a.name)?.total ?? 0)); const baseTotal = ownerPlayers.reduce((sum, p) => sum + (totals.get(p.name)?.total ?? 0), 0); const royaltyTotal = ownerPlayers.reduce((sum, p) => sum + (royaltyTotals.get(`${owner}:${p.name}`)?.total ?? 0), 0); const total = baseTotal + royaltyTotal; return <View key={owner} style={x.cardBlock}>
-<TouchableOpacity style={x.row} onPress={() => setExpanded(open ? "" : owner)}>
-<View style={x.avatar}>
-<Text style={x.avatarText}>{owner[0]}</Text>
+<Text style={x.subtitle}>Auction squads with player points and royalty earned</Text>
+{royaltyMode ? <View style={x.marqueeHeroCard}>
+{specialCurrentPhase ? <View style={x.marqueeCurrentBlock}>
+<View style={x.marqueeCurrentHeading}><View style={x.marqueeCurrentLiveDot} /><Text style={x.marqueeCurrentEyebrow}>CURRENT PHASE · {specialCurrentPhase.name.toUpperCase()}</Text><View style={x.marqueeCurrentBadge}><Text style={x.marqueeCurrentBadgeText}>ACTIVE</Text></View></View>
+<Text style={x.marqueeCurrentTitle}>Your current Marquee Players</Text>
+<View style={x.marqueeCurrentSlots}>{Array.from({ length: specialSelection?.required ?? 2 }).map((_, index) => <View key={index} style={x.marqueeCurrentSlot}><Text style={x.marqueeCurrentSlotNumber}>{index + 1}</Text><Text numberOfLines={1} style={x.marqueeCurrentSlotName}>{currentSpecialNames[index] ?? "Not selected"}</Text></View>)}</View>
+<Text style={x.marqueeCurrentHelp}>These players remain active for {specialCurrentPhase.name} and cannot be changed now.</Text>
+</View> : null}
+{specialCurrentPhase ? <View style={x.marqueeHeroDivider} /> : null}
+<View style={x.marqueeHeroTop}>
+<View style={x.marqueeHeroIcon}><Text style={x.marqueeHeroIconText}>M</Text></View>
+<View style={x.grow}><Text style={x.marqueeHeroEyebrow}>{specialPhase ? `${specialCurrentPhase ? "NEXT PHASE" : "INITIAL SELECTION"} · ${specialPhase.name.toUpperCase()}` : "NEXT PHASE SELECTION"}</Text><Text style={x.marqueeHeroTitle}>{specialPhase ? `${specialCurrentPhase ? "Change" : "Choose"} your ${specialSelection?.required ?? 2} Marquee Players` : "Next-phase changes are locked"}</Text></View>
+{specialPhase ? <View style={x.marqueeHeroCount}><Text style={x.marqueeHeroCountValue}>{specialSelected.length}/{specialSelection?.required ?? 2}</Text><Text style={x.marqueeHeroCountLabel}>SELECTED</Text></View> : null}
 </View>
+{specialPhase ? <><View style={x.marqueeHeroSlots}>{Array.from({ length: specialSelection?.required ?? 2 }).map((_, index) => <View key={index} style={[x.marqueeHeroSlot, selectedSpecialNames[index] && x.marqueeHeroSlotFilled]}><Text style={x.marqueeHeroSlotNumber}>{index + 1}</Text><Text numberOfLines={1} style={[x.marqueeHeroSlotName, selectedSpecialNames[index] && x.marqueeHeroSlotNameFilled]}>{selectedSpecialNames[index] ?? "Choose a player"}</Text></View>)}</View><Text style={x.marqueeHeroHelp}>Open your squad below and tap “Select as Marquee” to prepare {specialPhase.name}.</Text><Text style={x.marqueeHeroDeadline}>Change deadline: {new Date(specialPhase.closesAt!).toLocaleString()}</Text><TouchableOpacity disabled={specialBusy || specialSelected.length !== (specialSelection?.required ?? 2)} style={[x.marqueeHeroSave, (specialBusy || specialSelected.length !== (specialSelection?.required ?? 2)) && x.marqueeHeroSaveDisabled]} onPress={saveSpecial}><Text style={x.marqueeHeroSaveText}>{specialBusy ? "Saving…" : specialSelected.length === (specialSelection?.required ?? 2) ? `Confirm for ${specialPhase.name}` : `Select ${(specialSelection?.required ?? 2) - specialSelected.length} more player${(specialSelection?.required ?? 2) - specialSelected.length === 1 ? "" : "s"}`}</Text></TouchableOpacity></> : <Text style={x.marqueeHeroLocked}>The next-phase selection window is not open. Your current Marquee Players remain active; playoff selections carry forward automatically.</Text>}
+{specialMessage ? <Text style={x.specialSelectionInlineMessage}>{specialMessage}</Text> : null}
+</View> : null}
+<View style={x.ownerSortCard}>
+<Text style={x.ownerSortLabel}>FILTER BY ROLE</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.ownerSortOptions}>{([{ code: "ALL", label: "All roles" }, { code: "BA", label: "Batters" }, { code: "WK", label: "Wicketkeepers" }, { code: "AL", label: "All-rounders" }, { code: "BO", label: "Bowlers" }] as Array<{ code: OwnerRoleFilter; label: string }>).map(option => <TouchableOpacity key={option.code} style={[x.ownerSortButton, roleFilter === option.code && x.ownerSortButtonActive]} onPress={() => setRoleFilter(option.code)}><Text style={[x.ownerSortButtonText, roleFilter === option.code && x.ownerSortButtonTextActive]}>{option.label}</Text></TouchableOpacity>)}</ScrollView>
+{royaltyMode ? <><Text style={[x.ownerSortLabel, { marginTop: 11 }]}>PLAYER TYPE</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.ownerSortOptions}>{([{ code: "ALL", label: "All players" }, { code: "MARQUEE", label: "Marquee" }] as Array<{ code: OwnerSpecialFilter; label: string }>).map(option => <TouchableOpacity key={option.code} style={[x.ownerSortButton, specialFilter === option.code && x.ownerSortButtonActive]} onPress={() => setSpecialFilter(option.code)}><Text style={[x.ownerSortButtonText, specialFilter === option.code && x.ownerSortButtonTextActive]}>{option.label}</Text></TouchableOpacity>)}</ScrollView></> : null}
+<Text style={[x.ownerSortLabel, { marginTop: 11 }]}>SORT PLAYERS</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.ownerSortOptions}>{([{ code: "points", label: "Points" }, { code: "royalty", label: "Royalty" }, { code: "cost", label: "Selection cost" }, { code: "name", label: "Name" }] as Array<{ code: OwnerPlayerSort; label: string }>).map(option => <TouchableOpacity key={option.code} style={[x.ownerSortButton, playerSort === option.code && x.ownerSortButtonActive]} onPress={() => setPlayerSort(option.code)}><Text style={[x.ownerSortButtonText, playerSort === option.code && x.ownerSortButtonTextActive]}>{option.label}</Text></TouchableOpacity>)}</ScrollView>
+</View>
+{owners.map(owner => { const open = expanded === owner; const isCurrentOwner = owner === currentOwner; const theme = ownerTheme(owner); const allOwnerPlayers = roster.filter(p => p.owner === owner); const ownerPlayers = allOwnerPlayers.filter(player => (roleFilter === "ALL" || player.role === roleFilter) && (specialFilter === "ALL" || (leagueSpecialLabels[player.name] ?? []).includes("MARQUEE"))).sort((a, b) => { if (playerSort === "name") return a.name.localeCompare(b.name); if (playerSort === "cost") return Number(b.price ?? 0) - Number(a.price ?? 0) || a.name.localeCompare(b.name); if (playerSort === "royalty") return (royaltyTotals.get(`${owner}:${b.name}`)?.total ?? 0) - (royaltyTotals.get(`${owner}:${a.name}`)?.total ?? 0) || a.name.localeCompare(b.name); return (totals.get(b.name)?.total ?? 0) - (totals.get(a.name)?.total ?? 0) || a.name.localeCompare(b.name); }); const baseTotal = allOwnerPlayers.reduce((sum, p) => sum + (totals.get(p.name)?.total ?? 0), 0); const royaltyTotal = allOwnerPlayers.reduce((sum, p) => sum + (royaltyTotals.get(`${owner}:${p.name}`)?.total ?? 0), 0); const total = baseTotal + royaltyTotal; return <View key={owner} style={[x.cardBlock, { borderLeftWidth: 5, borderLeftColor: theme.accent }]}>
+<TouchableOpacity style={[x.row, open && { backgroundColor: theme.soft }]} onPress={() => setExpanded(open ? "" : owner)}>
+<OwnerAvatar owner={owner} current={isCurrentOwner} />
 <View style={x.grow}>
-<Text style={x.ownerDisplayName}>{owner}{isCurrentOwner ? " · You" : ""}</Text>
-<Text style={x.meta}>{ownerPlayers.length} auction players{royaltyTotal > 0 ? ` · Royalty +${fmt(royaltyTotal)}` : ""}</Text>
+<Text style={[x.ownerDisplayName, { color: theme.strong }]}>{owner}{isCurrentOwner ? " · You" : ""}</Text>
+<Text style={x.meta}>{allOwnerPlayers.length} auction players{royaltyTotal > 0 ? ` · Royalty +${fmt(royaltyTotal)}` : ""}</Text>
 </View>
 <Text style={x.value}>{fmt(total)} pts</Text>
 <Text style={x.chevron}>{open ? "▲" : "▼"}</Text>
-</TouchableOpacity>{open && isCurrentOwner && specialSelection ? <View style={x.specialSelectionBanner}>
-<Text style={x.specialSelectionTitle}>{specialPhase ? `${specialPhase.name} ${specialSelection.type === "unique" ? "Unique" : "Marquee"} Players` : "Special-player selection"}</Text>
-<Text style={x.specialSelectionText}>{specialBusy ? "Loading selection…" : specialPhase ? `Select ${specialSelection.required} below · ${specialSelected.length}/${specialSelection.required} selected · closes ${new Date(specialPhase.closesAt!).toLocaleString()}` : "No selection window is currently open. The next phase opens only after the current phase starts; playoffs carry forward."}</Text>
-</View> : null}{open ? <View style={x.pointHead}><Text style={x.pointPlayer}>PLAYER</Text><Text style={x.pointCell}>BAT</Text><Text style={x.pointCell}>BOWL</Text><Text style={x.pointCell}>FLD</Text><Text style={x.pointCell}>BON</Text>{royaltyMode ? <Text style={x.pointCell}>ROY</Text> : null}<Text style={x.pointTotal}>TOTAL</Text></View> : null}{open && ownerPlayers.map(player => { const p = totals.get(player.name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; const royalty = royaltyTotals.get(`${owner}:${player.name}`) ?? { total: 0, rows: [] }; const playerKey = `${owner}:${player.team}:${player.name}`; const playerOpen = expandedPlayer === playerKey; const specialPlayerId = specialPlayerIds[player.name]; const specialChecked = !!specialPlayerId && specialSelected.includes(specialPlayerId); return <View key={player.name}>
+</TouchableOpacity>{open && isCurrentOwner && specialSelection && !royaltyMode ? <View style={x.specialSelectionBanner}>
+<View style={x.specialSelectionHeader}><View style={x.grow}><Text style={x.specialSelectionEyebrow}>{specialPhase ? `${specialPhase.name.toUpperCase()} · ${specialLabel.toUpperCase()} SELECTION` : `${specialLabel.toUpperCase()} SELECTION`}</Text><Text style={x.specialSelectionTitle}>{specialPhase ? `Choose your ${specialSelection.required} ${specialLabel} Players` : "Selections are currently locked"}</Text></View>{specialPhase ? <View style={x.specialSelectionCount}><Text style={x.specialSelectionCountValue}>{specialSelected.length}/{specialSelection.required}</Text><Text style={x.specialSelectionCountLabel}>SELECTED</Text></View> : null}</View>
+{specialPhase ? <><View style={x.specialSelectionSlots}>{Array.from({ length: specialSelection.required }).map((_, index) => <View key={index} style={[x.specialSelectionSlot, selectedSpecialNames[index] && x.specialSelectionSlotFilled]}><Text numberOfLines={1} style={[x.specialSelectionSlotText, selectedSpecialNames[index] && x.specialSelectionSlotTextFilled]}>{selectedSpecialNames[index] ?? `Slot ${index + 1} · Not selected`}</Text></View>)}</View><Text style={x.specialSelectionDeadline}>Selection closes {new Date(specialPhase.closesAt!).toLocaleString()}</Text><Text style={x.specialSelectionHelp}>Use the {specialLabel} button beside a player below. You must fill all {specialSelection.required} slots before saving.</Text><TouchableOpacity disabled={specialBusy || specialSelected.length !== specialSelection.required} style={[x.specialSelectionSave, (specialBusy || specialSelected.length !== specialSelection.required) && x.specialSelectionSaveDisabled]} onPress={saveSpecial}><Text style={x.specialSelectionSaveText}>{specialBusy ? "Saving…" : `Save ${specialLabel} Players · ${specialSelected.length}/${specialSelection.required}`}</Text></TouchableOpacity></> : <Text style={x.specialSelectionText}>{specialBusy ? "Loading selection…" : "The next phase opens after the current phase starts. Playoff selections carry forward automatically."}</Text>}{specialMessage ? <Text style={x.specialSelectionInlineMessage}>{specialMessage}</Text> : null}
+</View> : null}{open ? <View style={x.pointHead}><Text style={x.pointPlayer}>PLAYER</Text><Text style={x.pointCell}>BAT</Text><Text style={x.pointCell}>BOWL</Text><Text style={x.pointCell}>FLD</Text><Text style={x.pointCell}>BON</Text>{royaltyMode ? <Text style={x.pointCell}>ROY</Text> : null}<Text style={x.pointTotal}>TOTAL</Text></View> : null}{open && !ownerPlayers.length ? <Empty text="No players match the selected filters." /> : null}{open && ownerPlayers.map(player => { const p = totals.get(player.name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; const royalty = royaltyTotals.get(`${owner}:${player.name}`) ?? { total: 0, rows: [] }; const playerKey = `${owner}:${player.team}:${player.name}`; const playerOpen = expandedPlayer === playerKey; const specialPlayerId = specialPlayerIds[player.name]; const specialChecked = !!specialPlayerId && specialSelected.includes(specialPlayerId); const specialDisabled = specialBusy || (!specialChecked && specialSelected.length >= (specialSelection?.required ?? 0)); return <View key={player.name}>
 <TouchableOpacity style={x.pointRow} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}>
 <View style={x.pointPlayer}>
 <View style={x.ownerPlayerNameRow}>
-<Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={x.playerListName}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.ownerPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text>{isCurrentOwner && specialSelection && specialPhase && specialPlayerId ? <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: specialChecked }} style={[x.specialCheckbox, specialChecked && x.specialCheckboxChecked]} onPress={() => toggleSpecial(specialPlayerId)}>
-<Text style={x.specialCheckboxText}>{specialChecked ? "✓" : ""}</Text>
-</TouchableOpacity> : null}</View>
+<Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={x.playerListName}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.ownerPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></View>
 <View style={x.ownerPlayerTeamRole}>
 <IplTeamBadge code={player.team} />
 <Text style={x.ownerPlayerRole}>{roleLabel[player.role]}</Text></View>
-<Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={x.ownerPlayerCosts}>Selection ₹{player.price}m  ·  Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice}m`}</Text>
+<Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={x.ownerPlayerCosts}>Selection ₹{player.price}m  ·  Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice}m`}</Text>{isCurrentOwner && specialSelection && specialPhase && specialPlayerId ? <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: specialChecked, disabled: specialDisabled }} disabled={specialDisabled} style={[x.specialSelectButton, specialChecked && x.specialSelectButtonChecked, specialDisabled && x.specialSelectButtonDisabled]} onPress={event => { event.stopPropagation(); toggleSpecial(specialPlayerId); }}>
+<Text style={[x.specialSelectButtonText, specialChecked && x.specialSelectButtonTextChecked]}>{specialChecked ? `✓ ${specialLabel} selected` : `+ Select as ${specialLabel}`}</Text>
+</TouchableOpacity> : null}
 </View>
 <Text style={x.pointCell}>{fmt(p.batting)}</Text>
 <Text style={x.pointCell}>{fmt(p.bowling)}</Text>
@@ -378,10 +439,7 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
 <BreakdownLine label="Bonus" value={p.bonus} />
 {royaltyMode ? <BreakdownLine label="Royalty earned" value={royalty.total} /> : null}
 <BreakdownLine label="Total points" value={p.total + (royaltyMode ? royalty.total : 0)} strong />
-</View> : null}</View>; })}{open && isCurrentOwner && specialSelection && specialPhase ? <View style={x.specialSelectionActions}>
-<TouchableOpacity disabled={specialBusy || specialSelected.length !== specialSelection.required} style={[x.primary, (specialBusy || specialSelected.length !== specialSelection.required) && { opacity: 0.45 }]} onPress={saveSpecial}>
-<Text style={x.primaryText}>Save {specialSelected.length}/{specialSelection.required} for {specialPhase.name}</Text>
-</TouchableOpacity>{specialMessage ? <Text style={x.specialSelectionMessage}>{specialMessage}</Text> : null}</View> : specialMessage && open && isCurrentOwner ? <Text style={x.specialSelectionMessage}>{specialMessage}</Text> : null}</View>; })}</View>;
+</View> : null}</View>; })}</View>; })}</View>;
 }
 
 type LeagueSquadPlayer = Player & { leaguePlayerId: string; playerId: string; active: boolean; bidPrice: number | null; ownerId: string };
@@ -413,6 +471,10 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const [editBusy, setEditBusy] = useState(false);
   const [loadVersion, setLoadVersion] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [squadRoleFilter, setSquadRoleFilter] = useState<"ALL" | Player["role"]>("ALL");
+  const [squadAvailabilityFilter, setSquadAvailabilityFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [squadOwnerFilter, setSquadOwnerFilter] = useState("ALL");
+  const [squadSortMode, setSquadSortMode] = useState<"NAME" | "POINTS" | "COST_DESC" | "COST_ASC">("NAME");
   const leagueSpecialLabels = useLeagueSpecialLabels(leagueId);
   const teams = useMemo(() => Array.from(new Set(squadPlayers.map(player => player.team))).sort((a, b) => a.localeCompare(b)), [squadPlayers]);
   useEffect(() => {
@@ -426,6 +488,10 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setPointsError("");
     setAvailabilityMessage("");
     setExpandedPlayer("");
+    setSquadRoleFilter("ALL");
+    setSquadAvailabilityFilter("ALL");
+    setSquadOwnerFilter("ALL");
+    setSquadSortMode("NAME");
     setLoading(true);
     Promise.all([
       supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name,team:cricket_teams(code)),fixture:fixtures!inner(league_id)").eq("fixture.league_id", leagueId).not("published_at", "is", null),
@@ -481,8 +547,25 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     for (const row of royaltyRows) totals.set(row.player_id, (totals.get(row.player_id) ?? 0) + Number(row.adjustment_points ?? 0));
     return totals;
   }, [royaltyRows, royaltyMode]);
+  const filteredSquadPlayers = useMemo(() => squadPlayers.filter(player => {
+    if (squadRoleFilter !== "ALL" && player.role !== squadRoleFilter) return false;
+    if (squadAvailabilityFilter === "ACTIVE" && !player.active) return false;
+    if (squadAvailabilityFilter === "INACTIVE" && player.active) return false;
+    if (ownershipEnabled && squadOwnerFilter === "OPEN" && player.ownerId) return false;
+    if (ownershipEnabled && squadOwnerFilter !== "ALL" && squadOwnerFilter !== "OPEN" && player.ownerId !== squadOwnerFilter) return false;
+    return true;
+  }).sort((a, b) => {
+    const aPoints = (playerTotals.get(`${a.team}:${a.name}`)?.total ?? 0) + (playerRoyaltyTotals.get(a.playerId) ?? 0);
+    const bPoints = (playerTotals.get(`${b.team}:${b.name}`)?.total ?? 0) + (playerRoyaltyTotals.get(b.playerId) ?? 0);
+    if (squadSortMode === "POINTS") return bPoints - aPoints || a.name.localeCompare(b.name);
+    if (squadSortMode === "COST_DESC") return b.price - a.price || a.name.localeCompare(b.name);
+    if (squadSortMode === "COST_ASC") return a.price - b.price || a.name.localeCompare(b.name);
+    return a.name.localeCompare(b.name);
+  }), [squadPlayers, squadRoleFilter, squadAvailabilityFilter, squadOwnerFilter, squadSortMode, ownershipEnabled, playerTotals, playerRoyaltyTotals]);
+  const displayedTeams = useMemo(() => teams.filter(team => filteredSquadPlayers.some(player => player.team === team)), [teams, filteredSquadPlayers]);
+  const squadFiltersApplied = squadRoleFilter !== "ALL" || squadAvailabilityFilter !== "ALL" || (ownershipEnabled && squadOwnerFilter !== "ALL") || squadSortMode !== "NAME";
   const toggleTeam = (team: string) => setExpandedTeams(current => current.includes(team) ? current.filter(code => code !== team) : [...current, team]);
-  const allExpanded = teams.length > 0 && expandedTeams.length === teams.length;
+  const allExpanded = displayedTeams.length > 0 && displayedTeams.every(team => expandedTeams.includes(team));
   const openEditPlayer = (player: LeagueSquadPlayer) => {
     if (editingPlayerId === player.leaguePlayerId) { setEditingPlayerId(""); return; }
     setEditingPlayerId(player.leaguePlayerId);
@@ -536,21 +619,75 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   };
   if (loading) return <Loading />;
   if (pointsError) return <LoadError message={pointsError} onRetry={() => setLoadVersion(version => version + 1)} />;
+  const activePlayerCount = squadPlayers.filter(player => player.active).length;
+  const inactivePlayerCount = squadPlayers.length - activePlayerCount;
   return <View>
-    <View style={x.squadTitleRow}><View style={x.grow}><Text style={x.section}>IPL Squad</Text><Text style={x.subtitle}>{squadPlayers.filter(player => player.active).length} active · {squadPlayers.filter(player => !player.active).length} inactive</Text></View>{teams.length ? <TouchableOpacity style={x.squadToggle} onPress={() => setExpandedTeams(allExpanded ? [] : teams)}><Text style={x.squadToggleText}>{allExpanded ? "Collapse all" : "Expand all"}</Text></TouchableOpacity> : null}</View>
+    <View style={x.squadHero}>
+      <View style={x.squadTitleRow}>
+        <View style={x.grow}>
+          <Text style={x.squadEyebrow}>PLAYER DIRECTORY</Text>
+          <Text style={x.squadTitle}>IPL Squad</Text>
+          <Text style={x.squadSubtitle}>Browse availability, roles and league points by IPL team.</Text>
+        </View>
+        {displayedTeams.length ? <TouchableOpacity style={x.squadToggle} onPress={() => setExpandedTeams(current => allExpanded ? current.filter(team => !displayedTeams.includes(team)) : Array.from(new Set([...current, ...displayedTeams])))}><Text style={x.squadToggleText}>{allExpanded ? "Collapse shown" : "Expand shown"}</Text></TouchableOpacity> : null}
+      </View>
+      <View style={x.squadOverview}>
+        <View style={x.squadOverviewItem}><Text style={x.squadOverviewValue}>{squadPlayers.length}</Text><Text style={x.squadOverviewLabel}>TOTAL</Text></View>
+        <View style={x.squadOverviewDivider} />
+        <View style={x.squadOverviewItem}><Text style={x.squadOverviewValue}>{activePlayerCount}</Text><Text style={x.squadOverviewLabel}>ACTIVE</Text></View>
+        <View style={x.squadOverviewDivider} />
+        <View style={x.squadOverviewItem}><Text style={x.squadOverviewValue}>{inactivePlayerCount}</Text><Text style={x.squadOverviewLabel}>INACTIVE</Text></View>
+        <View style={x.squadOverviewDivider} />
+        <View style={x.squadOverviewItem}><Text style={x.squadOverviewValue}>{teams.length}</Text><Text style={x.squadOverviewLabel}>TEAMS</Text></View>
+      </View>
+    </View>
+    {squadPlayers.length ? <View style={x.ownerSortCard}>
+      <View style={x.historyFilterHeader}>
+        <View style={x.grow}><Text style={x.historyFilterTitle}>Filter & sort players</Text><Text style={x.historyFilterSubtitle}>{filteredSquadPlayers.length} of {squadPlayers.length} players shown · grouped by IPL team</Text></View>
+        {squadFiltersApplied ? <TouchableOpacity style={x.historyClear} onPress={() => { setSquadRoleFilter("ALL"); setSquadAvailabilityFilter("ALL"); setSquadOwnerFilter("ALL"); setSquadSortMode("NAME"); }}><Text style={x.historyClearText}>Reset</Text></TouchableOpacity> : null}
+      </View>
+      <View style={x.squadFilterGroup}>
+      <Text style={x.ownerSortLabel}>ROLE</Text>
+      <ScrollView style={x.squadFilterScroller} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.ownerSortOptions}>
+        {([['ALL', 'All roles'], ['BA', 'Batters'], ['WK', 'Wicketkeepers'], ['AL', 'All-rounders'], ['BO', 'Bowlers']] as const).map(([value, label]) => <TouchableOpacity key={value} style={[x.ownerSortButton, squadRoleFilter === value && x.ownerSortButtonActive]} onPress={() => setSquadRoleFilter(value)}><Text style={[x.ownerSortButtonText, squadRoleFilter === value && x.ownerSortButtonTextActive]}>{label}</Text></TouchableOpacity>)}
+      </ScrollView>
+      </View>
+      <View style={x.squadFilterGroup}>
+      <Text style={x.ownerSortLabel}>AVAILABILITY</Text>
+      <ScrollView style={x.squadFilterScroller} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.ownerSortOptions}>
+        {([['ALL', 'All players'], ['ACTIVE', 'Active'], ['INACTIVE', 'Inactive']] as const).map(([value, label]) => <TouchableOpacity key={value} style={[x.ownerSortButton, squadAvailabilityFilter === value && x.ownerSortButtonActive]} onPress={() => setSquadAvailabilityFilter(value)}><Text style={[x.ownerSortButtonText, squadAvailabilityFilter === value && x.ownerSortButtonTextActive]}>{label}</Text></TouchableOpacity>)}
+      </ScrollView>
+      </View>
+      {ownershipEnabled ? <View style={x.squadFilterGroup}><Text style={x.ownerSortLabel}>OWNER</Text>
+      <ScrollView style={x.squadFilterScroller} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.ownerSortOptions}>
+        <TouchableOpacity style={[x.ownerSortButton, squadOwnerFilter === "ALL" && x.ownerSortButtonActive]} onPress={() => setSquadOwnerFilter("ALL")}><Text style={[x.ownerSortButtonText, squadOwnerFilter === "ALL" && x.ownerSortButtonTextActive]}>All owners</Text></TouchableOpacity>
+        <TouchableOpacity style={[x.ownerSortButton, squadOwnerFilter === "OPEN" && x.ownerSortButtonActive]} onPress={() => setSquadOwnerFilter("OPEN")}><Text style={[x.ownerSortButtonText, squadOwnerFilter === "OPEN" && x.ownerSortButtonTextActive]}>OpenPlayer</Text></TouchableOpacity>
+        {owners.map(owner => <TouchableOpacity key={owner.id} style={[x.ownerSortButton, squadOwnerFilter === owner.id && x.ownerSortButtonActive]} onPress={() => setSquadOwnerFilter(owner.id)}><Text style={[x.ownerSortButtonText, squadOwnerFilter === owner.id && x.ownerSortButtonTextActive]}>{owner.display_name}</Text></TouchableOpacity>)}
+      </ScrollView></View> : null}
+      <View style={[x.squadFilterGroup, x.squadFilterGroupLast]}>
+      <Text style={x.ownerSortLabel}>SORT WITHIN EACH TEAM</Text>
+      <ScrollView style={x.squadFilterScroller} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.ownerSortOptions}>
+        {([['NAME', 'Name A–Z'], ['POINTS', 'Highest points'], ['COST_DESC', 'Highest cost'], ['COST_ASC', 'Lowest cost']] as const).map(([value, label]) => <TouchableOpacity key={value} style={[x.ownerSortButton, squadSortMode === value && x.ownerSortButtonActive]} onPress={() => setSquadSortMode(value)}><Text style={[x.ownerSortButtonText, squadSortMode === value && x.ownerSortButtonTextActive]}>{label}</Text></TouchableOpacity>)}
+      </ScrollView>
+      </View>
+    </View> : null}
     {availabilityMessage ? <View style={x.squadAvailabilityMessage}><Text style={x.squadAvailabilityMessageText}>{availabilityMessage}</Text></View> : null}
-    {!squadPlayers.length ? <Empty text="No squad players have been imported for this league." /> : teams.map(team => {
-      const teamPlayers = squadPlayers.filter(player => player.team === team).sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+    {!squadPlayers.length ? <Empty text="No squad players have been imported for this league." /> : !displayedTeams.length ? <Empty text="No squad players match these filters." /> : displayedTeams.map(team => {
+      const allTeamPlayers = squadPlayers.filter(player => player.team === team);
+      const teamPlayers = filteredSquadPlayers.filter(player => player.team === team);
       const collapsed = !expandedTeams.includes(team);
       const colors = teamBadge(team);
       return <View key={team} style={x.squadTeamCard}>
-        <View style={[x.squadTeamHeader, { backgroundColor: colors.backgroundColor, borderColor: colors.borderColor }]}>
+        <View style={[x.squadTeamHeader, { borderLeftColor: colors.backgroundColor }]}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${collapsed ? "Expand" : "Collapse"} ${team} squad`} style={x.squadTeamHeaderMain} onPress={() => toggleTeam(team)}>
-            <Text style={[x.squadTeamCode, { color: colors.color }]}>{team}</Text>
-            <Text style={[x.squadTeamSummary, { color: colors.color }]}>{teamPlayers.filter(p => p.active).length}/{teamPlayers.length} active · {teamPlayers.filter(p => p.role === "BA").length} BA · {teamPlayers.filter(p => p.role === "WK").length} WK · {teamPlayers.filter(p => p.role === "AL").length} AL · {teamPlayers.filter(p => p.role === "BO").length} BO</Text>
-            <Text style={[x.squadTeamChevron, { color: colors.color }]}>{collapsed ? "▼" : "▲"}</Text>
+            <View style={[x.squadTeamBadge, { backgroundColor: colors.backgroundColor, borderColor: colors.borderColor }]}><Text style={[x.squadTeamBadgeText, { color: colors.color }]}>{team}</Text></View>
+            <View style={x.squadTeamIdentity}>
+              <Text style={x.squadTeamName}>{team} squad</Text>
+              <Text style={x.squadTeamSummary}>{squadFiltersApplied ? `${teamPlayers.length} shown · ` : ""}{allTeamPlayers.filter(p => p.active).length}/{allTeamPlayers.length} active · {allTeamPlayers.filter(p => p.role === "BA").length} BA · {allTeamPlayers.filter(p => p.role === "WK").length} WK · {allTeamPlayers.filter(p => p.role === "AL").length} AL · {allTeamPlayers.filter(p => p.role === "BO").length} BO</Text>
+            </View>
+            <View style={x.squadTeamChevronBubble}><Text style={x.squadTeamChevron}>{collapsed ? "▼" : "▲"}</Text></View>
           </TouchableOpacity>
-          {canEdit ? <TouchableOpacity style={[x.squadAddPlayerButton, { borderColor: colors.color }]} onPress={() => addingTeam === team ? setAddingTeam("") : openAddPlayer(team)}><Text style={[x.squadAddPlayerButtonText, { color: colors.color }]}>{addingTeam === team ? "Cancel" : "+ Add"}</Text></TouchableOpacity> : null}
+          {canEdit ? <TouchableOpacity style={[x.squadAddPlayerButton, addingTeam === team && x.squadAddPlayerButtonActive]} onPress={() => addingTeam === team ? setAddingTeam("") : openAddPlayer(team)}><Text style={[x.squadAddPlayerButtonText, addingTeam === team && x.squadAddPlayerButtonTextActive]}>{addingTeam === team ? "Cancel" : "+ Add"}</Text></TouchableOpacity> : null}
         </View>
         {addingTeam === team ? <View style={x.squadAddForm}>
           <Text style={x.squadAddFormTitle}>Add replacement to {team}</Text>
@@ -559,7 +696,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
           <Text style={x.squadAddLabel}>Selection cost (₹m)</Text>
           <TextInput style={x.squadAddInput} value={newPlayerCost} onChangeText={setNewPlayerCost} keyboardType="decimal-pad" placeholder="Selection cost (₹m)" placeholderTextColor="#8B9893" />
           {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assign to</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><TouchableOpacity style={[x.squadOwnerChoice, !newPlayerOwnerId && x.squadOwnerChoiceActive]} onPress={() => setNewPlayerOwnerId("")}><Text style={[x.squadOwnerChoiceText, !newPlayerOwnerId && x.squadOwnerChoiceTextActive]}>OpenPlayer</Text></TouchableOpacity>{owners.map(owner => <TouchableOpacity key={owner.id} style={[x.squadOwnerChoice, newPlayerOwnerId === owner.id && x.squadOwnerChoiceActive]} onPress={() => setNewPlayerOwnerId(owner.id)}><Text style={[x.squadOwnerChoiceText, newPlayerOwnerId === owner.id && x.squadOwnerChoiceTextActive]}>{owner.display_name}</Text></TouchableOpacity>)}</ScrollView></> : <Text style={x.squadEditBidNote}>All Open Players league · this player will remain OpenPlayer</Text>}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><OwnerChoice owner="OpenPlayer" active={!newPlayerOwnerId} onPress={() => setNewPlayerOwnerId("")} />{owners.map(owner => <OwnerChoice key={owner.id} owner={owner.display_name} active={newPlayerOwnerId === owner.id} onPress={() => setNewPlayerOwnerId(owner.id)} />)}</ScrollView></> : <Text style={x.squadEditBidNote}>All Open Players league · this player will remain OpenPlayer</Text>}
           <TouchableOpacity disabled={addBusy} style={[x.squadAddSubmit, addBusy && { opacity: 0.6 }]} onPress={addReplacementPlayer}>{addBusy ? <ActivityIndicator color="#10251F" /> : <Text style={x.squadAddSubmitText}>Add player</Text>}</TouchableOpacity>
         </View> : null}
         {!collapsed ? teamPlayers.map(player => {
@@ -570,7 +707,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
           return <View key={playerKey}>
             <View style={[x.squadPlayerRow, !player.active && x.squadPlayerRowInactive]}>
               <TouchableOpacity disabled={!points} style={x.squadPlayerMain} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}>
-                <View style={x.grow}><View style={x.squadPlayerNameRow}><Text style={[x.squadPlayerName, !player.active && x.squadPlayerNameInactive]}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.squadSelectionCost}>₹{player.price.toFixed(1)}m</Text></View><Text style={x.squadPlayerOwner}>{`${!player.active ? "Inactive · " : ""}${player.owner === "Available" ? "OpenPlayer" : `Owned by ${player.owner} [Bid ${player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`}]`}`}</Text></View>
+                <View style={x.grow}><View style={x.squadPlayerNameRow}><Text style={[x.squadPlayerName, !player.active && x.squadPlayerNameInactive]}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.squadSelectionCost}>₹{player.price.toFixed(1)}m</Text></View><View style={x.squadPlayerOwnerRow}>{!player.active ? <Text style={x.squadInactiveLabel}>Inactive</Text> : null}<OwnerBadge owner={player.owner} label={player.owner === "Available" ? "OpenPlayer" : player.owner} compact />{player.owner !== "Available" ? <Text style={x.squadPlayerOwner}>Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`}</Text> : null}</View></View>
                 <Text style={x.roleText}>{roleLabel[player.role]}</Text>
                 {points ? <><View style={x.squadScoreBlock}>{royaltyMode && royalty > 0 ? <Text style={x.squadRoyaltyPoints}>ROY {fmt(royalty)}</Text> : null}<Text style={x.squadPlayerPoints}>{fmt(points.total + royalty)} pts</Text></View><Text style={x.squadPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></> : <Text style={[x.squadPointsPending, royaltyMode && royalty > 0 && x.royaltyColumn]}>{royaltyMode && royalty > 0 ? `ROY ${fmt(royalty)}` : "0 pts"}</Text>}
               </TouchableOpacity>
@@ -585,7 +722,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
               <Text style={x.squadAddLabel}>Selection cost (₹m)</Text>
               <TextInput style={x.squadAddInput} value={editCost} onChangeText={setEditCost} keyboardType="decimal-pad" placeholder="Selection cost (₹m)" placeholderTextColor="#8B9893" />
               {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assigned owner</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><TouchableOpacity style={[x.squadOwnerChoice, !editOwnerId && x.squadOwnerChoiceActive]} onPress={() => setEditOwnerId("")}><Text style={[x.squadOwnerChoiceText, !editOwnerId && x.squadOwnerChoiceTextActive]}>OpenPlayer</Text></TouchableOpacity>{owners.map(owner => <TouchableOpacity key={owner.id} style={[x.squadOwnerChoice, editOwnerId === owner.id && x.squadOwnerChoiceActive]} onPress={() => setEditOwnerId(owner.id)}><Text style={[x.squadOwnerChoiceText, editOwnerId === owner.id && x.squadOwnerChoiceTextActive]}>{owner.display_name}</Text></TouchableOpacity>)}</ScrollView></> : <Text style={x.squadEditBidNote}>All Open Players league · owner assignment is disabled</Text>}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><OwnerChoice owner="OpenPlayer" active={!editOwnerId} onPress={() => setEditOwnerId("")} />{owners.map(owner => <OwnerChoice key={owner.id} owner={owner.display_name} active={editOwnerId === owner.id} onPress={() => setEditOwnerId(owner.id)} />)}</ScrollView></> : <Text style={x.squadEditBidNote}>All Open Players league · owner assignment is disabled</Text>}
               <Text style={x.squadAddLabel}>Availability</Text>
               <View style={x.squadEditAvailability}><TouchableOpacity style={[x.squadEditStatus, editActive && x.squadEditStatusActive]} onPress={() => setEditActive(true)}><Text style={[x.squadEditStatusText, editActive && x.squadEditStatusTextActive]}>Active</Text></TouchableOpacity><TouchableOpacity style={[x.squadEditStatus, !editActive && x.squadEditStatusInactive]} onPress={() => setEditActive(false)}><Text style={[x.squadEditStatusText, !editActive && x.squadEditStatusTextInactive]}>Deactivate</Text></TouchableOpacity></View>
               {ownershipEnabled ? <Text style={x.squadEditBidNote}>Completed bid: {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`} · read-only</Text> : null}
@@ -607,7 +744,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   </View>;
 }
 
-export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagueId: string; requestedFixtureId?: string }) {
+export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId = "" }: { leagueId: string; currentOwner: string; requestedFixtureId?: string }) {
   const historyScrollRef = useRef<ScrollView>(null);
   const historyMatchPositions = useRef<Record<string, number>>({});
   const lastScrolledFixture = useRef("");
@@ -615,6 +752,7 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
   const [transfers, setTransfers] = useState<any[]>([]);
   const [playerOwners, setPlayerOwners] = useState<Record<string, string>>({});
   const [transferPeriods, setTransferPeriods] = useState<any[]>([]);
+  const [phases, setPhases] = useState<any[]>([]);
   const [lineupRules, setLineupRules] = useState<any[]>([]);
   const [specialRules, setSpecialRules] = useState<any[]>([]);
   const [leagueFormat, setLeagueFormat] = useState({ ownership_enabled: true, other_owner_deductions_enabled: true });
@@ -624,9 +762,17 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [matchFilter, setMatchFilter] = useState("");
+  const [phaseFilter, setPhaseFilter] = useState("ALL");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [ownerFilter, setOwnerFilter] = useState("ALL");
   const specialLabels = useFixtureSpecialLabels(expandedMatch ? [expandedMatch] : []);
   useEffect(() => {
     if (!requestedFixtureId || !matches.some(match => match.id === requestedFixtureId)) return;
+    setMatchFilter("");
+    setPhaseFilter("ALL");
+    setStatusFilter("ALL");
+    setOwnerFilter("ALL");
     setExpandedMatch(requestedFixtureId);
     setExpandedOwner("");
     setExpandedPlayer("");
@@ -640,17 +786,28 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
       supabase.from("fixtures").select("id,match_number,stage,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),player_match_points(player_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,breakdown,calculation_version,published_at),member_match_scores(lineup_id,total_points,rank,calculation_breakdown),lineup_submissions(id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type,member:league_members(id,display_name),lineup_players(slot,player:players(id,full_name,role,team:cricket_teams(code))),lineup_boosters(target_player_id,booster:booster_rules(code,player_multiplier,match_multiplier)))").eq("league_id", leagueId).order("match_number", { ascending: false }),
       supabase.from("transfer_events").select("member_id,transfer_count,transfer_period_id,reason,fixture:fixtures(match_number)").eq("league_id", leagueId).eq("reason", "lineup_change"),
       supabase.from("league_transfer_periods").select("id,name,start_match_number,end_match_number,transfer_limit,first_match_free,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
+      supabase.from("league_phases").select("id,name,start_match_number,end_match_number,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
       supabase.from("league_players").select("player_id,owner:league_members(display_name)").eq("league_id", leagueId).eq("active", true),
       supabase.from("lineup_rule_sets").select("version,effective_from_match_number,captain_multiplier,vice_captain_multiplier,impact_multiplier,other_owner_penalty_percent,other_owner_minimum_penalty").eq("league_id", leagueId).order("effective_from_match_number").order("version"),
       supabase.from("league_format_configs").select("ownership_enabled,other_owner_deductions_enabled").eq("league_id", leagueId).maybeSingle(),
       supabase.from("special_player_rule_sets").select("version,effective_from_match_number,unique_mode_enabled,marquee_mode_enabled,other_player_fee_percent,other_player_minimum_fee").eq("league_id", leagueId).order("effective_from_match_number").order("version"),
-    ]).then(([matchResult, transferResult, periodResult, ownershipResult, ruleResult, formatResult, specialRuleResult]) => {
+      supabase.from("lineup_boosters").select("lineup_id,target_player_id,booster:booster_rules(code,player_multiplier,match_multiplier)").eq("league_id", leagueId),
+    ]).then(([matchResult, transferResult, periodResult, phaseResult, ownershipResult, ruleResult, formatResult, specialRuleResult, boosterResult]) => {
       if (cancelled) return;
-      const firstError = matchResult.error ?? transferResult.error ?? periodResult.error ?? ownershipResult.error ?? ruleResult.error ?? formatResult.error ?? specialRuleResult.error;
+      const firstError = matchResult.error ?? transferResult.error ?? periodResult.error ?? phaseResult.error ?? ownershipResult.error ?? ruleResult.error ?? formatResult.error ?? specialRuleResult.error ?? boosterResult.error;
       if (firstError) { setError(firstError.message); setLoading(false); return; }
-      setMatches((matchResult.data ?? []).filter((match: any) => match.status !== "scheduled" || (match.lineup_submissions?.length ?? 0) > 0));
+      const boostersByLineup = new Map((boosterResult.data ?? []).map((row: any) => [row.lineup_id, row]));
+      const matchesWithBoosters = (matchResult.data ?? []).map((match: any) => ({
+        ...match,
+        lineup_submissions: (match.lineup_submissions ?? []).map((lineup: any) => {
+          const savedBooster = boostersByLineup.get(lineup.id);
+          return savedBooster ? { ...lineup, lineup_boosters: [savedBooster] } : lineup;
+        }),
+      }));
+      setMatches(matchesWithBoosters.filter((match: any) => match.status !== "scheduled" || (match.lineup_submissions?.length ?? 0) > 0));
       setTransfers(transferResult.data ?? []);
       setTransferPeriods(periodResult.data ?? []);
+      setPhases(phaseResult.data ?? []);
       setLineupRules(ruleResult.data ?? []);
       setSpecialRules(specialRuleResult.data ?? []);
       if (formatResult.data) setLeagueFormat(formatResult.data);
@@ -664,21 +821,43 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
     });
     return () => { cancelled = true; };
   }, [leagueId, reloadKey]);
+  const ownerOptions = useMemo(() => Array.from(new Set(matches.flatMap(match => (match.lineup_submissions ?? []).map((lineup: any) => lineup.member?.display_name).filter(Boolean) as string[]))).sort((a, b) => a.localeCompare(b)), [matches]);
+  const filteredMatches = useMemo(() => matches.filter(match => {
+    const numberMatches = !matchFilter.trim() || String(match.match_number) === matchFilter.trim();
+    const phaseMatches = phaseFilter === "ALL" || phases.some(phase => phase.id === phaseFilter && Number(match.match_number) >= Number(phase.start_match_number) && Number(match.match_number) <= Number(phase.end_match_number));
+    const statusMatches = statusFilter === "ALL" || (statusFilter === "PUBLISHED" ? match.scoring_status === "published" : match.scoring_status !== "published");
+    const ownerMatches = ownerFilter === "ALL" || (match.lineup_submissions ?? []).some((lineup: any) => lineup.member?.display_name === ownerFilter);
+    return numberMatches && phaseMatches && statusMatches && ownerMatches;
+  }), [matches, matchFilter, phaseFilter, phases, statusFilter, ownerFilter]);
   if (loading) return <ScrollView contentContainerStyle={x.screen}><Loading /></ScrollView>;
   if (error) return <ScrollView contentContainerStyle={x.screen}><LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} /></ScrollView>;
   return <ScrollView ref={historyScrollRef} contentContainerStyle={x.screen}>
     <Text style={x.title}>Team History</Text>
     <Text style={x.subtitle}>Your submitted XIs and owner teams visible after lock</Text>
-    {matches.length ? matches.map(match => {
+    {matches.length ? <View style={x.historyFilters}>
+      <View style={x.historyFilterHeader}><View><Text style={x.historyFilterTitle}>Find a submission</Text><Text style={x.historyFilterSubtitle}>{filteredMatches.length} of {matches.length} matches shown</Text></View>{matchFilter || phaseFilter !== "ALL" || statusFilter !== "ALL" || ownerFilter !== "ALL" ? <TouchableOpacity style={x.historyClear} onPress={() => { setMatchFilter(""); setPhaseFilter("ALL"); setStatusFilter("ALL"); setOwnerFilter("ALL"); }}><Text style={x.historyClearText}>Clear</Text></TouchableOpacity> : null}</View>
+      <TextInput style={x.historyMatchInput} value={matchFilter} onChangeText={value => setMatchFilter(value.replace(/[^0-9]/g, ""))} keyboardType="number-pad" placeholder="Match number" placeholderTextColor="#8A9691" />
+      <Text style={x.historyFilterLabel}>STATUS</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.historyFilterOptions}>{[["ALL", "All"], ["AWAITING", "Awaiting points"], ["PUBLISHED", "Published"]].map(([value, label]) => <TouchableOpacity key={value} style={[x.historyFilterChip, statusFilter === value && x.historyFilterChipActive]} onPress={() => setStatusFilter(value)}><Text style={[x.historyFilterChipText, statusFilter === value && x.historyFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView>
+      {phases.length > 1 ? <><Text style={x.historyFilterLabel}>PHASE</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.historyFilterOptions}><TouchableOpacity style={[x.historyFilterChip, phaseFilter === "ALL" && x.historyFilterChipActive]} onPress={() => setPhaseFilter("ALL")}><Text style={[x.historyFilterChipText, phaseFilter === "ALL" && x.historyFilterChipTextActive]}>All phases</Text></TouchableOpacity>{phases.map(phase => <TouchableOpacity key={phase.id} style={[x.historyFilterChip, phaseFilter === phase.id && x.historyFilterChipActive]} onPress={() => setPhaseFilter(phase.id)}><Text style={[x.historyFilterChipText, phaseFilter === phase.id && x.historyFilterChipTextActive]}>{phase.name}</Text></TouchableOpacity>)}</ScrollView></> : null}
+      {ownerOptions.length > 1 ? <><Text style={x.historyFilterLabel}>OWNER</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.historyFilterOptions}><TouchableOpacity style={[x.historyFilterChip, ownerFilter === "ALL" && x.historyFilterChipActive]} onPress={() => setOwnerFilter("ALL")}><Text style={[x.historyFilterChipText, ownerFilter === "ALL" && x.historyFilterChipTextActive]}>All owners</Text></TouchableOpacity>{ownerOptions.map(owner => <TouchableOpacity key={owner} style={[x.historyFilterChip, ownerFilter === owner && x.historyFilterChipActive]} onPress={() => setOwnerFilter(owner)}><Text style={[x.historyFilterChipText, ownerFilter === owner && x.historyFilterChipTextActive]}>{owner}</Text></TouchableOpacity>)}</ScrollView></> : null}
+    </View> : null}
+    {filteredMatches.length ? filteredMatches.map(match => {
       const open = expandedMatch === match.id;
-      const lineups = [...(match.lineup_submissions ?? [])].sort((a, b) => {
+      const lineups = [...(match.lineup_submissions ?? [])].filter(lineup => ownerFilter === "ALL" || lineup.member?.display_name === ownerFilter).sort((a, b) => {
         const scoreA = (match.member_match_scores ?? []).find((score: any) => score.lineup_id === a.id);
         const scoreB = (match.member_match_scores ?? []).find((score: any) => score.lineup_id === b.id);
         return (scoreA?.rank ?? 999) - (scoreB?.rank ?? 999) || (a.member?.display_name ?? "").localeCompare(b.member?.display_name ?? "");
       });
       const matchRule = [...lineupRules].filter(rule => Number(rule.effective_from_match_number ?? 1) <= Number(match.match_number)).sort((a, b) => Number(b.effective_from_match_number ?? 1) - Number(a.effective_from_match_number ?? 1) || Number(b.version) - Number(a.version))[0];
       const matchSpecialRule = [...specialRules].filter(rule => Number(rule.effective_from_match_number ?? 1) <= Number(match.match_number)).sort((a, b) => Number(b.effective_from_match_number ?? 1) - Number(a.effective_from_match_number ?? 1) || Number(b.version) - Number(a.version))[0];
-      return <View key={match.id} style={x.cardBlock} onLayout={event => { historyMatchPositions.current[match.id] = event.nativeEvent.layout.y; if (match.id === requestedFixtureId && lastScrolledFixture.current !== requestedFixtureId) { lastScrolledFixture.current = requestedFixtureId; setTimeout(() => historyScrollRef.current?.scrollTo({ y: Math.max(0, event.nativeEvent.layout.y - 12), animated: true }), 80); } }}>
+      return <View key={match.id} style={x.cardBlock} onLayout={event => {
+        const matchY = event.nativeEvent.layout.y;
+        historyMatchPositions.current[match.id] = matchY;
+        if (match.id === requestedFixtureId && lastScrolledFixture.current !== requestedFixtureId) {
+          lastScrolledFixture.current = requestedFixtureId;
+          setTimeout(() => historyScrollRef.current?.scrollTo({ y: Math.max(0, matchY - 12), animated: true }), 80);
+        }
+      }}>
         <TouchableOpacity style={x.matchHeader} onPress={() => setExpandedMatch(open ? "" : match.id)}>
           <View style={x.grow}><Text style={x.name}>Match {match.match_number}</Text><View style={x.matchTeams}><IplTeamBadge code={match.home?.code} /><Text style={x.vsText}>vs</Text><IplTeamBadge code={match.away?.code} /></View><Text style={x.meta}>{match.status.toUpperCase()} · {match.scoring_status.toUpperCase()} · {lineups.length} visible teams</Text></View>
           <Text style={x.chevron}>{open ? "▲" : "▼"}</Text>
@@ -695,11 +874,23 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
           const key = `${match.id}:${lineup.id}`;
           const ownerOpen = expandedOwner === key;
           const booster = lineup.lineup_boosters?.[0];
+          // Published scoring persists the applied match booster in the score
+          // breakdown. Use it as the authoritative fallback when PostgREST does
+          // not return the nested lineup_boosters relation (for example, after
+          // the lineup has been locked and its score published).
+          const scoreBreakdown = score?.calculation_breakdown && typeof score.calculation_breakdown === "object"
+            ? score.calculation_breakdown
+            : {};
+          const boosterCode = booster?.booster?.code ?? scoreBreakdown.booster_code ?? "";
+          const ownerColor = ownerTheme(owner);
+          const isCurrentOwner = owner.trim().toLocaleLowerCase() === currentOwner.trim().toLocaleLowerCase();
+          const rank = Number(score?.rank);
+          const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : "";
           return <View key={key} style={x.ownerBlock}>
-            <TouchableOpacity style={x.row} onPress={() => setExpandedOwner(ownerOpen ? "" : key)}>
-              <Text style={x.rank}>{score?.rank ? `#${score.rank}` : "—"}</Text>
-              <View style={x.grow}><Text style={x.ownerName}>{owner}{booster?.booster?.code ? ` · ${booster.booster.code}` : ""}</Text><Text style={x.ownerMeta}>{lineup.lineup_players?.length ?? 0} players · {score ? "points published" : "awaiting points"}</Text><View style={x.transferSummary}><Text style={x.transferUsed}>↔ {matchTransfers} transfer{matchTransfers === 1 ? "" : "s"} this match</Text><Text style={x.transferBalance}>{transferPeriod ? `${balanceAfterMatch}/${periodLimit} ${transferPeriod.name}` : "period not configured"}</Text></View></View>
-              <Text style={x.value}>{score ? `${fmt(score.total_points)} pts` : lineup.status.toUpperCase()}</Text><Text style={x.chevron}>{ownerOpen ? "▲" : "▼"}</Text>
+            <TouchableOpacity style={[x.row, { backgroundColor: ownerColor.soft, borderLeftWidth: isCurrentOwner ? 8 : 5, borderLeftColor: ownerColor.accent, borderBottomColor: ownerColor.border }]} onPress={() => setExpandedOwner(ownerOpen ? "" : key)}>
+              <View style={x.rankSlot}>{medal ? <Text accessibilityLabel={`Rank ${rank}`} style={x.rankMedal}>{medal}</Text> : <Text style={[x.rank, { color: ownerColor.strong }, isCurrentOwner && x.currentRankingRank]}>{score?.rank ? `#${score.rank}` : "—"}</Text>}</View>
+              <OwnerAvatar owner={owner} current={isCurrentOwner} /><View style={x.grow}><View style={x.ownerNameRow}><Text style={[x.ownerDisplayName, { color: ownerColor.strong }]}>{owner}</Text>{isCurrentOwner ? <View style={[x.youBadge, { backgroundColor: ownerColor.accent }]}><Text style={x.youBadgeText}>YOU</Text></View> : null}{boosterCode ? <View style={x.historyBoosterBadge}><Text style={x.historyBoosterBadgeText}>{boosterCode}</Text></View> : null}</View><Text style={x.ownerMeta}>{lineup.lineup_players?.length ?? 0} players · {score ? "points published" : "awaiting points"}{boosterCode === "2UP" ? " · match total doubled" : boosterCode === "3X" ? " · Triple Impact used" : boosterCode === "SUP-TR" ? " · Super Transfer used" : ""}</Text><View style={x.transferSummary}><Text style={x.transferUsed}>{matchTransfers} transfer{matchTransfers === 1 ? "" : "s"} this match</Text><Text style={x.transferBalance}>{transferPeriod ? `${balanceAfterMatch}/${periodLimit} remaining · ${transferPeriod.name}` : "period not configured"}</Text></View></View>
+              <Text style={[x.value, { color: ownerColor.strong }]}>{score ? `${fmt(score.total_points)} pts` : lineup.status.toUpperCase()}</Text><Text style={[x.chevron, { color: ownerColor.strong }]}>{ownerOpen ? "▲" : "▼"}</Text>
             </TouchableOpacity>
             {ownerOpen ? (lineup.lineup_players ?? []).sort((a: any, b: any) => a.slot - b.slot).map((entry: any) => {
               const player = entry.player;
@@ -723,30 +914,37 @@ export function ProductionHistory({ leagueId, requestedFixtureId = "" }: { leagu
               const ownershipDeduction = !borrowed || royaltyMode ? 0 : uniqueMode
                 ? Math.max(grossContribution * Number(matchSpecialRule?.other_player_fee_percent ?? 0) / 100, Number(matchSpecialRule?.other_player_minimum_fee ?? 0))
                 : grossContribution > 0 ? Math.max(grossContribution * Number(matchRule?.other_owner_penalty_percent ?? 0) / 100, Number(matchRule?.other_owner_minimum_penalty ?? 0)) : 0;
-              const matchMultiplier = booster?.booster?.code === "2UP" ? Number(booster?.booster?.match_multiplier ?? 2) : 1;
+              const matchMultiplier = boosterCode === "2UP" ? Number(booster?.booster?.match_multiplier ?? scoreBreakdown.match_multiplier ?? 2) : 1;
               const contribution = (grossContribution - ownershipDeduction) * matchMultiplier;
               const playerKey = `${key}:${player.id}`;
               const playerOpen = expandedPlayer === playerKey;
-              return <View key={player.id}><TouchableOpacity style={x.historyPlayer} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}><Text style={x.chevron}>{playerOpen ? "▲" : "▼"}</Text><View style={[x.grow, { marginLeft: 7 }]}><View style={x.playerLabelRow}><Text style={x.playerName}>{entry.slot}. {player.full_name}</Text>{(specialLabels[match.id]?.[player.full_name] ?? []).map(label => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={x.playerMetaRow}><IplTeamBadge code={player.team?.code} /><Text style={x.roleText}>{player.role}</Text><Text style={[x.ownershipText, ownership === "Mine" ? x.ownershipMine : ownership === "OpenPlayer" ? x.ownershipOpen : x.ownershipOther]}>{ownership}</Text><Text style={x.baseText}>{playerPoints ? `Base ${fmt(playerPoints.total_points)}` : "Points pending"}</Text></View></View>{playerPoints ? <Text style={x.playerValue}>{fmt(contribution)} pts</Text> : null}{markers.map(marker => <Text key={marker} style={x.marker}>{marker}</Text>)}</TouchableOpacity>{playerOpen && playerPoints ? <View style={x.playerBreakdown}><BreakdownLine label="Batting" value={playerPoints.batting_points} /><BreakdownLine label="Bowling" value={playerPoints.bowling_points} /><BreakdownLine label="Fielding" value={playerPoints.fielding_points} /><BreakdownLine label="Bonus" value={playerPoints.bonus_points} /><BreakdownLine label="Base total" value={playerPoints.total_points} strong />{grossContribution !== Number(playerPoints.total_points) ? <BreakdownLine label="After player multipliers" value={grossContribution} /> : null}{ownershipDeduction > 0 ? <BreakdownLine label={uniqueMode ? "Other-player usage fee" : "Ownership deduction"} value={-ownershipDeduction} /> : null}{matchMultiplier !== 1 ? <BreakdownLine label={`After ${booster?.booster?.code} (${matchMultiplier}×)`} value={contribution} /> : null}<BreakdownLine label="Final player contribution" value={contribution} strong /></View> : null}</View>;
+              return <View key={player.id}><TouchableOpacity style={x.historyPlayer} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}><Text style={x.chevron}>{playerOpen ? "▲" : "▼"}</Text><View style={[x.grow, { marginLeft: 7 }]}><View style={x.playerLabelRow}><Text style={x.playerName}>{entry.slot}. {player.full_name}</Text>{(specialLabels[match.id]?.[player.full_name] ?? []).map(label => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={x.playerMetaRow}><IplTeamBadge code={player.team?.code} /><Text style={x.roleText}>{player.role}</Text><OwnerBadge owner={ownership === "OpenPlayer" ? "OpenPlayer" : ownership === "Mine" ? owner : auctionOwner} label={ownership} compact /><Text style={x.baseText}>{playerPoints ? `Base ${fmt(playerPoints.total_points)}` : "Points pending"}</Text></View></View>{playerPoints ? <Text style={x.playerValue}>{fmt(contribution)} pts</Text> : null}{markers.map(marker => <Text key={marker} style={x.marker}>{marker}</Text>)}</TouchableOpacity>{playerOpen && playerPoints ? <View style={x.playerBreakdown}><BreakdownLine label="Batting" value={playerPoints.batting_points} /><BreakdownLine label="Bowling" value={playerPoints.bowling_points} /><BreakdownLine label="Fielding" value={playerPoints.fielding_points} /><BreakdownLine label="Bonus" value={playerPoints.bonus_points} /><BreakdownLine label="Base total" value={playerPoints.total_points} strong />{grossContribution !== Number(playerPoints.total_points) ? <BreakdownLine label="After player multipliers" value={grossContribution} /> : null}{ownershipDeduction > 0 ? <BreakdownLine label={uniqueMode ? "Other-player usage fee" : "Ownership deduction"} value={-ownershipDeduction} /> : null}{matchMultiplier !== 1 ? <BreakdownLine label={`After ${booster?.booster?.code} (${matchMultiplier}×)`} value={contribution} /> : null}<BreakdownLine label="Final player contribution" value={contribution} strong /></View> : null}</View>;
             }) : null}
           </View>;
         }) : <Empty text="No owner lineup is visible for this match." /> : null}
       </View>;
-    }) : <Empty text="No matches have started yet." />}
+    }) : <Empty text={matches.length ? "No history matches these filters." : "No matches have started yet."} />}
   </ScrollView>;
 }
 function BreakdownLine({ label, value, strong = false }: { label: string; value: unknown; strong?: boolean }) { return <View style={x.breakdownLine}><Text style={[x.breakdownLabel, strong && x.breakdownStrong]}>{label}</Text><Text style={[x.breakdownValue, strong && x.breakdownStrong]}>{fmt(value)}</Text></View>; }
 const x = StyleSheet.create({
+  ownerBadge: { maxWidth: 155, flexDirection: "row", alignItems: "center", alignSelf: "flex-start", borderWidth: 1, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 4 },
+  ownerBadgeCompact: { borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
+  ownerBadgeDot: { width: 6, height: 6, borderRadius: 3, marginRight: 5 },
+  ownerBadgeText: { flexShrink: 1, fontSize: 8, lineHeight: 10, fontWeight: "900" },
   screen: { backgroundColor: "#F5F6F8", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18, paddingBottom: 110, minHeight: 750 },
   title: { color: "#18223B", fontSize: 26, lineHeight: 31, fontWeight: "900", letterSpacing: -0.4 }, subtitle: { color: "#687384", fontSize: 13, lineHeight: 19, marginTop: 5, marginBottom: 18 }, section: { color: "#18223B", fontSize: 19, lineHeight: 24, fontWeight: "900", letterSpacing: -0.2, marginTop: 22, marginBottom: 11 },
   hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 28, fontWeight: "900", marginTop: 10 }, heroTeams: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 }, heroMeta: { color: "#B7CDC6", fontSize: 11, marginTop: 8 }, accent: { color: "#DDFB72", fontSize: 13, fontWeight: "900" }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" },
   stats: { flexDirection: "row", gap: 9, marginTop: 13 }, metric: { flex: 1, backgroundColor: "white", borderRadius: 16, padding: 13, borderWidth: 1, borderColor: "#E7EAF0" }, metricLabel: { color: "#758091", fontSize: 9, fontWeight: "900", letterSpacing: 0.3 }, metricValue: { color: "#18223B", fontSize: 18, fontWeight: "900", marginTop: 5 },
   fixtureOverview: { flexDirection: "row", alignItems: "center", backgroundColor: "#14273F", borderRadius: 17, paddingVertical: 13, marginBottom: 12 }, fixtureOverviewItem: { flex: 1, alignItems: "center" }, fixtureOverviewValue: { color: "#DDFB72", fontSize: 17, fontWeight: "900" }, fixtureOverviewLabel: { color: "#AAB8C6", fontSize: 7, fontWeight: "900", marginTop: 3, letterSpacing: 0.4 }, fixtureOverviewDivider: { width: 1, height: 28, backgroundColor: "#34465B" },
   fixtureFilterScroller: { height: 47, flexGrow: 0, flexShrink: 0 }, fixtureFilters: { height: 47, alignItems: "flex-start", gap: 7, paddingBottom: 13 }, fixtureFilter: { height: 34, borderRadius: 17, borderWidth: 1, borderColor: "#D7DFDB", backgroundColor: "#FFFFFF", paddingHorizontal: 13, alignItems: "center", justifyContent: "center" }, fixtureFilterActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, fixtureFilterText: { color: "#5C6D67", fontSize: 9, fontWeight: "900" }, fixtureFilterTextActive: { color: "#DDFB72" },
+  historyFilters: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DFE6E2", borderRadius: 17, padding: 13, marginBottom: 14 }, historyFilterHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }, historyFilterTitle: { color: "#18223B", fontSize: 13, fontWeight: "900" }, historyFilterSubtitle: { color: "#7A8882", fontSize: 8, marginTop: 2 }, historyClear: { backgroundColor: "#FFF0EC", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }, historyClearText: { color: "#8B4439", fontSize: 8, fontWeight: "900" }, historyMatchInput: { height: 39, borderWidth: 1, borderColor: "#D5DED9", borderRadius: 10, backgroundColor: "#F8FAF8", color: "#173028", fontSize: 10, fontWeight: "800", paddingHorizontal: 11, marginBottom: 11 }, historyFilterLabel: { color: "#7A8882", fontSize: 7, fontWeight: "900", letterSpacing: 1, marginBottom: 6 }, historyFilterOptions: { gap: 6, paddingBottom: 10 }, historyFilterChip: { borderWidth: 1, borderColor: "#D4DDD8", backgroundColor: "#FFFFFF", borderRadius: 15, paddingHorizontal: 11, paddingVertical: 8 }, historyFilterChipActive: { borderColor: "#174D3D", backgroundColor: "#174D3D" }, historyFilterChipText: { color: "#53645D", fontSize: 8, fontWeight: "900" }, historyFilterChipTextActive: { color: "#DDFB72" },
   empty: { backgroundColor: "white", borderRadius: 14, padding: 18, alignItems: "center", marginVertical: 8 }, emptyText: { color: "#718079", fontSize: 11, lineHeight: 16, marginTop: 5, textAlign: "center" },
   loadError: { backgroundColor: "white", borderRadius: 18, borderWidth: 1, borderColor: "#E7E2DF", paddingHorizontal: 22, paddingVertical: 26, alignItems: "center", marginVertical: 8 }, loadErrorIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFF0EC", alignItems: "center", justifyContent: "center" }, loadErrorIconText: { color: "#9A4B3E", fontSize: 22, fontWeight: "900" }, loadErrorTitle: { color: "#18223B", fontSize: 17, fontWeight: "900", marginTop: 13 }, loadErrorText: { color: "#718079", fontSize: 11, lineHeight: 16, textAlign: "center", marginTop: 5 }, loadErrorRetry: { minWidth: 120, backgroundColor: "#174D3D", borderRadius: 11, alignItems: "center", paddingHorizontal: 18, paddingVertical: 11, marginTop: 16 }, loadErrorRetryText: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, loadErrorDetail: { color: "#9A8580", fontSize: 7, lineHeight: 10, textAlign: "center", marginTop: 13 },
   card: { backgroundColor: "white", borderRadius: 18, overflow: "hidden", borderWidth: 1, borderColor: "#E7EAF0" }, cardBlock: { backgroundColor: "white", borderRadius: 17, overflow: "hidden", marginBottom: 11, borderWidth: 1, borderColor: "#E0E6E2", shadowColor: "#14273F", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5, elevation: 1 }, row: { flexDirection: "row", alignItems: "center", padding: 13, borderBottomWidth: 1, borderBottomColor: "#ECEFF3" }, matchHeader: { flexDirection: "row", alignItems: "center", padding: 13 }, matchNumberBadge: { width: 43, height: 43, borderRadius: 13, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginRight: 11 }, matchNumberLabel: { color: "#7B8983", fontSize: 6, fontWeight: "900", letterSpacing: 0.4 }, matchNumberValue: { color: "#173F35", fontSize: 16, fontWeight: "900", marginTop: 1 }, matchTeams: { flexDirection: "row", alignItems: "center", gap: 7 }, matchDate: { color: "#758091", fontSize: 9, fontWeight: "700", marginTop: 6 }, matchHeaderEnd: { alignItems: "flex-end", marginLeft: 7 }, matchStatusBadge: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, marginBottom: 8 }, matchStatusPublished: { backgroundColor: "#E3F3E5" }, matchStatusCompleted: { backgroundColor: "#E8ECF5" }, matchStatusUpcoming: { backgroundColor: "#FFF2D7" }, matchStatusText: { fontSize: 6, fontWeight: "900", letterSpacing: 0.25 }, matchStatusPublishedText: { color: "#2D6A3B" }, matchStatusCompletedText: { color: "#52627F" }, matchStatusUpcomingText: { color: "#8A6112" }, vsText: { color: "#687384", fontSize: 9, fontWeight: "900" }, inlineMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 5 }, grow: { flex: 1 }, name: { color: "#18223B", fontSize: 13, lineHeight: 17, fontWeight: "900" }, meta: { color: "#758091", fontSize: 10, lineHeight: 14, marginTop: 3 }, value: { color: "#273652", fontSize: 12, fontWeight: "900", marginHorizontal: 7 }, chevron: { color: "#687384", fontSize: 11 }, rank: { width: 34, color: "#687384", fontWeight: "900" }, avatar: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#EEF0FA", alignItems: "center", justifyContent: "center", marginRight: 9 }, avatarText: { color: "#5364A0", fontWeight: "900" },
-  currentRankingRow: { backgroundColor: "#F4F0FF", borderLeftWidth: 4, borderLeftColor: "#6D44C5", paddingLeft: 9 }, currentRankingRank: { color: "#6D44C5" }, currentRankingAvatar: { backgroundColor: "#6D44C5" }, currentRankingAvatarText: { color: "#FFFFFF" }, currentRankingMeta: { color: "#655E75" }, currentRankingValue: { color: "#6D44C5" }, rankSlot: { width: 34, alignItems: "flex-start", justifyContent: "center" }, rankMedal: { fontSize: 22, lineHeight: 27 }, rankingOwnerLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }, youBadge: { backgroundColor: "#E6DCFF", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 3 }, youBadgeText: { color: "#5C37AE", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  currentRankingRow: { backgroundColor: "#F4F0FF", borderLeftWidth: 4, borderLeftColor: "#6D44C5", paddingLeft: 9 }, currentRankingRank: { color: "#6D44C5" }, currentRankingAvatar: { backgroundColor: "#6D44C5" }, currentRankingAvatarText: { color: "#FFFFFF" }, currentRankingMeta: { color: "#655E75" }, currentRankingValue: { color: "#6D44C5" }, rankSlot: { width: 34, alignItems: "flex-start", justifyContent: "center" }, rankMedal: { fontSize: 22, lineHeight: 27 }, rankingOwnerLine: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 }, youBadge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, minWidth: 34, alignItems: "center" }, youBadgeText: { color: "#FFFFFF", fontSize: 9, lineHeight: 11, fontWeight: "900", letterSpacing: 0.7 },
+  ownerSortCard: { backgroundColor: "#F3F6F4", borderWidth: 1, borderColor: "#DFE7E2", borderRadius: 14, paddingVertical: 10, marginBottom: 12 }, ownerSortLabel: { color: "#78867F", fontSize: 7, fontWeight: "900", letterSpacing: 1, marginHorizontal: 12, marginBottom: 8 }, ownerSortOptions: { paddingHorizontal: 10, gap: 7 }, ownerSortButton: { borderWidth: 1, borderColor: "#CFD9D3", backgroundColor: "#FFFFFF", borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 }, ownerSortButtonActive: { borderColor: "#174D3D", backgroundColor: "#174D3D" }, ownerSortButtonText: { color: "#53645D", fontSize: 8, fontWeight: "900" }, ownerSortButtonTextActive: { color: "#DDFB72" },
+  squadFilterGroup: { marginTop: 8, minHeight: 54 }, squadFilterGroupLast: { paddingBottom: 2 }, squadFilterScroller: { flexGrow: 0, minHeight: 38 },
   ownerSubmissionBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 42, paddingHorizontal: 13, paddingVertical: 8, backgroundColor: "#F7F9F7", borderTopWidth: 1, borderTopColor: "#E7ECE9" },
   ownerSubmissionIdentity: { flexDirection: "row", alignItems: "center", gap: 7 }, ownerSubmissionLabel: { color: "#6E7D77", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 }, ownerSubmissionPill: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4 }, ownerSubmissionDone: { backgroundColor: "#E1F2E4" }, ownerSubmissionNeeded: { backgroundColor: "#FFF0C8" }, ownerSubmissionMissed: { backgroundColor: "#F7E5E2" }, ownerSubmissionLater: { backgroundColor: "#E8EDF2" }, ownerSubmissionPillText: { fontSize: 7, fontWeight: "900", letterSpacing: 0.25 }, ownerSubmissionDoneText: { color: "#2D6A3B" }, ownerSubmissionNeededText: { color: "#8A6112" }, ownerSubmissionMissedText: { color: "#8B4439" }, ownerSubmissionLaterText: { color: "#617080" },
   ownerSubmissionAction: { flexDirection: "row", alignItems: "center", backgroundColor: "#174D3D", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7 }, ownerSubmissionActionText: { color: "#DDFB72", fontSize: 8, fontWeight: "900" }, ownerSubmissionActionArrow: { color: "#DDFB72", fontSize: 14, lineHeight: 14, fontWeight: "900", marginLeft: 5 }, ownerSubmissionLocked: { color: "#8B9691", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
@@ -758,12 +956,30 @@ const x = StyleSheet.create({
   ownerDisplayName: { color: "#10251F", fontFamily: OWNER_FONT, fontSize: 15, fontWeight: "700", letterSpacing: 0.25 },
   playerListName: { flex: 1, color: "#173028", fontSize: 11, fontWeight: "900" },
   ownerPlayerNameRow: { flexDirection: "row", alignItems: "center", minWidth: 0 }, ownerPlayerChevron: { color: "#61756D", fontSize: 7, fontWeight: "900", marginLeft: 4 }, ownerPlayerTeamRole: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 5 }, ownerPlayerRole: { color: "#536B62", fontSize: 8, fontWeight: "800" }, ownerPlayerCosts: { color: "#7D8B85", fontSize: 8, lineHeight: 11, marginTop: 4 }, ownerPlayerBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 28, paddingVertical: 8 },
-  specialSelectionBanner: { backgroundColor: "#EAF3EE", borderBottomWidth: 1, borderBottomColor: "#D5E2DB", paddingHorizontal: 12, paddingVertical: 10 }, specialSelectionTitle: { color: "#174D3D", fontSize: 10, fontWeight: "900" }, specialSelectionText: { color: "#61736C", fontSize: 8, lineHeight: 12, marginTop: 3 }, specialCheckbox: { width: 21, height: 21, borderRadius: 6, borderWidth: 1.5, borderColor: "#8EA198", alignItems: "center", justifyContent: "center", marginLeft: 8 }, specialCheckboxChecked: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, specialCheckboxText: { color: "#DDFB72", fontSize: 12, fontWeight: "900" }, specialSelectionActions: { paddingHorizontal: 12, paddingBottom: 12 }, specialSelectionMessage: { color: "#315C50", fontSize: 9, fontWeight: "800", paddingHorizontal: 12, paddingVertical: 9 },
-  squadTitleRow: { flexDirection: "row", alignItems: "center" }, squadToggle: { backgroundColor: "#E5ECE8", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, marginLeft: 8 }, squadToggleText: { color: "#315047", fontSize: 8, fontWeight: "900" },
-  squadTeamCard: { backgroundColor: "white", borderRadius: 14, overflow: "hidden", marginBottom: 11 }, squadTeamHeader: { minHeight: 52, borderWidth: 2, flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 7 }, squadTeamHeaderMain: { flex: 1, minHeight: 38, flexDirection: "row", alignItems: "center", paddingHorizontal: 3 }, squadTeamCode: { width: 45, fontSize: 14, fontWeight: "900" }, squadTeamSummary: { flex: 1, fontSize: 8, lineHeight: 12, fontWeight: "800", opacity: 0.92 }, squadTeamChevron: { marginLeft: 7, fontSize: 10, fontWeight: "900" }, squadAddPlayerButton: { minWidth: 49, minHeight: 28, borderRadius: 7, borderWidth: 1, alignItems: "center", justifyContent: "center", marginLeft: 7 }, squadAddPlayerButtonText: { fontSize: 7, fontWeight: "900" },
-  squadAddForm: { backgroundColor: "#F4F7F4", borderBottomWidth: 1, borderBottomColor: "#DDE5E0", padding: 12 }, squadAddFormTitle: { color: "#173028", fontSize: 12, fontWeight: "900", marginBottom: 9 }, squadAddInput: { backgroundColor: "white", borderWidth: 1, borderColor: "#D5DED9", borderRadius: 9, color: "#173028", fontSize: 11, paddingHorizontal: 11, paddingVertical: 9, marginBottom: 8 }, squadAddRoles: { flexDirection: "row", gap: 5, marginBottom: 8 }, squadAddRole: { flex: 1, minHeight: 31, backgroundColor: "#E5ECE8", borderRadius: 7, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 }, squadAddRoleActive: { backgroundColor: "#174D3D" }, squadAddRoleText: { color: "#536B62", fontSize: 7, fontWeight: "900" }, squadAddRoleTextActive: { color: "#DDFB72" }, squadAddLabel: { color: "#60726A", fontSize: 8, fontWeight: "900", marginBottom: 6 }, squadOwnerChoices: { gap: 6, paddingBottom: 9 }, squadOwnerChoice: { backgroundColor: "white", borderWidth: 1, borderColor: "#D5DED9", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }, squadOwnerChoiceActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, squadOwnerChoiceText: { color: "#536B62", fontSize: 8, fontWeight: "800" }, squadOwnerChoiceTextActive: { color: "#DDFB72" }, squadAddSubmit: { backgroundColor: "#DDFB72", borderRadius: 9, minHeight: 38, alignItems: "center", justifyContent: "center" }, squadAddSubmitText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
-  squadPlayerRow: { minHeight: 54, flexDirection: "row", alignItems: "center", paddingLeft: 14, paddingRight: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: "#E8EDE9" }, squadPlayerMain: { flex: 1, minHeight: 40, flexDirection: "row", alignItems: "center", paddingRight: 8 }, squadPlayerNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }, squadPlayerName: { color: "#173028", fontSize: 13, fontWeight: "900" }, squadSelectionCost: { color: "#655B25", backgroundColor: "#F5EFD2", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, fontSize: 7, fontWeight: "900" }, squadPlayerOwner: { color: "#72827B", fontSize: 8, marginTop: 4, fontWeight: "600" },
+  marqueeHeroCard: { backgroundColor: "#F7F0FF", borderWidth: 2, borderColor: "#7B3FA1", borderRadius: 18, padding: 14, marginBottom: 14, shadowColor: "#54276F", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 9, elevation: 3 },
+  marqueeCurrentBlock: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#D7C5E4", borderRadius: 14, padding: 12 },
+  marqueeCurrentHeading: { flexDirection: "row", alignItems: "center", marginBottom: 5 },
+  marqueeCurrentLiveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#33A267", marginRight: 6 },
+  marqueeCurrentEyebrow: { flex: 1, color: "#664377", fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
+  marqueeCurrentBadge: { backgroundColor: "#DDF4E5", borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 },
+  marqueeCurrentBadgeText: { color: "#237347", fontSize: 6, fontWeight: "900", letterSpacing: 0.5 },
+  marqueeCurrentTitle: { color: "#2E1740", fontSize: 13, fontWeight: "900" },
+  marqueeCurrentSlots: { flexDirection: "row", gap: 8, marginTop: 10 },
+  marqueeCurrentSlot: { flex: 1, minWidth: 0, minHeight: 42, flexDirection: "row", alignItems: "center", borderRadius: 11, backgroundColor: "#F0E5F7", borderWidth: 1, borderColor: "#C7AADA", paddingHorizontal: 9 },
+  marqueeCurrentSlotNumber: { width: 21, height: 21, borderRadius: 11, textAlign: "center", textAlignVertical: "center", color: "#FFFFFF", backgroundColor: "#7B3FA1", fontSize: 8, fontWeight: "900", marginRight: 7 },
+  marqueeCurrentSlotName: { flex: 1, color: "#54276F", fontSize: 9, fontWeight: "900" },
+  marqueeCurrentHelp: { color: "#74667C", fontSize: 7, lineHeight: 11, marginTop: 8 },
+  marqueeHeroDivider: { height: 1, backgroundColor: "#D7C5E4", marginVertical: 14 },
+  marqueeHeroTop: { flexDirection: "row", alignItems: "center" }, marqueeHeroIcon: { width: 42, height: 42, borderRadius: 13, backgroundColor: "#7B3FA1", alignItems: "center", justifyContent: "center", marginRight: 10 }, marqueeHeroIconText: { color: "#FFFFFF", fontFamily: OWNER_FONT, fontSize: 21, fontWeight: "900" }, marqueeHeroEyebrow: { color: "#7B3FA1", fontSize: 7, fontWeight: "900", letterSpacing: 1, marginBottom: 3 }, marqueeHeroTitle: { color: "#2E1740", fontSize: 14, fontWeight: "900" }, marqueeHeroCount: { minWidth: 49, borderRadius: 12, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#D9C6E8", alignItems: "center", paddingHorizontal: 8, paddingVertical: 6, marginLeft: 8 }, marqueeHeroCountValue: { color: "#6A3388", fontSize: 14, fontWeight: "900" }, marqueeHeroCountLabel: { color: "#8D719D", fontSize: 5, fontWeight: "900", letterSpacing: 0.5 },
+  marqueeHeroSlots: { flexDirection: "row", gap: 8, marginTop: 13 }, marqueeHeroSlot: { flex: 1, minWidth: 0, minHeight: 46, flexDirection: "row", alignItems: "center", borderWidth: 1, borderStyle: "dashed", borderColor: "#C9B2D8", backgroundColor: "#FFFFFF", borderRadius: 11, paddingHorizontal: 9 }, marqueeHeroSlotFilled: { borderStyle: "solid", borderColor: "#7B3FA1", backgroundColor: "#EDE0F7" }, marqueeHeroSlotNumber: { width: 22, height: 22, borderRadius: 11, textAlign: "center", textAlignVertical: "center", color: "#FFFFFF", backgroundColor: "#9A69B6", fontSize: 8, fontWeight: "900", marginRight: 7 }, marqueeHeroSlotName: { flex: 1, color: "#94829F", fontSize: 8, fontWeight: "800" }, marqueeHeroSlotNameFilled: { color: "#54276F", fontWeight: "900" }, marqueeHeroHelp: { color: "#685B70", fontSize: 8, lineHeight: 12, marginTop: 10 }, marqueeHeroDeadline: { color: "#704091", fontSize: 8, fontWeight: "900", marginTop: 4 }, marqueeHeroSave: { minHeight: 40, borderRadius: 11, backgroundColor: "#7B3FA1", alignItems: "center", justifyContent: "center", marginTop: 11 }, marqueeHeroSaveDisabled: { backgroundColor: "#D7C9E0" }, marqueeHeroSaveText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" }, marqueeHeroLocked: { color: "#685B70", fontSize: 8, lineHeight: 12, marginTop: 10 },
+  specialSelectionBanner: { backgroundColor: "#F8F3FF", borderBottomWidth: 1, borderBottomColor: "#E1D4F1", paddingHorizontal: 13, paddingVertical: 13 }, specialSelectionHeader: { flexDirection: "row", alignItems: "center" }, specialSelectionEyebrow: { color: "#7B3FA1", fontSize: 7, fontWeight: "900", letterSpacing: 0.8, marginBottom: 4 }, specialSelectionTitle: { color: "#2E1740", fontSize: 13, fontWeight: "900" }, specialSelectionText: { color: "#685B70", fontSize: 8, lineHeight: 12, marginTop: 7 }, specialSelectionCount: { minWidth: 48, borderRadius: 11, backgroundColor: "#7B3FA1", alignItems: "center", justifyContent: "center", paddingHorizontal: 8, paddingVertical: 7, marginLeft: 10 }, specialSelectionCountValue: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" }, specialSelectionCountLabel: { color: "#EBDDF5", fontSize: 5, fontWeight: "900", letterSpacing: 0.5, marginTop: 1 }, specialSelectionSlots: { flexDirection: "row", gap: 7, marginTop: 11 }, specialSelectionSlot: { flex: 1, minWidth: 0, borderWidth: 1, borderStyle: "dashed", borderColor: "#CDBBDD", backgroundColor: "#FFFFFF", borderRadius: 9, paddingHorizontal: 9, paddingVertical: 8 }, specialSelectionSlotFilled: { borderStyle: "solid", borderColor: "#7B3FA1", backgroundColor: "#EEE2F7" }, specialSelectionSlotText: { color: "#8A7B92", fontSize: 8, fontWeight: "800" }, specialSelectionSlotTextFilled: { color: "#5F2E7C", fontWeight: "900" }, specialSelectionDeadline: { color: "#5F2E7C", fontSize: 8, fontWeight: "900", marginTop: 9 }, specialSelectionHelp: { color: "#74677B", fontSize: 7, lineHeight: 10, marginTop: 3 }, specialSelectionSave: { minHeight: 36, borderRadius: 9, backgroundColor: "#7B3FA1", alignItems: "center", justifyContent: "center", marginTop: 10 }, specialSelectionSaveDisabled: { backgroundColor: "#D7C9E0" }, specialSelectionSaveText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900" }, specialSelectionInlineMessage: { color: "#5F2E7C", backgroundColor: "#EEE2F7", borderRadius: 7, fontSize: 8, lineHeight: 11, fontWeight: "800", paddingHorizontal: 9, paddingVertical: 7, marginTop: 8 }, specialSelectButton: { alignSelf: "flex-start", borderWidth: 1, borderColor: "#B89DCB", backgroundColor: "#FFFFFF", borderRadius: 7, paddingHorizontal: 8, paddingVertical: 5, marginTop: 7 }, specialSelectButtonChecked: { backgroundColor: "#7B3FA1", borderColor: "#7B3FA1" }, specialSelectButtonDisabled: { opacity: 0.38 }, specialSelectButtonText: { color: "#6A3B83", fontSize: 7, fontWeight: "900" }, specialSelectButtonTextChecked: { color: "#FFFFFF" }, specialSelectionActions: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12, backgroundColor: "#F8F3FF" }, specialSelectionMessage: { color: "#5F2E7C", backgroundColor: "#F8F3FF", fontSize: 9, fontWeight: "800", paddingHorizontal: 12, paddingVertical: 9 },
+  squadHero: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DFE6E2", borderRadius: 20, padding: 16, marginBottom: 14, shadowColor: "#0E2F25", shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
+  squadTitleRow: { flexDirection: "row", alignItems: "flex-start" }, squadEyebrow: { color: "#7A8882", fontSize: 7, fontWeight: "900", letterSpacing: 1.1 }, squadTitle: { color: "#18223B", fontSize: 24, lineHeight: 29, fontWeight: "900", marginTop: 4 }, squadSubtitle: { color: "#687384", fontSize: 10, lineHeight: 15, marginTop: 4, maxWidth: 480 }, squadToggle: { backgroundColor: "#EEF2EF", borderWidth: 1, borderColor: "#D7DFDB", borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginLeft: 10 }, squadToggleText: { color: "#315047", fontSize: 8, fontWeight: "900" },
+  squadOverview: { flexDirection: "row", alignItems: "center", backgroundColor: "#14273F", borderRadius: 15, paddingVertical: 11, marginTop: 14 }, squadOverviewItem: { flex: 1, alignItems: "center" }, squadOverviewValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900" }, squadOverviewLabel: { color: "#AAB8C6", fontSize: 6, fontWeight: "900", letterSpacing: 0.5, marginTop: 3 }, squadOverviewDivider: { width: 1, height: 27, backgroundColor: "#34465B" },
+  squadTeamCard: { backgroundColor: "#FFFFFF", borderRadius: 16, overflow: "hidden", marginBottom: 11, borderWidth: 1, borderColor: "#E0E6E2", shadowColor: "#0E2F25", shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 }, squadTeamHeader: { minHeight: 65, borderLeftWidth: 6, flexDirection: "row", alignItems: "center", paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#FFFFFF" }, squadTeamHeaderMain: { flex: 1, minHeight: 46, flexDirection: "row", alignItems: "center" }, squadTeamCode: { width: 45, fontSize: 14, fontWeight: "900" }, squadTeamBadge: { minWidth: 48, height: 36, borderRadius: 10, borderWidth: 1.5, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, marginRight: 10 }, squadTeamBadgeText: { fontSize: 11, fontWeight: "900" }, squadTeamIdentity: { flex: 1, minWidth: 0 }, squadTeamName: { color: "#18223B", fontSize: 12, fontWeight: "900" }, squadTeamSummary: { color: "#758091", fontSize: 7.5, lineHeight: 11, fontWeight: "800", marginTop: 3 }, squadTeamChevronBubble: { width: 28, height: 28, borderRadius: 9, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginLeft: 7 }, squadTeamChevron: { color: "#53645D", fontSize: 9, fontWeight: "900" }, squadAddPlayerButton: { minWidth: 54, minHeight: 34, borderRadius: 9, borderWidth: 1, borderColor: "#C9D5CF", backgroundColor: "#F7F9F7", alignItems: "center", justifyContent: "center", marginLeft: 8, paddingHorizontal: 8 }, squadAddPlayerButtonActive: { backgroundColor: "#FFF0EC", borderColor: "#D7A89E" }, squadAddPlayerButtonText: { color: "#315047", fontSize: 8, fontWeight: "900" }, squadAddPlayerButtonTextActive: { color: "#8B4439" },
+  squadAddForm: { backgroundColor: "#F4F7F4", borderBottomWidth: 1, borderBottomColor: "#DDE5E0", padding: 12 }, squadAddFormTitle: { color: "#173028", fontSize: 12, fontWeight: "900", marginBottom: 9 }, squadAddInput: { backgroundColor: "white", borderWidth: 1, borderColor: "#D5DED9", borderRadius: 9, color: "#173028", fontSize: 11, paddingHorizontal: 11, paddingVertical: 9, marginBottom: 8 }, squadAddRoles: { flexDirection: "row", gap: 5, marginBottom: 8 }, squadAddRole: { flex: 1, minHeight: 31, backgroundColor: "#E5ECE8", borderRadius: 7, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 }, squadAddRoleActive: { backgroundColor: "#174D3D" }, squadAddRoleText: { color: "#536B62", fontSize: 7, fontWeight: "900" }, squadAddRoleTextActive: { color: "#DDFB72" }, squadAddLabel: { color: "#60726A", fontSize: 8, fontWeight: "900", marginBottom: 6 }, squadOwnerChoices: { gap: 6, paddingBottom: 9 }, squadOwnerChoice: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, flexDirection: "row", alignItems: "center", gap: 5 }, squadOwnerChoiceActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, squadOwnerChoiceText: { fontSize: 8, fontWeight: "800" }, squadOwnerChoiceTextActive: { color: "#DDFB72" }, squadAddSubmit: { backgroundColor: "#DDFB72", borderRadius: 9, minHeight: 38, alignItems: "center", justifyContent: "center" }, squadAddSubmitText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
+  squadPlayerRow: { minHeight: 54, flexDirection: "row", alignItems: "center", paddingLeft: 14, paddingRight: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: "#E8EDE9" }, squadPlayerMain: { flex: 1, minHeight: 40, flexDirection: "row", alignItems: "center", paddingRight: 8 }, squadPlayerNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }, squadPlayerName: { color: "#173028", fontSize: 13, fontWeight: "900" }, squadSelectionCost: { color: "#655B25", backgroundColor: "#F5EFD2", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, fontSize: 7, fontWeight: "900" }, squadPlayerOwnerRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 4 }, squadPlayerOwner: { color: "#72827B", fontSize: 8, fontWeight: "700" }, squadInactiveLabel: { color: "#8E3D35", backgroundColor: "#FBE9E5", borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, fontSize: 7, fontWeight: "900" },
   squadScoreBlock: { flexDirection: "row", alignItems: "center", gap: 8, marginLeft: 8 }, squadRoyaltyPoints: { color: "#704091", fontSize: 7, fontWeight: "900" }, squadPlayerPoints: { color: "#174D3D", fontSize: 11, fontWeight: "900" }, squadPointsPending: { color: "#8A9691", fontSize: 11, textAlign: "right", fontWeight: "800", marginLeft: 9 }, squadPlayerChevron: { color: "#61756D", fontSize: 9, fontWeight: "900", marginLeft: 7 }, squadPointsBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 28, paddingVertical: 8 }, squadPointsWarning: { backgroundColor: "#FFF0EC", borderRadius: 10, padding: 10, marginBottom: 10 }, squadPointsWarningText: { color: "#7A4036", fontSize: 9, fontWeight: "700" },
   squadPlayerRowInactive: { backgroundColor: "#F0F1EF", opacity: 0.75 }, squadPlayerNameInactive: { color: "#7F8985", textDecorationLine: "line-through" }, squadEditButton: { minWidth: 50, minHeight: 28, borderRadius: 7, borderWidth: 1, borderColor: "#A9BBB3", backgroundColor: "#F5F8F6", alignItems: "center", justifyContent: "center", paddingHorizontal: 7 }, squadEditButtonText: { color: "#315047", fontSize: 8, fontWeight: "900" }, squadEditForm: { backgroundColor: "#F4F7F4", borderTopWidth: 1, borderTopColor: "#DDE5E0", padding: 12 }, squadEditAvailability: { flexDirection: "row", gap: 7, marginBottom: 9 }, squadEditStatus: { flex: 1, minHeight: 34, borderRadius: 8, borderWidth: 1, borderColor: "#CBD6D0", alignItems: "center", justifyContent: "center" }, squadEditStatusActive: { backgroundColor: "#EAF6E5", borderColor: "#9FC694" }, squadEditStatusInactive: { backgroundColor: "#FFF0EC", borderColor: "#E0AFA4" }, squadEditStatusText: { color: "#65766F", fontSize: 8, fontWeight: "900" }, squadEditStatusTextActive: { color: "#285F39" }, squadEditStatusTextInactive: { color: "#7A4036" }, squadEditBidNote: { color: "#7A6A31", fontSize: 8, fontWeight: "800", marginBottom: 9 }, squadAvailabilityMessage: { backgroundColor: "#EAF6E5", borderRadius: 10, padding: 10, marginBottom: 10 }, squadAvailabilityMessageText: { color: "#285F39", fontSize: 9, fontWeight: "800" },
-  ownerBlock: { borderTopWidth: 1, borderTopColor: "#DCE4DF" }, ownerName: { color: "#10251F", fontFamily: OWNER_FONT, fontSize: 15, fontWeight: "700", letterSpacing: 0.25 }, ownerMeta: { color: "#718079", fontSize: 9, marginTop: 4 }, transferSummary: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, transferUsed: { color: "#315C50", backgroundColor: "#E4F0EB", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "800" }, transferBalance: { color: "#6B5B1E", backgroundColor: "#F5EFD2", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "900" }, historyPlayer: { flexDirection: "row", alignItems: "center", minHeight: 58, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "#FAFBF8", borderTopWidth: 1, borderTopColor: "#E4EAE6" }, playerName: { color: "#173028", fontSize: 13, lineHeight: 18, fontWeight: "800" }, playerMetaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, teamBadge: { overflow: "hidden", borderWidth: 1, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, fontSize: 8, fontWeight: "900" }, roleText: { color: "#536B62", backgroundColor: "#E7EEE9", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "700" }, ownershipText: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "800" }, ownershipMine: { color: "#285F39", backgroundColor: "#DFF0DD" }, ownershipOpen: { color: "#4E5F58", backgroundColor: "#E7ECE9" }, ownershipOther: { color: "#74463D", backgroundColor: "#F8E6E1" }, baseText: { color: "#7D8B85", fontSize: 9, fontWeight: "600" }, playerValue: { color: "#174D3D", fontSize: 13, fontWeight: "900", marginHorizontal: 8 }, marker: { color: "#173028", backgroundColor: "#DDFB72", borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, fontSize: 8, fontWeight: "900" }, playerBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 34, paddingVertical: 8 }, breakdownLine: { flexDirection: "row", paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: "#E1E7E3" }, breakdownLabel: { flex: 1, color: "#63756E", fontSize: 9 }, breakdownValue: { color: "#40574F", fontSize: 9 }, breakdownStrong: { color: "#173028", fontWeight: "900" },
+  ownerBlock: { borderTopWidth: 1, borderTopColor: "#DCE4DF" }, ownerNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 }, ownerName: { color: "#10251F", fontFamily: OWNER_FONT, fontSize: 15, fontWeight: "700", letterSpacing: 0.25 }, historyBoosterBadge: { backgroundColor: "#6D44C5", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }, historyBoosterBadgeText: { color: "#FFFFFF", fontSize: 8, fontWeight: "900", letterSpacing: 0.5 }, ownerMeta: { color: "#718079", fontSize: 9, marginTop: 4 }, transferSummary: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, transferUsed: { color: "#315C50", backgroundColor: "#E4F0EB", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "800" }, transferBalance: { color: "#6B5B1E", backgroundColor: "#F5EFD2", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "900" }, historyPlayer: { flexDirection: "row", alignItems: "center", minHeight: 58, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "#FAFBF8", borderTopWidth: 1, borderTopColor: "#E4EAE6" }, playerName: { color: "#173028", fontSize: 13, lineHeight: 18, fontWeight: "800" }, playerMetaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, teamBadge: { overflow: "hidden", borderWidth: 1, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, fontSize: 8, fontWeight: "900" }, roleText: { color: "#536B62", backgroundColor: "#E7EEE9", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "700" }, ownershipText: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 8, fontWeight: "800" }, ownershipMine: { color: "#285F39", backgroundColor: "#DFF0DD" }, ownershipOpen: { color: "#4E5F58", backgroundColor: "#E7ECE9" }, ownershipOther: { color: "#74463D", backgroundColor: "#F8E6E1" }, baseText: { color: "#7D8B85", fontSize: 9, fontWeight: "600" }, playerValue: { color: "#174D3D", fontSize: 13, fontWeight: "900", marginHorizontal: 8 }, marker: { color: "#173028", backgroundColor: "#DDFB72", borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, fontSize: 8, fontWeight: "900" }, playerBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 34, paddingVertical: 8 }, breakdownLine: { flexDirection: "row", paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: "#E1E7E3" }, breakdownLabel: { flex: 1, color: "#63756E", fontSize: 9 }, breakdownValue: { color: "#40574F", fontSize: 9 }, breakdownStrong: { color: "#173028", fontWeight: "900" },
 });
