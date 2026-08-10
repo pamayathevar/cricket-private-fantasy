@@ -1247,6 +1247,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     if (firstMissingPriorMatch) { setSubmitMessage(`Submit Match ${firstMissingPriorMatch} before submitting Match ${activeMatchNumber}`); setSubmitBusy(false); return; }
     const matchNumber = Number(activeMatchId.replace("M", ""));
     if (hasSavedCurrentLineup && !futureResetConfirmed) {
+      setFutureSubmittedMatches([]);
       const futureResult = await supabase.from("lineup_submissions").select("fixture:fixtures!inner(match_number)").eq("league_id", leagueId).eq("member_id", memberId).eq("status", "submitted").gt("fixture.match_number", matchNumber);
       if (futureResult.error) { setSubmitMessage(userActionError(futureResult.error, "Future lineup check")); setSubmitBusy(false); return; }
       const futureMatches = Array.from(new Set((futureResult.data ?? []).map((row: any) => Number(row.fixture?.match_number)).filter(Number.isFinite))).sort((left, right) => left - right);
@@ -1266,7 +1267,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       const verification = await supabase.from("lineup_players").select("player_id", { count: "exact" }).eq("lineup_id", savedLineupId);
       if (verification.error) { const message = "Your lineup was submitted, but confirmation could not be loaded. Refresh the match before submitting again."; if (__DEV__) console.warn("Lineup verification failed:", verification.error.message); setSubmitMessage(message); Alert.alert("Confirmation unavailable", message); }
       else if ((verification.count ?? verification.data?.length ?? 0) !== selected.length) { const message = `Team verification found ${verification.count ?? verification.data?.length ?? 0}/${selected.length} saved players. Please submit again.`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
-      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setFutureSubmittedMatches([]); setShowFutureResetWarning(false); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
+      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setShowFutureResetWarning(false); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
     }
     setSubmitBusy(false);
   };
@@ -1510,16 +1511,17 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <View style={s.futureResetDetails}><Text style={s.futureResetDetail}>• Their transfers and boosters will be refunded.</Text><Text style={s.futureResetDetail}>• This revised XI will carry forward.</Text><Text style={s.futureResetDetail}>• You must submit those matches again in order.</Text></View>
 <View style={s.futureResetActions}><TouchableOpacity style={s.futureResetCancel} onPress={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}><Text style={s.futureResetCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={s.futureResetConfirm} onPress={() => { setShowFutureResetWarning(false); runAction(() => submitXI(true)); }}><Text style={s.futureResetConfirmText}>Reset & resubmit</Text></TouchableOpacity></View>
 </View></View>
-</Modal><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowSubmitConfirmation(false)}>
+</Modal><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); }}>
 <View style={s.submitModalOverlay}><View style={s.submitModalCard}>
 <View style={s.submitModalCheck}><Text style={s.submitModalCheckText}>✓</Text></View>
 <Text style={s.submitModalEyebrow}>LINEUP CONFIRMED</Text>
 <Text style={s.submitModalTitle}>Match {activeMatchNumber} submitted</Text>
 <View style={s.submitModalTeams}><IplTeamBadge code={fixture.home} /><Text style={s.submitModalVs}>VS</Text><IplTeamBadge code={fixture.away} /></View>
 <View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{matchTransfers}</Text><Text style={s.submitModalStatLabel}>TRANSFERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
+{futureSubmittedMatches.length ? <View style={s.futureResetSuccess}><Text style={s.futureResetSuccessTitle}>Future submissions reset</Text><Text style={s.futureResetSuccessText}>Matches {futureSubmittedMatches.join(", ")} now carry this revised XI and must be submitted again in order.</Text></View> : null}
 {submissionWarnings.length ? <View style={s.submitModalWarning}><View style={s.submitModalWarningHeading}><View style={s.submitModalWarningIcon}><Text style={s.submitModalWarningIconText}>!</Text></View><Text style={s.submitModalWarningTitle}>Submitted with {submissionWarnings.length} notice{submissionWarnings.length > 1 ? "s" : ""}</Text></View>{submissionWarnings.map(warning => <Text key={warning} style={s.submitModalWarningText}>• {warning}</Text>)}</View> : null}
-<Text style={s.submitModalNote}>Your XI is confirmed. You can make changes and resubmit until the lineup locks.</Text>
-<TouchableOpacity style={s.submitModalButton} onPress={() => setShowSubmitConfirmation(false)}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
+<Text style={s.submitModalNote}>{futureSubmittedMatches.length ? "Their transfers and boosters were refunded." : "Your XI is confirmed. You can make changes and resubmit until the lineup locks."}</Text>
+<TouchableOpacity style={s.submitModalButton} onPress={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); }}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
 </View></View>
 </Modal></View>;
 }
@@ -1737,6 +1739,9 @@ const s = StyleSheet.create({
   futureResetCancelText: { color: "#496059", fontSize: 13, fontWeight: "900" },
   futureResetConfirm: { flex: 1.35, backgroundColor: "#B83C1C", borderRadius: 14, paddingVertical: 13, alignItems: "center" },
   futureResetConfirmText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
+  futureResetSuccess: { width: "100%", backgroundColor: "#EAF6E5", borderWidth: 1, borderColor: "#A9D39A", borderRadius: 14, paddingHorizontal: 13, paddingVertical: 11, marginTop: 15 },
+  futureResetSuccessTitle: { color: "#245B31", fontSize: 12, fontWeight: "900", textAlign: "center" },
+  futureResetSuccessText: { color: "#46704D", fontSize: 10, lineHeight: 15, fontWeight: "700", textAlign: "center", marginTop: 3 },
   submitWarningIcon: { color: "#765D16", fontSize: 15, marginRight: 8 },
   submitWarningText: { flex: 1, color: "#765D16", fontSize: 9, lineHeight: 13, fontWeight: "800" },
   stickyTitle: { color: "#173028", fontSize: 13, fontWeight: "900" },
