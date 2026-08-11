@@ -1098,6 +1098,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const [lineupLoadBusy, setLineupLoadBusy] = useState(false);
   const [hasSavedCurrentLineup, setHasSavedCurrentLineup] = useState(false);
   const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
+  const [confirmedTransferCount, setConfirmedTransferCount] = useState(0);
   const [showFutureResetWarning, setShowFutureResetWarning] = useState(false);
   const [futureSubmittedMatches, setFutureSubmittedMatches] = useState<number[]>([]);
   const [showWarnings, setShowWarnings] = useState(false);
@@ -1207,9 +1208,10 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const chargeablePlayerNames = new Set(chosen.filter(player => !ownershipEnabled || player.owner !== ownerName).map(player => player.name));
   const chargeableTransfers = freeTransferMatch ? 0 : countLineupChanges(selected, carriedForwardNames, player => chargeablePlayerNames.has(player));
   const matchTransfers = chargeableTransfers;
+  const displayedMatchTransfers = submitted ? confirmedTransferCount : matchTransfers;
   const transferLimit = activeTransferPeriod?.transfer_limit ?? 0;
   const alreadyUsedTransfers = activeTransferPeriod ? transferUsage[activeTransferPeriod.id] ?? 0 : 0;
-  const displayedTransfers = freeTransferMatch ? "Free" : boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + chargeableTransfers} / ${transferLimit}`;
+  const displayedTransfers = freeTransferMatch ? "Free" : boosterCode === "SUP-TR" ? "Unlimited" : `${alreadyUsedTransfers + displayedMatchTransfers} / ${transferLimit}`;
   const used3X = boosterUses.find(use => use.code === "3X");
   const tripleImpactAvailable = !used3X;
   const currentPhase = leaguePhases.find(phase => activeMatchNumber >= phase.start_match_number && activeMatchNumber <= phase.end_match_number);
@@ -1260,14 +1262,30 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     const playerIdByName = new Map((playerResult.data ?? []).map((leaguePlayer: any) => [leaguePlayer.player.full_name, leaguePlayer.player_id] as [string, string]));
     const playerIds = selected.map(name => playerIdByName.get(name)).filter((id): id is string => !!id);
     if (playerIds.length !== selected.length) { setSubmitMessage("Some selected players could not be matched to the active league squad."); setSubmitBusy(false); return; }
-    const { data: savedLineupId, error } = await supabase.rpc("submit_lineup_with_transfer_enforcement", { p_fixture_id: fixtureResult.data.id, p_player_ids: playerIds, p_captain_player_id: captain ? playerIdByName.get(captain) ?? null : null, p_vice_captain_player_id: vice ? playerIdByName.get(vice) ?? null : null, p_impact_player_id: impactPlayer ? playerIdByName.get(impactPlayer) ?? null : null, p_impact_type: impactType || null, p_booster_code: boosterCode || null, p_booster_player_id: boosterPlayer ? playerIdByName.get(boosterPlayer) ?? null : null });
+    const submissionArgs = { p_fixture_id: fixtureResult.data.id, p_player_ids: playerIds, p_captain_player_id: captain ? playerIdByName.get(captain) ?? null : null, p_vice_captain_player_id: vice ? playerIdByName.get(vice) ?? null : null, p_impact_player_id: impactPlayer ? playerIdByName.get(impactPlayer) ?? null : null, p_impact_type: impactType || null, p_booster_code: boosterCode || null, p_booster_player_id: boosterPlayer ? playerIdByName.get(boosterPlayer) ?? null : null };
+    let { data: savedResult, error } = await supabase.rpc("submit_lineup_with_transfer_result", submissionArgs);
+    const resultRpcUnavailable = !!error
+      && ["PGRST202", "42883"].includes(error.code ?? "")
+      && `${error.message} ${error.details ?? ""}`.includes("submit_lineup_with_transfer_result");
+    if (resultRpcUnavailable) {
+      const legacySubmission = await supabase.rpc("submit_lineup_with_transfer_enforcement", submissionArgs);
+      error = legacySubmission.error;
+      if (!error && legacySubmission.data) {
+        const savedTransfers = await supabase.from("transfer_events").select("transfer_count").eq("league_id", leagueId).eq("member_id", memberId).eq("fixture_id", fixtureResult.data.id).eq("reason", "lineup_change");
+        error = savedTransfers.error;
+        if (!error) savedResult = { lineup_id: legacySubmission.data, charged_transfers: (savedTransfers.data ?? []).reduce((sum, event) => sum + Number(event.transfer_count), 0) } as any;
+      }
+    }
+    const savedLineupId = typeof (savedResult as any)?.lineup_id === "string" ? (savedResult as any).lineup_id : "";
+    const savedTransferCount = Number((savedResult as any)?.charged_transfers);
     if (error) { const detail = userActionError(error, "Team submission"); setSubmitMessage(detail); Alert.alert("Team not submitted", detail); }
     else if (!savedLineupId) { const message = "The lineup could not be confirmed. Please submit again."; setSubmitMessage(message); Alert.alert("Team not submitted", message); }
     else {
       const verification = await supabase.from("lineup_players").select("player_id", { count: "exact" }).eq("lineup_id", savedLineupId);
       if (verification.error) { const message = "Your lineup was submitted, but confirmation could not be loaded. Refresh the match before submitting again."; if (__DEV__) console.warn("Lineup verification failed:", verification.error.message); setSubmitMessage(message); Alert.alert("Confirmation unavailable", message); }
       else if ((verification.count ?? verification.data?.length ?? 0) !== selected.length) { const message = `Team verification found ${verification.count ?? verification.data?.length ?? 0}/${selected.length} saved players. Please submit again.`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
-      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setShowFutureResetWarning(false); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
+      else if (!Number.isInteger(savedTransferCount) || savedTransferCount < 0) { const message = "Your lineup was submitted, but its transfer count could not be confirmed. Refresh the match before submitting again."; setSubmitMessage(message); Alert.alert("Confirmation unavailable", message); }
+      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setConfirmedTransferCount(savedTransferCount); setShowFutureResetWarning(false); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
     }
     setSubmitBusy(false);
   };
@@ -1294,7 +1312,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     if (!fixture.databaseId) return;
     let cancelled = false;
     const loadLineup = async () => {
-      setLineupLoadBusy(true); setFirstMissingPriorMatch(null); setHasPriorPeriodLineup(false); setHasSavedCurrentLineup(false); setSubmitMessage("");
+      setLineupLoadBusy(true); setFirstMissingPriorMatch(null); setHasPriorPeriodLineup(false); setHasSavedCurrentLineup(false); setConfirmedTransferCount(0); setSubmitMessage("");
       const [periodResult, transferResult, phaseResult, boosterRuleResult, boosterUsageResult, earlierFixturesResult, currentResult] = await Promise.all([
         supabase.from("league_transfer_periods").select("id,code,name,start_match_number,end_match_number,transfer_limit,first_match_free").eq("league_id", leagueId).eq("active", true).order("sort_order"),
         supabase.from("transfer_events").select("fixture_id,transfer_period_id,transfer_count,fixture:fixtures(match_number)").eq("league_id", leagueId).eq("member_id", memberId).eq("reason", "lineup_change"),
@@ -1305,7 +1323,10 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
         supabase.from("lineup_submissions").select("id,status,captain_player_id,vice_captain_player_id,impact_player_id,impact_type").eq("fixture_id", fixture.databaseId).eq("member_id", memberId).maybeSingle(),
       ]);
       if (!cancelled && periodResult.data) setTransferPeriods(periodResult.data as TransferPeriod[]);
-      if (!cancelled && transferResult.data) setTransferUsage(transferResult.data.reduce((usage: Record<string, number>, event: any) => event.transfer_period_id && Number(event.fixture?.match_number ?? Number.POSITIVE_INFINITY) < activeMatchNumber ? { ...usage, [event.transfer_period_id]: (usage[event.transfer_period_id] ?? 0) + event.transfer_count } : usage, {}));
+      if (!cancelled && transferResult.data) {
+        setTransferUsage(transferResult.data.reduce((usage: Record<string, number>, event: any) => event.transfer_period_id && Number(event.fixture?.match_number ?? Number.POSITIVE_INFINITY) < activeMatchNumber ? { ...usage, [event.transfer_period_id]: (usage[event.transfer_period_id] ?? 0) + event.transfer_count } : usage, {}));
+        setConfirmedTransferCount(transferResult.data.filter((event: any) => Number(event.fixture?.match_number) === activeMatchNumber).reduce((sum: number, event: any) => sum + Number(event.transfer_count), 0));
+      }
       if (!cancelled && phaseResult.data) setLeaguePhases(phaseResult.data as LeaguePhase[]);
       if (!cancelled && boosterRuleResult.data) setBoosterRuleSettings(boosterRuleResult.data as BoosterRuleSetting[]);
       if (!boosterUsageResult.error && !cancelled) setBoosterUses((boosterUsageResult.data ?? []).map((row: any) => ({ code: row.booster?.code, matchNumber: row.fixture?.match_number })).filter(use => use.code && use.matchNumber));
@@ -1355,7 +1376,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     return () => { cancelled = true; };
   }, [fixture.databaseId, activeMatchId, activeMatchNumber, leagueId, memberId]);
   if (!fixtures.length) return <ScrollView contentContainerStyle={s.content}><View style={s.pendingLeague}><Text style={s.pendingLeagueEyebrow}>{scheduledFixtureCount ? "LINEUPS CLOSED" : "FIXTURES REQUIRED"}</Text><Text style={s.pendingLeagueTitle}>{scheduledFixtureCount ? "No unlocked upcoming matches" : "No fixtures imported"}</Text><Text style={s.pendingLeagueText}>{scheduledFixtureCount ? "Scheduled fixtures exist, but their lineup lock times have passed. Owners cannot submit or change teams after lock." : "This league does not have scheduled fixtures yet. A league administrator must import or configure its fixtures before owners can select a team."}</Text></View></ScrollView>;
-  const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setShowIssues(false); setShowWarnings(false); setShowFutureResetWarning(false); setFutureSubmittedMatches([]); };
+  const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setConfirmedTransferCount(0); setSubmitted(false); setShowIssues(false); setShowWarnings(false); setShowFutureResetWarning(false); setFutureSubmittedMatches([]); };
   const focusPlayerInTeamList = (name: string, team: string) => {
     setFocusedPlayer(name);
     setExpandedTeams(current => current.includes(team) ? current : [...current, team]);
@@ -1453,7 +1474,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       <View style={s.summaryHeaderGrid}>
         <Summary icon="◎" label="PLAYERS" value={`${selected.length}`} suffix={` / ${rules.lineup_size}`} detail={selected.length === rules.lineup_size ? "Full squad" : `${rules.lineup_size - selected.length} still needed`} tone="players" bad={selected.length !== rules.lineup_size} />
         <Summary icon="₹" label="COST" value={`₹${total.toFixed(1)}m`} detail="Total spent" tone="cost" bad={total > rules.lineup_budget} />
-        <Summary icon="↔" label="MATCH TRANS." value={`${matchTransfers}`} detail="This match" tone="match" bad={false} />
+        <Summary icon="↔" label="MATCH TRANS." value={`${displayedMatchTransfers}`} detail="This match" tone="match" bad={false} />
         <Summary icon="▦" label="PERIOD TRANS." value={displayedTransfers.includes(" / ") ? displayedTransfers.split(" / ")[0] : displayedTransfers} suffix={displayedTransfers.includes(" / ") ? ` / ${displayedTransfers.split(" / ")[1]}` : ""} detail="This period" tone="period" bad={false} />
       </View>
       <View style={s.summaryBody}>
@@ -1497,7 +1518,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowIssues(!showIssues)}>
 <Text style={s.stickyMatch}>MATCH {activeMatchNumber} · {fixture.home} VS {fixture.away}</Text>
 <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
-<Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {matchTransfers} transfer{matchTransfers === 1 ? "" : "s"} vs previous XI</Text>
+<Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {displayedMatchTransfers} transfer{displayedMatchTransfers === 1 ? "" : "s"} vs previous XI</Text>
 </TouchableOpacity>
 <TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : runAction(submitXI)}>
 {submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : lineupSubmitActionLabel({ hasSavedLineup: hasSavedCurrentLineup, unchanged: submitted })}</Text>}
@@ -1517,7 +1538,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <Text style={s.submitModalEyebrow}>LINEUP CONFIRMED</Text>
 <Text style={s.submitModalTitle}>Match {activeMatchNumber} submitted</Text>
 <View style={s.submitModalTeams}><IplTeamBadge code={fixture.home} /><Text style={s.submitModalVs}>VS</Text><IplTeamBadge code={fixture.away} /></View>
-<View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{matchTransfers}</Text><Text style={s.submitModalStatLabel}>TRANSFERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
+<View style={s.submitModalSummary}><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{selected.length}</Text><Text style={s.submitModalStatLabel}>PLAYERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{confirmedTransferCount}</Text><Text style={s.submitModalStatLabel}>TRANSFERS</Text></View><View style={s.submitModalDivider} /><View style={s.submitModalStat}><Text style={s.submitModalStatValue}>{boosterCode || "—"}</Text><Text style={s.submitModalStatLabel}>BOOSTER</Text></View></View>
 {futureSubmittedMatches.length ? <View style={s.futureResetSuccess}><Text style={s.futureResetSuccessTitle}>Future submissions reset</Text><Text style={s.futureResetSuccessText}>Matches {futureSubmittedMatches.join(", ")} now carry this revised XI and must be submitted again in order.</Text></View> : null}
 {submissionWarnings.length ? <View style={s.submitModalWarning}><View style={s.submitModalWarningHeading}><View style={s.submitModalWarningIcon}><Text style={s.submitModalWarningIconText}>!</Text></View><Text style={s.submitModalWarningTitle}>Submitted with {submissionWarnings.length} notice{submissionWarnings.length > 1 ? "s" : ""}</Text></View>{submissionWarnings.map(warning => <Text key={warning} style={s.submitModalWarningText}>• {warning}</Text>)}</View> : null}
 <Text style={s.submitModalNote}>{futureSubmittedMatches.length ? "Their transfers and boosters were refunded." : "Your XI is confirmed. You can make changes and resubmit until the lineup locks."}</Text>
@@ -1877,7 +1898,7 @@ const s = StyleSheet.create({
   summaryMetricDot: { width: 5, height: 5, borderRadius: 3, marginRight: 4 },
   summaryMetricDotCentered: { position: "absolute", left: 5, marginRight: 0 },
   summaryMetricText: { flex: 1, minWidth: 0 },
-  summaryMetricTextCentered: { flex: 0, alignItems: "center" },
+  summaryMetricTextCentered: { flex: 1, alignItems: "center" },
   summaryMetricCenteredText: { textAlign: "center" },
   summaryMetricLabel: { color: "#D7DCE8", fontSize: 6, fontWeight: "900", letterSpacing: 0.15 },
   summaryMetricValue: { fontSize: 14, lineHeight: 17, fontWeight: "900", marginTop: 1 },
