@@ -14,6 +14,15 @@
     },
     "android": {
       "package": "com.cpfl.mobile"
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#071D17",
+      "barStyle": "light-content",
+      "translucent": false
+    },
+    "androidNavigationBar": {
+      "backgroundColor": "#FBFCFD",
+      "barStyle": "dark-content"
     }
   }
 }

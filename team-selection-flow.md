@@ -18,7 +18,7 @@ The player picker includes the full eligible league pool, not only auction-owned
 - IPL team
 - playing role
 - match price
-- ownership: Mine, OpenPlayer, or Owned by another owner
+- ownership: Mine, Open, or the other owner's name
 - whether selecting the player consumes a transfer
 - any other-owner usage penalty
 - unique-player restrictions

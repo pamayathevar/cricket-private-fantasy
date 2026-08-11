@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, ImageBackground, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, ImageBackground, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Session } from "@supabase/supabase-js";
 import { Player, Role, squadPlayers as players } from "./squadData";
 import { completedMatchPoints, completedMatchStats } from "./completedMatchPoints";
@@ -10,8 +11,9 @@ import { supabase } from "./supabase";
 import { IplTeamBadge, OwnerBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
 import { userActionError } from "./errorMessages";
 import { boosterForFixture, countLineupChanges, firstMissingOpenPriorMatch, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
+import { CARD_SHADOW, UI_TOKENS, normalizeUiStyles } from "./uiTokens";
 
-type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Admin";
+type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Help" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
 type BoosterCode = "3X" | "2UP" | "SUP-TR" | "";
 type PlayerRoleFilter = "ALL" | Role;
@@ -29,10 +31,10 @@ type DatabaseMembership = {
 };
 type SelectionRules = { version: number; effective_from_match_number: number; lineup_size: number; lineup_budget: number; min_batters: number; min_bowlers: number; min_wicketkeepers: number; min_all_rounders: number; max_from_one_team: number; captain_multiplier: number; vice_captain_multiplier: number };
 
-const standardTabs: Tab[] = ["Ranking", "Team", "Matches", "PlayerSquad", "Squads", "History", "Admin"];
+const standardTabs: Tab[] = ["Team", "Ranking", "History", "Matches", "PlayerSquad", "Squads", "Help", "Admin"];
 const mobilePrimaryTabs: Tab[] = ["Team", "Ranking", "History", "Matches"];
-const mobileMoreTabs: Tab[] = ["PlayerSquad", "Squads", "Admin"];
-const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Matches: "Fixtures", Ranking: "Ranking", PlayerSquad: "Squad", Squads: "Owner", Admin: "Rules" };
+const mobileMoreTabs: Tab[] = ["PlayerSquad", "Squads", "Help", "Admin"];
+const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Matches: "Fixtures", Ranking: "Ranking", History: "Results", PlayerSquad: "Player Pool", Squads: "Owner Squads", Help: "Help", Admin: "Rules" };
 const IPL_2026_DATABASE_ID = "10000000-0000-4000-8000-000000002026";
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
 const useActionGuard = () => {
@@ -43,17 +45,51 @@ const useActionGuard = () => {
     try { await action(); } finally { locked.current = false; }
   };
 };
-const UI = {
-  canvas: "#E9EEEA",
-  surface: "#F7F8F4",
-  card: "#FFFFFF",
-  ink: "#102A22",
-  muted: "#6C7C75",
-  border: "#DCE4DF",
-  primary: "#0B493A",
-  primaryDeep: "#061F19",
-  accent: "#D8FF63",
+const useWebModalFocus = (visible: boolean, modalId: string) => {
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined" || !visible) return;
+    previouslyFocused.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [role="button"]:not([aria-disabled="true"]), [role="tab"]:not([aria-disabled="true"])';
+    const getModal = () => document.getElementById(modalId) ?? document.querySelector<HTMLElement>('[role="dialog"], [aria-modal="true"]');
+    const focusFirstControl = () => {
+      const modal = getModal();
+      const firstControl = modal?.querySelector<HTMLElement>(focusableSelector);
+      firstControl?.focus();
+    };
+    // React Native Web focuses the modal surface after mount; run just after it
+    // so keyboard users land on the first meaningful action instead.
+    const timer = window.setTimeout(focusFirstControl, 250);
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const modal = getModal();
+      if (!modal) return;
+      const controls = Array.from(modal.querySelectorAll<HTMLElement>(focusableSelector)).filter(control => control.getClientRects().length > 0);
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      const active = document.activeElement;
+      if (!modal.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", containFocus, true);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("keydown", containFocus, true);
+      previouslyFocused.current?.focus();
+      previouslyFocused.current = null;
+    };
+  }, [visible, modalId]);
 };
+const UI = UI_TOKENS.colors;
 const LEAGUE_BADGE_COLORS = [
   { primary: "#5B2AA8", dark: "#26104D", accent: "#F5C84B" },
   { primary: "#C93648", dark: "#5E1221", accent: "#FFD166" },
@@ -100,26 +136,31 @@ function LeagueEmblem({ league }: { league: DatabaseMembership["league"] }) {
 }
 
 function CricketTabIcon({ item, active }: { item: Tab; active: boolean }) {
-  const identity: Record<Tab, { glyph: string; color: string; tint: string }> = {
-    Home: { glyph: "⌂", color: "#1F2937", tint: "#EEF1F5" },
-    Ranking: { glyph: "♛", color: "#6D44C5", tint: "#F0EAFE" },
-    Team: { glyph: "XI", color: "#E26836", tint: "#FFF0E8" },
-    Matches: { glyph: "▦", color: "#2878D0", tint: "#E8F3FF" },
-    PlayerSquad: { glyph: "◈", color: "#D64275", tint: "#FDEAF1" },
-    Squads: { glyph: "♟", color: "#138B83", tint: "#E6F7F5" },
-    History: { glyph: "↺", color: "#B57A17", tint: "#FFF4DA" },
-    Admin: { glyph: "☷", color: "#536171", tint: "#EDF1F5" },
-    Auction: { glyph: "◆", color: "#8A4BBD", tint: "#F4EAFE" },
+  const identity: Record<Tab, { glyph: string }> = {
+    Home: { glyph: "⌂" },
+    Ranking: { glyph: "1·2" },
+    Team: { glyph: "XI" },
+    Matches: { glyph: "▦" },
+    PlayerSquad: { glyph: "◎" },
+    Squads: { glyph: "◉" },
+    History: { glyph: "✓" },
+    Help: { glyph: "?" },
+    Admin: { glyph: "≡" },
+    Auction: { glyph: "◆" },
   };
   const icon = identity[item];
-  return <View style={[s.navIconShell, { backgroundColor: active ? icon.color : icon.tint }, active && s.navIconShellActive]}>
-    <Text style={[s.navIconGlyph, { color: active ? "#FFFFFF" : icon.color }, item === "Team" && s.navIconGlyphSmall]}>{icon.glyph}</Text>
-    {item === "Matches" ? <View style={[s.navIconCalendarTop, { backgroundColor: active ? "#FFFFFF" : icon.color }]} /> : null}
+  return <View style={[s.navIconShell, { backgroundColor: active ? UI.primary : UI.primarySoft }, active && s.navIconShellActive]}>
+    <Text style={[s.navIconGlyph, { color: active ? UI.accent : UI.primary }, (item === "Team" || item === "Ranking") && s.navIconGlyphSmall]}>{icon.glyph}</Text>
+    {item === "Matches" ? <View style={[s.navIconCalendarTop, { backgroundColor: active ? UI.accent : UI.primary }]} /> : null}
   </View>;
 }
 
-function tabAccent(item: Tab) {
-  return ({ Ranking: "#6D44C5", Team: "#E26836", Matches: "#2878D0", PlayerSquad: "#D64275", Squads: "#138B83", History: "#B57A17", Admin: "#536171" } as Partial<Record<Tab, string>>)[item] ?? "#536171";
+function tabAccent(_item: Tab) {
+  return UI.primary;
+}
+
+function tabTextAccent(_item: Tab) {
+  return UI.primary;
 }
 
 function HomeIcon() {
@@ -143,7 +184,17 @@ const upcomingMatches = [
 ];
 type UpcomingMatch = typeof upcomingMatches[number] & { databaseId?: string; stage?: "league" | "playoff" | "final"; lineupLockAt?: string };
 const leagueOwners = ipl2026Members.filter(member => member.status === "active" && member.role !== "viewer").map(member => member.name);
-export default function App() {
+function AppContent() {
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    const styleId = "cpfl-accessibility-focus";
+    if (document.getElementById(styleId)) return;
+    const focusStyles = document.createElement("style");
+    focusStyles.id = styleId;
+    focusStyles.textContent = `button:focus-visible, input:focus-visible, [role="button"]:focus-visible, [role="tab"]:focus-visible, [role="switch"]:focus-visible, [role="checkbox"]:focus-visible { outline: 3px solid #0C4A3A !important; outline-offset: 3px !important; } button:active, [role="button"]:active, [role="tab"]:active, [role="switch"]:active, [role="checkbox"]:active { filter: brightness(0.96); transform: translateY(1px); } button[disabled], [aria-disabled="true"] { cursor: not-allowed !important; opacity: 0.58; }`;
+    document.head.appendChild(focusStyles);
+    return () => focusStyles.remove();
+  }, []);
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
@@ -162,6 +213,10 @@ export default function App() {
   if (!authReady) return <AuthLoading />;
   if (!session) return <LoginScreen />;
   return <MembershipGate session={session} />;
+}
+
+export default function App() {
+  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
 }
 
 function MembershipGate({ session }: { session: Session }) {
@@ -190,9 +245,11 @@ function MembershipGate({ session }: { session: Session }) {
 
 function FantasyApp({ session, memberships, refreshMemberships }: { session: Session; memberships: DatabaseMembership[]; refreshMemberships: () => Promise<void> }) {
   const { width: appWidth } = useWindowDimensions();
-  const useMobileNavigation = appWidth < 700;
+  const insets = useSafeAreaInsets();
+  const useMobileNavigation = appWidth < 900;
   const [tab, setTab] = useState<Tab>("Home");
   const [showMobileMore, setShowMobileMore] = useState(false);
+  useWebModalFocus(showMobileMore && useMobileNavigation, "mobile-more-dialog");
   const [activeLeagueId, setActiveLeagueId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [captain, setCaptain] = useState("");
@@ -215,6 +272,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
   const leagueDatabaseId = activeLeague?.id ?? "";
   const tabs = ownershipEnabled === false ? standardTabs.filter(item => item !== "Squads") : standardTabs;
+  const showMobileNavigation = Boolean(activeLeague && tab !== "Home" && useMobileNavigation);
   const resetLineupState = () => {
     setSelected([]); setCaptain(""); setVice(""); setLineupSubmitted(false);
     setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer("");
@@ -269,52 +327,52 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
-  return <SafeAreaView style={s.safe}>
-    <StatusBar barStyle="light-content" />
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Help" ? <HelpScreen openTeam={() => setTab("Team")} openFixtures={() => setTab("Matches")} openHistory={() => setTab("History")} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView key={`ranking:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView key={`players:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView key={`squads:${leagueDatabaseId}`} contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView key={`rules:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  return <SafeAreaView edges={showMobileNavigation ? ["top", "left", "right"] : ["top", "bottom", "left", "right"]} style={s.safe}>
+    <StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} />
     <View style={s.appShell}>
-      <View style={[s.header, s.headerModern]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : "#6D44C5" }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={s.headerIdentity}><Text style={[s.eyebrow, s.eyebrowModern]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={s.headerMetaRow}><Text style={[s.signedInAs, s.signedInAsModern]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={s.livePill}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
+      <View style={[s.header, s.headerModern, useMobileNavigation && s.headerModernMobile]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : UI.primary }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, useMobileNavigation && s.logoModernMobile, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={[s.headerIdentity, useMobileNavigation && s.headerIdentityMobile]}><Text style={[s.eyebrow, s.eyebrowModern, useMobileNavigation && s.eyebrowModernMobile]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern, useMobileNavigation && s.brandModernMobile]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={[s.headerMetaRow, useMobileNavigation && s.headerMetaRowMobile]}><Text style={[s.signedInAs, s.signedInAsModern, useMobileNavigation && s.signedInAsModernMobile]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={[s.livePill, useMobileNavigation && s.livePillMobile]}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
       {activeLeague && tab !== "Home" && !useMobileNavigation ? <View style={s.topNavigationShell}><ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} contentContainerStyle={s.topNavigationContent}>{tabs.map(item => {
         const active = tab === item;
         const accent = tabAccent(item);
         const label = tabLabels[item] ?? item;
         return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.topNavigationItem, active && { backgroundColor: `${accent}16`, borderColor: accent }]} onPress={() => setTab(item)}>
           <CricketTabIcon item={item} active={active} />
-          <Text style={[s.topNavigationLabel, active && { color: accent }]}>{label}</Text>
+          <Text style={[s.topNavigationLabel, active && { color: tabTextAccent(item) }]}>{label}</Text>
           {active ? <View pointerEvents="none" style={[s.topNavigationIndicator, { backgroundColor: accent }]} /> : null}
         </TouchableOpacity>;
       })}</ScrollView></View> : null}
       <View style={s.leagueContentShell}>{leagueContent}</View>
-      {activeLeague && tab !== "Home" && useMobileNavigation ? <View accessibilityRole="tablist" style={s.mobilePrimaryNavigation}>
+      {showMobileNavigation ? <View accessibilityRole="tablist" style={[s.mobilePrimaryNavigation, { height: 70 + insets.bottom, paddingBottom: insets.bottom }]}>
         {mobilePrimaryTabs.map(item => {
           const active = tab === item;
           const accent = tabAccent(item);
           const label = tabLabels[item] ?? item;
           return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.mobilePrimaryTab, active && s.mobilePrimaryTabActive]} onPress={() => { setShowMobileMore(false); setTab(item); }}>
             <CricketTabIcon item={item} active={active} />
-            <Text style={[s.mobilePrimaryTabLabel, active && { color: accent }]}>{label}</Text>
+            <Text style={[s.mobilePrimaryTabLabel, active && { color: tabTextAccent(item) }]}>{label}</Text>
             {active ? <View pointerEvents="none" style={[s.mobilePrimaryIndicator, { backgroundColor: accent }]} /> : null}
           </TouchableOpacity>;
         })}
         <TouchableOpacity accessibilityRole="tab" accessibilityLabel={`More${mobileMoreTabs.includes(tab) ? ", selected" : ""}`} accessibilityState={{ selected: mobileMoreTabs.includes(tab) }} style={[s.mobilePrimaryTab, mobileMoreTabs.includes(tab) && s.mobilePrimaryTabActive]} onPress={() => setShowMobileMore(true)}>
           <View style={[s.navIconShell, { backgroundColor: mobileMoreTabs.includes(tab) ? tabAccent(tab) : "#EDF1F5" }]}><Text style={[s.mobileMoreGlyph, mobileMoreTabs.includes(tab) && s.mobileMoreGlyphActive]}>•••</Text></View>
-          <Text style={[s.mobilePrimaryTabLabel, mobileMoreTabs.includes(tab) && { color: tabAccent(tab) }]}>More</Text>
+          <Text style={[s.mobilePrimaryTabLabel, mobileMoreTabs.includes(tab) && { color: tabTextAccent(tab) }]}>More</Text>
           {mobileMoreTabs.includes(tab) ? <View pointerEvents="none" style={[s.mobilePrimaryIndicator, { backgroundColor: tabAccent(tab) }]} /> : null}
         </TouchableOpacity>
       </View> : null}
       <Modal visible={showMobileMore && useMobileNavigation} transparent animationType="slide" statusBarTranslucent onRequestClose={() => setShowMobileMore(false)}>
-        <TouchableOpacity activeOpacity={1} style={s.mobileMoreOverlay} onPress={() => setShowMobileMore(false)}>
-          <View style={s.mobileMoreSheet} onStartShouldSetResponder={() => true}>
+        <TouchableOpacity accessible={false} activeOpacity={1} style={s.mobileMoreOverlay} onPress={() => setShowMobileMore(false)}>
+          <View nativeID="mobile-more-dialog" accessibilityViewIsModal accessibilityLabel="More league navigation" style={[s.mobileMoreSheet, { paddingBottom: Math.max(20, insets.bottom + 12) }]} onStartShouldSetResponder={() => true}>
             <View style={s.mobileMoreHandle} />
             <View style={s.mobileMoreHeader}><View style={{ flex: 1 }}><Text style={s.mobileMoreEyebrow}>MORE</Text><Text style={s.mobileMoreTitle}>League navigation</Text></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close more menu" style={s.mobileMoreClose} onPress={() => setShowMobileMore(false)}><Text style={s.mobileMoreCloseText}>×</Text></TouchableOpacity></View>
             {mobileMoreTabs.filter(item => tabs.includes(item)).map(item => {
               const active = tab === item;
               const accent = tabAccent(item);
               const label = tabLabels[item] ?? item;
-              return <TouchableOpacity key={item} style={[s.mobileMoreItem, active && { backgroundColor: `${accent}16`, borderColor: `${accent}55` }]} onPress={() => { setTab(item); setShowMobileMore(false); }}><CricketTabIcon item={item} active={active} /><Text style={[s.mobileMoreItemLabel, active && { color: accent }]}>{label}</Text><Text style={[s.mobileMoreArrow, active && { color: accent }]}>{active ? "✓" : "›"}</Text></TouchableOpacity>;
+              return <TouchableOpacity key={item} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[s.mobileMoreItem, active && { backgroundColor: `${accent}16`, borderColor: `${accent}55` }]} onPress={() => { setTab(item); setShowMobileMore(false); }}><CricketTabIcon item={item} active={active} /><Text style={[s.mobileMoreItemLabel, active && { color: tabTextAccent(item) }]}>{label}</Text><Text style={[s.mobileMoreArrow, active && { color: tabTextAccent(item) }]}>{active ? "✓" : "›"}</Text></TouchableOpacity>;
             })}
             <View style={s.mobileMoreDivider} />
-            <TouchableOpacity style={s.mobileMoreSignOut} onPress={() => supabase.auth.signOut()}><Text style={s.mobileMoreSignOutText}>Sign out</Text></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sign out" style={s.mobileMoreSignOut} onPress={() => supabase.auth.signOut()}><Text style={s.mobileMoreSignOutText}>Sign out</Text></TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -323,7 +381,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
 }
 
 function AuthLoading() {
-  return <SafeAreaView style={s.authSafe}><StatusBar barStyle="light-content" /><ActivityIndicator color="#DDFB72" size="large" /><Text style={s.authLoadingText}>Opening your league…</Text></SafeAreaView>;
+  return <SafeAreaView edges={["top", "bottom", "left", "right"]} accessibilityRole="progressbar" accessibilityLabel="Opening your league" accessibilityLiveRegion="polite" style={s.authSafe}><StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} /><ActivityIndicator color={UI.accent} size="large" /><Text style={s.authLoadingText}>Opening your league…</Text></SafeAreaView>;
 }
 
 function LoginScreen() {
@@ -350,11 +408,11 @@ function LoginScreen() {
     if (error) setMessage(userActionError(error, "Sign in"));
   };
 
-  return <SafeAreaView style={s.authSafe}><StatusBar barStyle="light-content" /><KeyboardAvoidingView style={s.authKeyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}><ScrollView contentContainerStyle={s.authScroll} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets><View style={s.authCard}><View style={s.authLogo}><Text style={s.authLogoText}>CP</Text></View><Text style={s.authTitle}>Cricket Private Fantasy</Text><Text style={s.authSubtitle}>{codeSent ? `Enter the code sent to ${normalizedEmail}` : "Sign in with your registered league email"}</Text><TextInput value={email} onChangeText={value => { setEmail(value); setCodeSent(false); setCode(""); setMessage(""); }} editable={!busy} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" style={s.authInput} />{codeSent && <TextInput value={code} onChangeText={setCode} editable={!busy} keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" placeholder="Email code" placeholderTextColor="#8B9893" style={s.authInput} />}{message ? <Text style={[s.authMessage, message.startsWith("A login") && s.authSuccess]}>{message}</Text> : null}<TouchableOpacity disabled={busy} style={[s.authButton, busy && s.disabled]} onPress={codeSent ? verifyCode : sendCode}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.authButtonText}>{codeSent ? "Verify and sign in" : "Send login code"}</Text>}</TouchableOpacity>{codeSent && <TouchableOpacity disabled={busy} onPress={sendCode}><Text style={s.authLink}>Send a new code</Text></TouchableOpacity>}</View></ScrollView></KeyboardAvoidingView></SafeAreaView>;
+  return <SafeAreaView edges={["top", "bottom", "left", "right"]} style={s.authSafe}><StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} /><KeyboardAvoidingView style={s.authKeyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}><ScrollView contentContainerStyle={s.authScroll} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets><View style={s.authCard}><View style={s.authLogo}><Text style={s.authLogoText}>CP</Text></View><Text style={s.authTitle}>Cricket Private Fantasy</Text><Text style={s.authSubtitle}>{codeSent ? `Enter the code sent to ${normalizedEmail}` : "Sign in with your registered league email"}</Text><TextInput accessibilityLabel="Email address" value={email} onChangeText={value => { setEmail(value); setCodeSent(false); setCode(""); setMessage(""); }} editable={!busy} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" style={s.authInput} />{codeSent && <TextInput accessibilityLabel="Email verification code" value={code} onChangeText={setCode} editable={!busy} keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" placeholder="Email code" placeholderTextColor="#8B9893" style={s.authInput} />}{message ? <Text accessibilityLiveRegion="polite" style={[s.authMessage, message.startsWith("A login") && s.authSuccess]}>{message}</Text> : null}<TouchableOpacity accessibilityRole="button" accessibilityLabel={codeSent ? "Verify and sign in" : "Send login code"} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.authButton, busy && s.disabled]} onPress={codeSent ? verifyCode : sendCode}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.authButtonText}>{codeSent ? "Verify and sign in" : "Send login code"}</Text>}</TouchableOpacity>{codeSent && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Send a new login code" accessibilityState={{ disabled: busy }} disabled={busy} onPress={sendCode}><Text style={s.authLink}>Send a new code</Text></TouchableOpacity>}</View></ScrollView></KeyboardAvoidingView></SafeAreaView>;
 }
 
 function AccessDenied({ email, detail }: { email: string; detail?: string }) {
-  return <SafeAreaView style={s.authSafe}><View style={s.authCard}><Text style={s.authTitle}>Access unavailable</Text><Text style={s.authSubtitle}>{detail ?? `${email} has no league invitation. Ask a league administrator to invite this email.`}</Text><TouchableOpacity style={s.authButton} onPress={() => supabase.auth.signOut()}><Text style={s.authButtonText}>Sign out</Text></TouchableOpacity></View></SafeAreaView>;
+  return <SafeAreaView edges={["top", "bottom", "left", "right"]} style={s.authSafe}><StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} /><View accessibilityRole="alert" accessibilityLiveRegion="polite" style={s.authCard}><View style={s.accessDeniedIcon}><Text style={s.accessDeniedIconText}>!</Text></View><Text style={s.authTitle}>Access unavailable</Text><Text style={s.authSubtitle}>{detail ?? `${email} has no active league invitation. Ask a league administrator to invite this email.`}</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Sign out and return to login" style={s.authButton} onPress={() => supabase.auth.signOut()}><Text style={s.authButtonText}>Return to sign in</Text></TouchableOpacity></View></SafeAreaView>;
 }
 
 function LeaguePicker({ memberships, activeLeagueId, onSelect, onChanged }: { memberships: DatabaseMembership[]; activeLeagueId: string; onSelect: (id: string) => void; onChanged: () => Promise<void> }) {
@@ -373,7 +431,7 @@ function LeaguePicker({ memberships, activeLeagueId, onSelect, onChanged }: { me
   });
   return <ImageBackground source={require("./assets/cricket-home-background-v2.png")} resizeMode="cover" style={s.homeBackground} imageStyle={s.homeBackgroundImage}>
     <View pointerEvents="none" style={s.homeBackgroundShade} />
-    <ScrollView contentContainerStyle={[s.content, s.homeContent]}><Text style={s.homeGreeting}>Your leagues</Text><Text style={s.homeSubtitle}>Accept invitations or open a league where your participation is active.</Text>{message ? <View style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}{ordered.map(membership => { const league = membership.league; const active = membership.status === "active"; const formatNote = leagueFormatNote(league); const statusLabel = membership.status === "accepted" ? "Accepted · waiting for activation" : membership.status === "suspended" ? "Deactivated" : membership.status.charAt(0).toUpperCase() + membership.status.slice(1); return <View key={membership.id} style={[s.leagueCard, s.homeLeagueCard, s.leagueCardModern, activeLeagueId === league.id && s.leagueCardSelected]}><View pointerEvents="none" style={[s.leagueCardAccent, { backgroundColor: leagueBadge(league).primary }]} /><TouchableOpacity disabled={!active} style={s.leagueCardMain} onPress={() => onSelect(league.id)}><LeagueEmblem league={league} /><View style={{ flex: 1 }}><Text style={s.leagueName}>{league.name}</Text><Text style={s.leagueMeta}>{league.competition} · {league.season_year} · {membership.role === "league_admin" ? "Admin" : "Owner"}</Text>{formatNote ? <Text style={s.leagueFormatNote} numberOfLines={2}>{formatNote}</Text> : null}<Text style={[s.leagueStatus, active ? s.leagueStatusActive : s.leagueStatusPending]}>{statusLabel}</Text></View>{active ? <Text style={s.leagueArrow}>›</Text> : null}</TouchableOpacity>{membership.status === "invited" ? <View style={s.invitationActions}><TouchableOpacity disabled={responding === membership.id} style={s.invitationDecline} onPress={() => respond(membership, false)}><Text style={s.invitationDeclineText}>Decline</Text></TouchableOpacity><TouchableOpacity disabled={responding === membership.id} style={s.invitationAccept} onPress={() => respond(membership, true)}>{responding === membership.id ? <ActivityIndicator color="#10251F" /> : <Text style={s.invitationAcceptText}>Accept invitation</Text>}</TouchableOpacity></View> : null}</View>; })}</ScrollView>
+    <ScrollView contentContainerStyle={[s.content, s.homeContent]}><Text style={s.homeGreeting}>Your leagues</Text><Text style={s.homeSubtitle}>Accept invitations or open a league where your participation is active.</Text>{message ? <View accessibilityLiveRegion="polite" style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}{ordered.map(membership => { const league = membership.league; const active = membership.status === "active"; const formatNote = leagueFormatNote(league); const statusLabel = membership.status === "accepted" ? "Accepted · waiting for activation" : membership.status === "suspended" ? "Deactivated" : membership.status.charAt(0).toUpperCase() + membership.status.slice(1); return <View key={membership.id} style={[s.leagueCard, s.homeLeagueCard, s.leagueCardModern, activeLeagueId === league.id && s.leagueCardSelected]}><View pointerEvents="none" style={[s.leagueCardAccent, { backgroundColor: leagueBadge(league).primary }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Open ${league.name}`} accessibilityHint={`${league.competition}, ${league.season_year}, ${statusLabel}`} accessibilityState={{ disabled: !active }} disabled={!active} style={s.leagueCardMain} onPress={() => onSelect(league.id)}><LeagueEmblem league={league} /><View style={{ flex: 1 }}><Text style={s.leagueName}>{league.name}</Text><Text style={s.leagueMeta}>{league.competition} · {league.season_year} · {membership.role === "league_admin" ? "Admin" : "Owner"}</Text>{formatNote ? <Text style={s.leagueFormatNote} numberOfLines={2}>{formatNote}</Text> : null}<Text style={[s.leagueStatus, active ? s.leagueStatusActive : s.leagueStatusPending]}>{statusLabel}</Text></View>{active ? <Text style={s.leagueArrow}>›</Text> : null}</TouchableOpacity>{membership.status === "invited" ? <View style={s.invitationActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Decline ${league.name} invitation`} disabled={responding === membership.id} style={s.invitationDecline} onPress={() => respond(membership, false)}><Text style={s.invitationDeclineText}>Decline</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Accept ${league.name} invitation`} disabled={responding === membership.id} style={s.invitationAccept} onPress={() => respond(membership, true)}>{responding === membership.id ? <ActivityIndicator color="#10251F" /> : <Text style={s.invitationAcceptText}>Accept invitation</Text>}</TouchableOpacity></View> : null}</View>; })}</ScrollView>
   </ImageBackground>;
 }
 function LeagueSetupPending({ league }: { league: { name: string; format: string; season: string } }) {
@@ -466,9 +524,9 @@ function OwnerManagement({ leagueId, canEdit, onMembersChanged }: { leagueId: st
     setBusy(false);
   };
   return <View>
-    {canEdit ? <View style={s.adminCard}><Text style={s.adminGroupTitle}>Invite owner</Text><TextInput style={s.ownerAdminInput} value={name} onChangeText={value => { setName(value); setMessage(""); }} placeholder="Owner name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={email} onChangeText={value => { setEmail(value); setMessage(""); }} autoCapitalize="none" keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" /><View style={s.ownerRoleRow}><TouchableOpacity style={[s.ownerRoleButton, role === "owner" && s.ownerRoleButtonActive]} onPress={() => setRole("owner")}><Text style={s.ownerRoleText}>Owner</Text></TouchableOpacity><TouchableOpacity style={[s.ownerRoleButton, role === "league_admin" && s.ownerRoleButtonActive]} onPress={() => setRole("league_admin")}><Text style={s.ownerRoleText}>League admin</Text></TouchableOpacity></View><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(invite)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create invitation</Text>}</TouchableOpacity>{message ? <View style={[s.ownerInviteMessage, message.startsWith("Invitation created") && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}</View> : null}
-    <View style={s.adminPhaseHeader}><Text style={s.adminGroupTitle}>League participants</Text><TouchableOpacity style={s.resetButton} onPress={load}><Text style={s.resetButtonText}>Refresh</Text></TouchableOpacity></View>
-    {members.map(member => <View key={member.id} style={s.ownerAdminRow}><View style={s.badge}><Text style={s.badgeText}>{member.display_name[0]}</Text></View><View style={{ flex: 1, marginLeft: 9 }}>{editingMemberId === member.id ? <View style={s.ownerRenamePanel}><TextInput autoFocus maxLength={60} selectTextOnFocus style={s.ownerRenameInput} value={editingName} onChangeText={setEditingName} placeholder="Display name" placeholderTextColor="#8B9893" /><View style={s.ownerRenameActions}><TouchableOpacity disabled={busy} style={s.ownerRenameCancel} onPress={() => { setEditingMemberId(""); setEditingName(""); }}><Text style={s.ownerRenameCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity disabled={busy} style={s.ownerRenameSave} onPress={() => runAction(() => renameMember(member))}>{busy ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={s.ownerRenameSaveText}>Save name</Text>}</TouchableOpacity></View></View> : <><Text style={s.ownerDisplayName}>{member.display_name}</Text><Text style={s.meta}>{member.email} · {member.role === "league_admin" ? "Admin" : "Owner"}</Text><Text style={[s.leagueStatus, member.status === "active" ? s.leagueStatusActive : s.leagueStatusPending]}>{member.status === "suspended" ? "deactivated" : member.status}</Text></>}</View>{canEdit && editingMemberId !== member.id ? <View style={s.ownerAdminActions}><TouchableOpacity disabled={busy} style={s.ownerEditName} onPress={() => beginRename(member)}><Text style={s.ownerEditNameText}>Edit name</Text></TouchableOpacity>{member.status === "accepted" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => runAction(() => changeStatus(member, "active"))}><Text style={s.ownerActivateText}>Activate</Text></TouchableOpacity> : member.status === "active" && member.role !== "league_admin" ? <TouchableOpacity disabled={busy} style={s.ownerSuspend} onPress={() => runAction(() => changeStatus(member, "suspended"))}><Text style={s.ownerSuspendText}>Deactivate</Text></TouchableOpacity> : member.status === "suspended" ? <TouchableOpacity disabled={busy} style={s.ownerActivate} onPress={() => runAction(() => changeStatus(member, "active"))}><Text style={s.ownerActivateText}>Reactivate</Text></TouchableOpacity> : null}</View> : null}</View>)}
+    {canEdit ? <View style={s.adminCard}><Text style={s.adminGroupTitle}>Invite owner</Text><TextInput accessibilityLabel="Owner name" style={s.ownerAdminInput} value={name} onChangeText={value => { setName(value); setMessage(""); }} placeholder="Owner name" placeholderTextColor="#8B9893" /><TextInput accessibilityLabel="Owner email address" style={s.ownerAdminInput} value={email} onChangeText={value => { setEmail(value); setMessage(""); }} autoCapitalize="none" keyboardType="email-address" placeholder="Email address" placeholderTextColor="#8B9893" /><View style={s.ownerRoleRow}><TouchableOpacity accessibilityRole="radio" accessibilityLabel="Owner role" accessibilityState={{ checked: role === "owner" }} style={[s.ownerRoleButton, role === "owner" && s.ownerRoleButtonActive]} onPress={() => setRole("owner")}><Text style={s.ownerRoleText}>Owner</Text></TouchableOpacity><TouchableOpacity accessibilityRole="radio" accessibilityLabel="League administrator role" accessibilityState={{ checked: role === "league_admin" }} style={[s.ownerRoleButton, role === "league_admin" && s.ownerRoleButtonActive]} onPress={() => setRole("league_admin")}><Text style={s.ownerRoleText}>League admin</Text></TouchableOpacity></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Create owner invitation" accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(invite)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create invitation</Text>}</TouchableOpacity>{message ? <View accessibilityLiveRegion="polite" style={[s.ownerInviteMessage, message.startsWith("Invitation created") && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}</View> : null}
+    <View style={s.adminPhaseHeader}><Text style={s.adminGroupTitle}>League participants</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh league participants" style={s.resetButton} onPress={load}><Text style={s.resetButtonText}>Refresh</Text></TouchableOpacity></View>
+    {members.map(member => <View key={member.id} style={s.ownerAdminRow}><View style={s.badge}><Text style={s.badgeText}>{member.display_name[0]}</Text></View><View style={{ flex: 1, marginLeft: 9 }}>{editingMemberId === member.id ? <View style={s.ownerRenamePanel}><TextInput accessibilityLabel={`Display name for ${member.display_name}`} autoFocus maxLength={60} selectTextOnFocus style={s.ownerRenameInput} value={editingName} onChangeText={setEditingName} placeholder="Display name" placeholderTextColor="#8B9893" /><View style={s.ownerRenameActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel display-name change" accessibilityState={{ disabled: busy }} disabled={busy} style={s.ownerRenameCancel} onPress={() => { setEditingMemberId(""); setEditingName(""); }}><Text style={s.ownerRenameCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Save display name for ${member.display_name}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.ownerRenameSave} onPress={() => runAction(() => renameMember(member))}>{busy ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={s.ownerRenameSaveText}>Save name</Text>}</TouchableOpacity></View></View> : <><Text style={s.ownerDisplayName}>{member.display_name}</Text><Text style={s.meta}>{member.email} · {member.role === "league_admin" ? "Admin" : "Owner"}</Text><Text style={[s.leagueStatus, member.status === "active" ? s.leagueStatusActive : s.leagueStatusPending]}>{member.status === "suspended" ? "deactivated" : member.status}</Text></>}</View>{canEdit && editingMemberId !== member.id ? <View style={s.ownerAdminActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit display name for ${member.display_name}`} accessibilityState={{ disabled: busy }} disabled={busy} style={s.ownerEditName} onPress={() => beginRename(member)}><Text style={s.ownerEditNameText}>Edit name</Text></TouchableOpacity>{member.status === "accepted" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Activate ${member.display_name}`} accessibilityState={{ disabled: busy }} disabled={busy} style={s.ownerActivate} onPress={() => runAction(() => changeStatus(member, "active"))}><Text style={s.ownerActivateText}>Activate</Text></TouchableOpacity> : member.status === "active" && member.role !== "league_admin" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Deactivate ${member.display_name}`} accessibilityState={{ disabled: busy }} disabled={busy} style={s.ownerSuspend} onPress={() => runAction(() => changeStatus(member, "suspended"))}><Text style={s.ownerSuspendText}>Deactivate</Text></TouchableOpacity> : member.status === "suspended" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Reactivate ${member.display_name}`} accessibilityState={{ disabled: busy }} disabled={busy} style={s.ownerActivate} onPress={() => runAction(() => changeStatus(member, "active"))}><Text style={s.ownerActivateText}>Reactivate</Text></TouchableOpacity> : null}</View> : null}</View>)}
     {!canEdit && message ? <View style={s.adminMessage}><Text style={s.adminMessageText}>{message}</Text></View> : null}
   </View>;
 }
@@ -519,19 +577,19 @@ function LeagueTemplateManagement({ leagueId, leagueName, canEdit, onLeaguesChan
   };
   if (!canEdit) return <View style={s.adminCard}><Text style={s.adminNoticeText}>Only a league administrator can save or import league templates.</Text></View>;
   return <View>
-    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Save this league as a template</Text><Text style={s.adminNoticeText}>Copies configuration only. Ownership, bids, fixtures, lineups, points, rankings and usage history are excluded.</Text><TextInput style={s.ownerAdminInput} value={templateName} onChangeText={setTemplateName} placeholder="Template name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={templateDescription} onChangeText={setTemplateDescription} placeholder="Description (optional)" placeholderTextColor="#8B9893" /><TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(saveTemplate)}><Text style={s.primaryText}>Save configuration template</Text></TouchableOpacity></View>
-    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Create a new league from template</Text>{templates.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.templateChoices}>{templates.map(template => <TouchableOpacity key={template.id} style={[s.templateChoice, selectedTemplateId === template.id && s.templateChoiceActive]} onPress={() => setSelectedTemplateId(template.id)}><Text style={s.templateChoiceName}>{template.name}</Text><Text style={s.meta}>v{template.version}{template.source_league_id === leagueId ? " · this league" : ""}</Text></TouchableOpacity>)}</ScrollView> : <Text style={s.adminNoticeText}>Save a template first.</Text>}<TextInput style={s.ownerAdminInput} value={newLeagueName} onChangeText={updateNewLeagueName} placeholder="New league name" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newLeagueSlug} onChangeText={value => setNewLeagueSlug(value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} autoCapitalize="none" placeholder="new-league-slug" placeholderTextColor="#8B9893" /><TextInput style={s.ownerAdminInput} value={newSeason} onChangeText={setNewSeason} keyboardType="number-pad" placeholder="Season year" placeholderTextColor="#8B9893" /><TouchableOpacity style={s.adminNotice} onPress={() => setCopyOwners(value => !value)}><Text style={s.adminNoticeTitle}>{copyOwners ? "✓" : "○"} Copy owner emails as new invitations</Text><Text style={s.adminNoticeText}>Owners must opt in again. Squads and bidding never carry over.</Text></TouchableOpacity><TouchableOpacity disabled={busy || !templates.length} style={[s.primary, (busy || !templates.length) && s.disabled]} onPress={() => runAction(cloneTemplate)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create clean draft league</Text>}</TouchableOpacity></View>
-    {message ? <View style={[s.adminMessage, (message.startsWith("Saved") || message.startsWith("Created")) && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}
+    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Save this league as a template</Text><Text style={s.adminNoticeText}>Copies configuration only. Ownership, bids, fixtures, lineups, points, rankings and usage history are excluded.</Text><TextInput accessibilityLabel="Template name" style={s.ownerAdminInput} value={templateName} onChangeText={setTemplateName} placeholder="Template name" placeholderTextColor="#8B9893" /><TextInput accessibilityLabel="Template description" style={s.ownerAdminInput} value={templateDescription} onChangeText={setTemplateDescription} placeholder="Description (optional)" placeholderTextColor="#8B9893" /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Save configuration template" accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.primary, busy && s.disabled]} onPress={() => runAction(saveTemplate)}><Text style={s.primaryText}>Save configuration template</Text></TouchableOpacity></View>
+    <View style={s.adminCard}><Text style={s.adminGroupTitle}>Create a new league from template</Text>{templates.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.templateChoices}>{templates.map(template => <TouchableOpacity accessibilityRole="radio" accessibilityLabel={`${template.name}, version ${template.version}`} accessibilityState={{ checked: selectedTemplateId === template.id }} key={template.id} style={[s.templateChoice, selectedTemplateId === template.id && s.templateChoiceActive]} onPress={() => setSelectedTemplateId(template.id)}><Text style={s.templateChoiceName}>{template.name}</Text><Text style={s.meta}>v{template.version}{template.source_league_id === leagueId ? " · this league" : ""}</Text></TouchableOpacity>)}</ScrollView> : <Text style={s.adminNoticeText}>Save a template first.</Text>}<TextInput accessibilityLabel="New league name" style={s.ownerAdminInput} value={newLeagueName} onChangeText={updateNewLeagueName} placeholder="New league name" placeholderTextColor="#8B9893" /><TextInput accessibilityLabel="New league slug" style={s.ownerAdminInput} value={newLeagueSlug} onChangeText={value => setNewLeagueSlug(value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} autoCapitalize="none" placeholder="new-league-slug" placeholderTextColor="#8B9893" /><TextInput accessibilityLabel="New league season year" style={s.ownerAdminInput} value={newSeason} onChangeText={setNewSeason} keyboardType="number-pad" placeholder="Season year" placeholderTextColor="#8B9893" /><TouchableOpacity accessibilityRole="switch" accessibilityLabel="Copy owner emails as new invitations" accessibilityState={{ checked: copyOwners }} style={s.adminNotice} onPress={() => setCopyOwners(value => !value)}><Text style={s.adminNoticeTitle}>{copyOwners ? "✓" : "○"} Copy owner emails as new invitations</Text><Text style={s.adminNoticeText}>Owners must opt in again. Squads and bidding never carry over.</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Create clean draft league" accessibilityState={{ disabled: busy || !templates.length, busy }} disabled={busy || !templates.length} style={[s.primary, (busy || !templates.length) && s.disabled]} onPress={() => runAction(cloneTemplate)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>Create clean draft league</Text>}</TouchableOpacity></View>
+    {message ? <View accessibilityLiveRegion="polite" style={[s.adminMessage, (message.startsWith("Saved") || message.startsWith("Created")) && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}
   </View>;
 }
 
 function AdminNumberField({ label, value, onChange, detail }: { label: string; value: string; onChange: (value: string) => void; detail?: string }) {
   const canEdit = React.useContext(AdminEditContext);
-  return <View style={s.adminField}><View style={{ flex: 1 }}><Text style={s.adminFieldLabel}>{label}</Text>{detail ? <Text style={s.adminFieldDetail}>{detail}</Text> : null}</View><TextInput editable={canEdit} style={[s.adminInput, !canEdit && s.adminInputReadOnly]} value={value} onChangeText={onChange} keyboardType="numbers-and-punctuation" selectTextOnFocus /></View>;
+  return <View style={s.adminField}><View style={{ flex: 1 }}><Text style={s.adminFieldLabel}>{label}</Text>{detail ? <Text style={s.adminFieldDetail}>{detail}</Text> : null}</View><TextInput accessibilityLabel={label} editable={canEdit} style={[s.adminInput, !canEdit && s.adminInputReadOnly]} value={value} onChangeText={onChange} keyboardType="numbers-and-punctuation" selectTextOnFocus /></View>;
 }
 
 function FormatToggle({ label, detail, value, disabled, onPress }: { label: string; detail: string; value: boolean; disabled: boolean; onPress: () => void }) {
-  return <TouchableOpacity disabled={disabled} style={[s.adminField, disabled && { opacity: 0.55 }]} onPress={onPress}><View style={{ flex: 1 }}><Text style={s.adminFieldLabel}>{label}</Text><Text style={s.adminFieldDetail}>{detail}</Text></View><View style={[s.formatToggle, value && s.formatToggleActive]}><Text style={[s.formatToggleText, value && s.formatToggleTextActive]}>{value ? "ON" : "OFF"}</Text></View></TouchableOpacity>;
+  return <TouchableOpacity accessibilityRole="switch" accessibilityLabel={label} accessibilityHint={detail} accessibilityState={{ checked: value, disabled }} disabled={disabled} style={[s.adminField, disabled && { opacity: 0.55 }]} onPress={onPress}><View style={{ flex: 1 }}><Text style={s.adminFieldLabel}>{label}</Text><Text style={s.adminFieldDetail}>{detail}</Text></View><View style={[s.formatToggle, value && s.formatToggleActive]}><Text style={[s.formatToggleText, value && s.formatToggleTextActive]}>{value ? "ON" : "OFF"}</Text></View></TouchableOpacity>;
 }
 
 type SpecialSelectionPlayer = { id: string; name: string; role: string; team: string };
@@ -584,11 +642,11 @@ function PhaseSpecialPlayerSelection({ leagueId, rules }: { leagueId: string; ru
     setBusy(false);
   };
   return <View style={s.adminCard}><Text style={s.adminGroupTitle}>Your phase {selectionType === "unique" ? "Unique" : "Marquee"} Players</Text><Text style={s.adminNoticeText}>Choose exactly {required} active players owned by you. Final/playoff selections carry forward automatically.</Text>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.templateChoices}>{phases.map(item => { const isEditable = !item.is_final_phase && !!item.deadline && new Date(item.deadline).getTime() > Date.now(); return <TouchableOpacity key={item.id} style={[s.templateChoice, phaseId === item.id && s.templateChoiceActive]} onPress={() => setPhaseId(item.id)}><Text style={s.templateChoiceName}>{item.name}</Text><Text style={s.meta}>{item.is_final_phase ? "Carry forward" : isEditable ? "Open" : "Closed"}</Text></TouchableOpacity>; })}</ScrollView>
+    <ScrollView horizontal accessibilityRole="tablist" showsHorizontalScrollIndicator={false} contentContainerStyle={s.templateChoices}>{phases.map(item => { const isEditable = !item.is_final_phase && !!item.deadline && new Date(item.deadline).getTime() > Date.now(); return <TouchableOpacity key={item.id} accessibilityRole="tab" accessibilityLabel={`${item.name}, ${item.is_final_phase ? "carry forward" : isEditable ? "open" : "closed"}`} accessibilityState={{ selected: phaseId === item.id }} style={[s.templateChoice, phaseId === item.id && s.templateChoiceActive]} onPress={() => setPhaseId(item.id)}><Text style={s.templateChoiceName}>{item.name}</Text><Text style={s.meta}>{item.is_final_phase ? "Carry forward" : isEditable ? "Open" : "Closed"}</Text></TouchableOpacity>; })}</ScrollView>
     {phase?.deadline ? <Text style={s.adminFieldDetail}>{editable ? "CHANGES CLOSE" : "SELECTION CLOSED"} · {new Date(phase.deadline).toLocaleString()}</Text> : null}
-    {players.length ? players.map(player => <TouchableOpacity key={player.id} disabled={!editable} style={[s.ownerAdminRow, selected.includes(player.id) && s.leagueCardSelected, !editable && { opacity: 0.65 }]} onPress={() => toggle(player.id)}><IplTeamBadge code={player.team} /><View style={{ flex: 1, marginLeft: 9 }}><Text style={s.pointsPlayerName} numberOfLines={1}>{player.name}</Text><Text style={s.meta}>{player.role}</Text></View><Text style={s.adminNoticeTitle}>{selected.includes(player.id) ? "✓ Selected" : "Select"}</Text></TouchableOpacity>) : <Text style={s.adminNoticeText}>No active owned players are available. This mode requires completed ownership assignments.</Text>}
-    {editable && players.length ? <TouchableOpacity disabled={busy || selected.length !== required} style={[s.primary, (busy || selected.length !== required) && s.disabled]} onPress={save}><Text style={s.primaryText}>Save {selected.length}/{required} for {phase?.name}</Text></TouchableOpacity> : null}
-    {message ? <View style={[s.adminMessage, message.startsWith("Saved") && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}
+    {players.length ? players.map(player => <TouchableOpacity key={player.id} accessibilityRole="checkbox" accessibilityLabel={`${player.name}, ${player.team}, ${player.role}`} accessibilityState={{ checked: selected.includes(player.id), disabled: !editable }} disabled={!editable} style={[s.ownerAdminRow, selected.includes(player.id) && s.leagueCardSelected, !editable && { opacity: 0.65 }]} onPress={() => toggle(player.id)}><IplTeamBadge code={player.team} /><View style={{ flex: 1, marginLeft: 9 }}><Text style={s.pointsPlayerName} numberOfLines={1}>{player.name}</Text><Text style={s.meta}>{player.role}</Text></View><Text style={s.adminNoticeTitle}>{selected.includes(player.id) ? "✓ Selected" : "Select"}</Text></TouchableOpacity>) : <Text style={s.adminNoticeText}>No active owned players are available. This mode requires completed ownership assignments.</Text>}
+    {editable && players.length ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Save ${selected.length} of ${required} players for ${phase?.name}`} accessibilityState={{ disabled: busy || selected.length !== required, busy }} disabled={busy || selected.length !== required} style={[s.primary, (busy || selected.length !== required) && s.disabled]} onPress={save}><Text style={s.primaryText}>Save {selected.length}/{required} for {phase?.name}</Text></TouchableOpacity> : null}
+    {message ? <View accessibilityLiveRegion="polite" style={[s.adminMessage, message.startsWith("Saved") && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{message}</Text></View> : null}
   </View>;
 }
 
@@ -629,8 +687,131 @@ function OwnerTabContent({ leagueId, currentOwner, roster }: { leagueId: string;
   </>;
 }
 
+type HelpTopicId = "navigation" | "lineup" | "transfers" | "roles" | "submission" | "history";
+
+const helpTopics: Array<{ id: HelpTopicId; icon: string; title: string; summary: string; bullets: string[] }> = [
+  {
+    id: "navigation", icon: "⌂", title: "Find your way around", summary: "What each main tab is for.",
+    bullets: [
+      "League is your match sheet: choose a fixture, build your XI and submit it.",
+      "Ranking shows the league table; Results shows submitted teams and published points.",
+      "Fixtures shows match times and status. Player Pool and Owner Squads explain availability and ownership.",
+      "Rules contains the live league configuration. On mobile, Player Pool, Owner Squads, Help and Rules are under More.",
+    ],
+  },
+  {
+    id: "lineup", icon: "XI", title: "Build your Selected XI", summary: "Pick players, stay within the rules and set match roles.",
+    bullets: [
+      "Choose an upcoming fixture, then add players until Selected XI shows 11/11.",
+      "The live validation panel checks budget, role mix, team limits and other league rules.",
+      "Tap a selected player to edit C, VC, BAI or BOI. Use × only when you want to remove that player.",
+      "The lineup summary shows cost, ownership mix, role mix and transfers before you submit.",
+    ],
+  },
+  {
+    id: "transfers", icon: "⇄", title: "Understand transfers", summary: "See what changes are charged and where the allowance goes.",
+    bullets: [
+      "Match Transfers compares this XI with your previous submitted XI.",
+      "Period Transfers shows transfers used against the allowance for the current period.",
+      "Using one of your own players is not charged as a transfer. The first submission in a period may also be free if the league enables it.",
+      "Super Transfer removes the transfer limit for one match. The live Rules page is authoritative for your league.",
+    ],
+  },
+  {
+    id: "roles", icon: "★", title: "Roles and boosters", summary: "Use multipliers without accidentally combining restricted roles.",
+    bullets: [
+      "C and VC multiply a player's full score; the usual values are 2× and 1.5×.",
+      "BAI doubles batting points only. BOI doubles bowling points only.",
+      "C or VC cannot be combined with BAI or BOI on the same player.",
+      "3X triples one player's impact, 2UP doubles the final match total and SUP-TR enables unlimited transfers for that match.",
+    ],
+  },
+  {
+    id: "submission", icon: "✓", title: "Submit, resubmit and lock", summary: "Know what Saved means and what changes before lock.",
+    bullets: [
+      "Submit XI saves a valid team. SAVED is a status, not a button—edit a player to enable resubmission.",
+      "Before lock, changed teams show Resubmit XI. Review the transfer count and warning before confirming.",
+      "Resubmitting an earlier match resets later submitted lineups, refunds their transfers and boosters, and carries the revised XI forward. Submit those later matches again.",
+      "Once a match locks, its XI cannot be changed.",
+    ],
+  },
+  {
+    id: "history", icon: "◷", title: "Follow results", summary: "Review fixtures, revealed teams, scores and standings.",
+    bullets: [
+      "Fixtures shows whether a match is upcoming, locked or completed.",
+      "Other owners' lineups stay hidden before lock when lineup privacy is enabled.",
+      "Results shows submitted teams and their scoring details after the league publishes them.",
+      "Ranking updates from published match points. Use the phase selector to compare the relevant period.",
+    ],
+  },
+];
+
+function HelpScreen({ openTeam, openFixtures, openHistory }: { openTeam: () => void; openFixtures: () => void; openHistory: () => void }) {
+  const [expandedTopic, setExpandedTopic] = useState<HelpTopicId | null>("lineup");
+  const quickStart = [
+    ["1", "Choose a fixture", "Open League and select an upcoming match."],
+    ["2", "Build your XI", "Select 11 valid players within the live rules."],
+    ["3", "Set match roles", "Add C, VC or optional impact roles and boosters."],
+    ["4", "Submit before lock", "Review transfers, then save your match sheet."],
+  ];
+  const faqs = [
+    ["Why is SAVED not tappable?", "SAVED confirms that the current XI is stored. Change a player or role and it becomes a Resubmit XI action."],
+    ["What happens if I resubmit an earlier match?", "Any later submitted lineups are reset, their charged transfers and boosters are refunded, and the revised XI is carried forward. You must submit those later matches again."],
+    ["When can other owners see my team?", "When lineup privacy is enabled, other owners cannot see it until that fixture locks."],
+    ["Why can’t I submit a later fixture?", "An earlier open fixture may need a submitted XI first. Open the indicated prior match and submit it before continuing."],
+  ];
+  return <ScrollView contentContainerStyle={[s.content, s.pageSurface, s.helpContent]}>
+    <View style={s.helpHero}>
+      <View style={s.helpHeroGlow} />
+      <View style={s.helpHeroIcon}><Text style={s.helpHeroIconText}>?</Text></View>
+      <Text style={s.helpEyebrow}>IPL FANTASY COMPANION</Text>
+      <Text accessibilityRole="header" style={s.helpTitle}>Help & user guide</Text>
+      <Text style={s.helpSubtitle}>Everything you need to build, submit and follow your XI with confidence.</Text>
+      <View style={s.helpHeroActions}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open League match sheet" style={s.helpPrimaryAction} onPress={openTeam}><Text style={s.helpPrimaryActionText}>Open League sheet</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="View fixtures" style={s.helpSecondaryAction} onPress={openFixtures}><Text style={s.helpSecondaryActionText}>View fixtures</Text></TouchableOpacity>
+      </View>
+    </View>
+
+    <View style={s.helpSectionHeading}>
+      <Text accessibilityRole="header" style={s.helpSectionTitle}>Quick start</Text>
+      <Text style={s.helpSectionSubtitle}>Your first lineup in four steps</Text>
+    </View>
+    <View style={s.helpQuickGrid}>{quickStart.map(([number, title, detail]) => <View key={number} style={s.helpQuickCard}><View style={s.helpQuickNumber}><Text style={s.helpQuickNumberText}>{number}</Text></View><View style={s.helpQuickCopy}><Text style={s.helpQuickTitle}>{title}</Text><Text style={s.helpQuickText}>{detail}</Text></View></View>)}</View>
+
+    <View style={s.helpSectionHeading}>
+      <Text accessibilityRole="header" style={s.helpSectionTitle}>How the app works</Text>
+      <Text style={s.helpSectionSubtitle}>Tap a topic to expand it</Text>
+    </View>
+    <View style={s.helpTopicList}>{helpTopics.map(topic => {
+      const expanded = expandedTopic === topic.id;
+      return <View key={topic.id} style={[s.helpTopicCard, expanded && s.helpTopicCardExpanded]}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${topic.title}. ${expanded ? "Collapse" : "Expand"}`} accessibilityState={{ expanded }} style={s.helpTopicButton} onPress={() => setExpandedTopic(current => current === topic.id ? null : topic.id)}>
+          <View style={s.helpTopicIcon}><Text style={s.helpTopicIconText}>{topic.icon}</Text></View>
+          <View style={s.helpTopicHeading}><Text style={s.helpTopicTitle}>{topic.title}</Text><Text style={s.helpTopicSummary}>{topic.summary}</Text></View>
+          <Text style={s.helpTopicChevron}>{expanded ? "−" : "+"}</Text>
+        </TouchableOpacity>
+        {expanded ? <View style={s.helpTopicBody}>{topic.bullets.map((bullet, index) => <View key={`${topic.id}:${index}`} style={s.helpBulletRow}><View style={s.helpBulletDot} /><Text style={s.helpBulletText}>{bullet}</Text></View>)}</View> : null}
+      </View>;
+    })}</View>
+
+    <View style={s.helpSectionHeading}>
+      <Text accessibilityRole="header" style={s.helpSectionTitle}>Common questions</Text>
+      <Text style={s.helpSectionSubtitle}>Answers to the moments that cause the most confusion</Text>
+    </View>
+    {faqs.map(([question, answer]) => <View key={question} style={s.helpFaqCard}><View style={s.helpFaqMark}><Text style={s.helpFaqMarkText}>?</Text></View><View style={s.helpFaqCopy}><Text style={s.helpFaqQuestion}>{question}</Text><Text style={s.helpFaqAnswer}>{answer}</Text></View></View>)}
+
+    <View style={s.helpRuleNote}><Text style={s.helpRuleNoteTitle}>Your live league rules come first</Text><Text style={s.helpRuleNoteText}>Transfer allowances, multipliers, budgets and role limits can vary by league or phase. The values shown in League and Rules are authoritative.</Text></View>
+    <View style={s.helpFooterActions}>
+      <TouchableOpacity accessibilityRole="button" style={s.helpFooterPrimary} onPress={openTeam}><Text style={s.helpFooterPrimaryText}>Build my XI</Text></TouchableOpacity>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open Results" style={s.helpFooterSecondary} onPress={openHistory}><Text style={s.helpFooterSecondaryText}>Open Results</Text></TouchableOpacity>
+    </View>
+  </ScrollView>;
+}
+
 function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: { leagueId: string; leagueName: string; canEdit: boolean; onLeaguesChanged: () => Promise<void> }) {
   const [section, setSection] = useState<AdminSection>("format");
+  const adminScrollRef = useRef<ScrollView>(null);
   const [leagueFormat, setLeagueFormat] = useState<LeagueFormatForm>({ acquisition_mode: "auction", bidding_enabled: true, other_owner_deductions_enabled: true, marquee_enabled: false, unique_players_enabled: false, unique_scope: "league", royalty_enabled: false });
   const [specialRules, setSpecialRules] = useState<SpecialPlayerRuleForm>(defaultSpecialPlayerRules);
   const [specialRulesVersion, setSpecialRulesVersion] = useState(1);
@@ -647,6 +828,10 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const runAction = useActionGuard();
+
+  useEffect(() => {
+    adminScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [section]);
 
   useEffect(() => {
     let mounted = true;
@@ -829,45 +1014,30 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   };
 
   if (busy && !scoringDocument) return <View style={s.adminLoading}><ActivityIndicator color="#174D3D" /><Text style={s.adminLoadingText}>Loading active rules…</Text></View>;
-  return <AdminEditContext.Provider value={canEdit}><ScrollView contentContainerStyle={[s.content, s.pageSurface]} keyboardShouldPersistTaps="handled">
-<Text style={s.greeting}>Rules</Text>
+  const adminSections: Array<{ key: AdminSection; label: string }> = [
+    { key: "format", label: "League Format" },
+    { key: "special", label: `Unique & Royalty · v${specialRulesVersion}` },
+    { key: "playing", label: `Playing · v${versions.playing}` },
+    { key: "points", label: `Points · v${versions.points}` },
+    { key: "phases", label: "League Phases" },
+    { key: "transfers", label: "Transfers" },
+    { key: "owners", label: "Owners" },
+    { key: "templates", label: "Templates" },
+    { key: "scoring", label: "Match Scoring" },
+  ];
+  return <AdminEditContext.Provider value={canEdit}><ScrollView ref={adminScrollRef} contentContainerStyle={[s.content, s.pageSurface]} keyboardShouldPersistTaps="handled">
+<Text style={s.greeting}>League Rules</Text>
 <Text style={s.subtitle}>{leagueName} · {canEdit ? "editable league configuration" : "read-only league configuration"}</Text>
 <View style={s.adminNotice}>
 <Text style={s.adminNoticeTitle}>{canEdit ? "League administrator" : "Read only"}</Text>
 <Text style={s.adminNoticeText}>{canEdit ? "You can publish rule changes. Published match calculations keep their original rule version." : "Only a league administrator can publish changes. You can review every active rule and scoring status."}</Text>
 </View>
-<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.adminTabs}>
-<TouchableOpacity style={[s.adminTab, section === "format" && s.adminTabActive]} onPress={() => setSection("format")}>
-<Text style={[s.adminTabText, section === "format" && s.adminTabTextActive]}>League Format</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "special" && s.adminTabActive]} onPress={() => setSection("special")}>
-<Text style={[s.adminTabText, section === "special" && s.adminTabTextActive]}>Unique & Royalty · v{specialRulesVersion}</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "playing" && s.adminTabActive]} onPress={() => setSection("playing")}>
-<Text style={[s.adminTabText, section === "playing" && s.adminTabTextActive]}>Playing · v{versions.playing}</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "points" && s.adminTabActive]} onPress={() => setSection("points")}>
-<Text style={[s.adminTabText, section === "points" && s.adminTabTextActive]}>Points · v{versions.points}</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "phases" && s.adminTabActive]} onPress={() => setSection("phases")}>
-<Text style={[s.adminTabText, section === "phases" && s.adminTabTextActive]}>League Phases</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "transfers" && s.adminTabActive]} onPress={() => setSection("transfers")}>
-<Text style={[s.adminTabText, section === "transfers" && s.adminTabTextActive]}>Transfers</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "owners" && s.adminTabActive]} onPress={() => setSection("owners")}>
-<Text style={[s.adminTabText, section === "owners" && s.adminTabTextActive]}>Owners</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "templates" && s.adminTabActive]} onPress={() => setSection("templates")}>
-<Text style={[s.adminTabText, section === "templates" && s.adminTabTextActive]}>Templates</Text>
-</TouchableOpacity>
-<TouchableOpacity style={[s.adminTab, section === "scoring" && s.adminTabActive]} onPress={() => setSection("scoring")}>
-<Text style={[s.adminTabText, section === "scoring" && s.adminTabTextActive]}>Match Scoring</Text>
-</TouchableOpacity>
+<ScrollView horizontal accessibilityRole="tablist" showsHorizontalScrollIndicator={false} contentContainerStyle={s.adminTabs}>
+{adminSections.map(item => <TouchableOpacity key={item.key} accessibilityRole="tab" accessibilityLabel={item.label} accessibilityState={{ selected: section === item.key }} style={[s.adminTab, section === item.key && s.adminTabActive]} onPress={() => setSection(item.key)}><Text style={[s.adminTabText, section === item.key && s.adminTabTextActive]}>{item.label}</Text></TouchableOpacity>)}
 </ScrollView>{section === "format" ? <View>
-<View style={s.adminCard}><Text style={s.adminGroupTitle}>Player acquisition</Text><Text style={s.adminNoticeText}>Choose this before the league starts. The format is locked after setup.</Text><View style={s.ownerRoleRow}><TouchableOpacity disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.acquisition_mode === "auction" && s.ownerRoleButtonActive]} onPress={() => selectAcquisitionMode("auction")}><Text style={s.ownerRoleText}>Auction / Owned</Text></TouchableOpacity><TouchableOpacity disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.acquisition_mode === "all_open" && s.ownerRoleButtonActive]} onPress={() => selectAcquisitionMode("all_open")}><Text style={s.ownerRoleText}>All Open Players</Text></TouchableOpacity></View></View>
+<View style={s.adminCard}><Text style={s.adminGroupTitle}>Player acquisition</Text><Text style={s.adminNoticeText}>Choose this before the league starts. The format is locked after setup.</Text><View style={s.ownerRoleRow}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Auction and owned players" accessibilityState={{ selected: leagueFormat.acquisition_mode === "auction", disabled: !canEdit }} disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.acquisition_mode === "auction" && s.ownerRoleButtonActive]} onPress={() => selectAcquisitionMode("auction")}><Text style={s.ownerRoleText}>Auction / Owned</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="All players open" accessibilityState={{ selected: leagueFormat.acquisition_mode === "all_open", disabled: !canEdit }} disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.acquisition_mode === "all_open" && s.ownerRoleButtonActive]} onPress={() => selectAcquisitionMode("all_open")}><Text style={s.ownerRoleText}>All Open Players</Text></TouchableOpacity></View></View>
 <View style={s.adminCard}><Text style={s.adminGroupTitle}>Ownership features</Text><FormatToggle label="Bidding enabled" detail="Used only for auction/owned leagues" value={leagueFormat.bidding_enabled} disabled={!canEdit || leagueFormat.acquisition_mode === "all_open"} onPress={() => setLeagueFormat(current => ({ ...current, bidding_enabled: !current.bidding_enabled }))} /><FormatToggle label="Other-owner deductions" detail="Apply borrowing deductions and transfer rules" value={leagueFormat.other_owner_deductions_enabled} disabled={!canEdit || leagueFormat.acquisition_mode === "all_open"} onPress={() => setLeagueFormat(current => ({ ...current, other_owner_deductions_enabled: !current.other_owner_deductions_enabled }))} /></View>
-<View style={s.adminCard}><Text style={s.adminGroupTitle}>Optional competition features</Text><FormatToggle label="Marquee players" detail="Enable marquee classification for royalty rules" value={leagueFormat.marquee_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, marquee_enabled: !current.marquee_enabled }))} /><FormatToggle label="Unique players" detail="Restrict unique-player usage by match, phase or league" value={leagueFormat.unique_players_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, unique_players_enabled: !current.unique_players_enabled }))} />{leagueFormat.unique_players_enabled ? <View><Text style={s.adminFieldDetail}>UNIQUE SCOPE</Text><View style={s.ownerRoleRow}>{(["match", "phase", "league"] as const).map(scope => <TouchableOpacity key={scope} disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.unique_scope === scope && s.ownerRoleButtonActive]} onPress={() => setLeagueFormat(current => ({ ...current, unique_scope: scope }))}><Text style={s.ownerRoleText}>{scope.charAt(0).toUpperCase() + scope.slice(1)}</Text></TouchableOpacity>)}</View></View> : null}<FormatToggle label="Royalty points" detail="Enable configured marquee and unique royalty scoring" value={leagueFormat.royalty_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, royalty_enabled: !current.royalty_enabled }))} /></View>
+<View style={s.adminCard}><Text style={s.adminGroupTitle}>Optional competition features</Text><FormatToggle label="Marquee players" detail="Enable marquee classification for royalty rules" value={leagueFormat.marquee_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, marquee_enabled: !current.marquee_enabled }))} /><FormatToggle label="Unique players" detail="Restrict unique-player usage by match, phase or league" value={leagueFormat.unique_players_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, unique_players_enabled: !current.unique_players_enabled }))} />{leagueFormat.unique_players_enabled ? <View><Text style={s.adminFieldDetail}>UNIQUE SCOPE</Text><View style={s.ownerRoleRow}>{(["match", "phase", "league"] as const).map(scope => <TouchableOpacity key={scope} accessibilityRole="button" accessibilityLabel={`Unique scope ${scope}`} accessibilityState={{ selected: leagueFormat.unique_scope === scope, disabled: !canEdit }} disabled={!canEdit} style={[s.ownerRoleButton, leagueFormat.unique_scope === scope && s.ownerRoleButtonActive]} onPress={() => setLeagueFormat(current => ({ ...current, unique_scope: scope }))}><Text style={s.ownerRoleText}>{scope.charAt(0).toUpperCase() + scope.slice(1)}</Text></TouchableOpacity>)}</View></View> : null}<FormatToggle label="Royalty points" detail="Enable configured marquee and unique royalty scoring" value={leagueFormat.royalty_enabled} disabled={!canEdit} onPress={() => setLeagueFormat(current => ({ ...current, royalty_enabled: !current.royalty_enabled }))} /></View>
 </View> : section === "special" ? <View>
 <View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Unique, Marquee and Royalty</Text><Text style={s.adminNoticeText}>Versioned rules apply only from the selected unlocked match. Locked and published matches retain their original version.</Text></View>
 <View style={s.adminCard}>
@@ -900,7 +1070,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <AdminNumberField label="Minimum Marquee-player royalty" detail="points, including zero or negative contribution" value={specialRules.marquee_minimum_royalty} onChange={value => updateSpecialNumber("marquee_minimum_royalty", value)} />
 <View style={s.adminNotice}><Text style={s.adminNoticeText}>Royalty is never negative. For a zero or negative contribution, the configured minimum still applies: regular-player minimum or Marquee-player minimum.</Text></View>
 <View style={s.adminField}><View style={{ flex: 1 }}><Text style={s.adminFieldLabel}>Royalty rounding</Text><Text style={s.adminFieldDetail}>Applied separately for every borrowing owner</Text></View></View>
-<View style={s.ownerRoleRow}>{([['immediate_whole_point', 'Immediate'], ['final_total_whole_point', 'Final total'], ['none', 'Decimals']] as const).map(([value, label]) => <TouchableOpacity key={value} disabled={!canEdit} style={[s.ownerRoleButton, specialRules.royalty_rounding === value && s.ownerRoleButtonActive]} onPress={() => setSpecialRules(current => ({ ...current, royalty_rounding: value }))}><Text style={s.ownerRoleText}>{label}</Text></TouchableOpacity>)}</View>
+<View style={s.ownerRoleRow}>{([['immediate_whole_point', 'Immediate'], ['final_total_whole_point', 'Final total'], ['none', 'Decimals']] as const).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={`Royalty rounding ${label}`} accessibilityState={{ selected: specialRules.royalty_rounding === value, disabled: !canEdit }} disabled={!canEdit} style={[s.ownerRoleButton, specialRules.royalty_rounding === value && s.ownerRoleButtonActive]} onPress={() => setSpecialRules(current => ({ ...current, royalty_rounding: value }))}><Text style={s.ownerRoleText}>{label}</Text></TouchableOpacity>)}</View>
 <FormatToggle label="Automatic Unique status" detail="Based on locked-XI appearances across the league" value={specialRules.automatic_unique_enabled} disabled={!canEdit} onPress={() => setSpecialRules(current => ({ ...current, automatic_unique_enabled: !current.automatic_unique_enabled }))} />
 <AdminNumberField label="Automatic Unique threshold" detail="Becomes Unique after exceeding this usage count" value={specialRules.automatic_unique_usage_threshold} onChange={value => updateSpecialNumber("automatic_unique_usage_threshold", value)} />
 </View> : <Text style={s.adminFieldDetail}>OFF · No Marquee declaration, royalty credit or automatic Unique conversion.</Text>}
@@ -954,36 +1124,36 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <Text style={s.adminNoticeText}>Every fixture must belong to exactly one phase. Overall ranking includes all phases.</Text>
 </View>{phases.map((phase, index) => <View key={phase.code} style={s.adminPhaseCard}>
 <View style={s.adminPhaseHeader}>
-<TextInput editable={canEdit} style={[s.adminPhaseNameInput, !canEdit && s.adminInputReadOnly]} value={phase.name} onChangeText={value => updatePhase(index, "name", value)} />
-<TouchableOpacity disabled={!canEdit || phases.length === 1} style={[s.adminPhaseRemove, !canEdit && s.disabled]} onPress={() => setPhases(current => current.filter((_, phaseIndex) => phaseIndex !== index))}>
+<TextInput accessibilityLabel={`Ranking period ${index + 1} name`} editable={canEdit} style={[s.adminPhaseNameInput, !canEdit && s.adminInputReadOnly]} value={phase.name} onChangeText={value => updatePhase(index, "name", value)} />
+<TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove ${phase.name || `phase ${index + 1}`}`} accessibilityState={{ disabled: !canEdit || phases.length === 1 }} disabled={!canEdit || phases.length === 1} style={[s.adminPhaseRemove, (!canEdit || phases.length === 1) && s.disabled]} onPress={() => setPhases(current => current.filter((_, phaseIndex) => phaseIndex !== index))}>
 <Text style={s.adminPhaseRemoveText}>Remove</Text>
 </TouchableOpacity>
 </View>
 <View style={s.adminPhaseRange}>
 <View style={{ flex: 1 }}>
 <Text style={s.adminFieldDetail}>START MATCH</Text>
-<TextInput editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={phase.start} onChangeText={value => updatePhase(index, "start", value)} keyboardType="number-pad" />
+<TextInput accessibilityLabel={`${phase.name || `Ranking period ${index + 1}`} start match`} editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={phase.start} onChangeText={value => updatePhase(index, "start", value)} keyboardType="number-pad" />
 </View>
 <Text style={s.adminPhaseTo}>to</Text>
 <View style={{ flex: 1 }}>
 <Text style={s.adminFieldDetail}>END MATCH</Text>
-<TextInput editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={phase.end} onChangeText={value => updatePhase(index, "end", value)} keyboardType="number-pad" />
+<TextInput accessibilityLabel={`${phase.name || `Ranking period ${index + 1}`} end match`} editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={phase.end} onChangeText={value => updatePhase(index, "end", value)} keyboardType="number-pad" />
 </View>
 </View>
-</View>)}<TouchableOpacity disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addPhase}>
+</View>)}<TouchableOpacity accessibilityRole="button" accessibilityLabel="Add another ranking period" accessibilityState={{ disabled: !canEdit }} disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addPhase}>
 <Text style={s.adminAddPhaseText}>＋ Add another phase</Text>
 </TouchableOpacity>
 </View> : section === "transfers" ? <View>
 <View style={s.transferScreenIntro}><View style={s.transferScreenIntroRow}><View style={s.transferScreenIcon}><Text style={s.transferScreenIconText}>↔</Text></View><View style={{ flex: 1 }}><Text style={s.transferScreenTitle}>Transfer periods</Text><Text style={s.transferScreenSubtitle}>{transferPeriods.length} period{transferPeriods.length === 1 ? "" : "s"} configured</Text></View></View><Text style={s.transferScreenHelp}>Each period has a separate allowance. Its first match can reset the carried XI without using that balance. Periods must cover every match in order, without overlaps or gaps.</Text></View>
 {transferPeriods.map((period, index) => { const removeDisabled = !canEdit || transferPeriods.length === 1; return <View key={period.code} style={s.transferPeriodCard}>
 <View style={s.transferPeriodHeader}><View style={s.transferPeriodIndex}><Text style={s.transferPeriodIndexText}>{index + 1}</Text></View><View style={{ flex: 1 }}><Text style={s.transferPeriodEyebrow}>PERIOD {index + 1}</Text><TextInput accessibilityLabel={`Transfer period ${index + 1} name`} editable={canEdit} style={[s.transferPeriodNameInput, !canEdit && s.adminInputReadOnly]} value={period.name} onChangeText={value => updateTransferPeriod(index, "name", value)} placeholder="Period name" placeholderTextColor="#8B9893" /></View><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove ${period.name || `transfer period ${index + 1}`}`} disabled={removeDisabled} style={[s.transferPeriodRemove, removeDisabled && s.transferPeriodRemoveDisabled]} onPress={() => setTransferPeriods(current => current.filter((_, periodIndex) => periodIndex !== index))}><Text style={[s.transferPeriodRemoveText, removeDisabled && s.transferPeriodRemoveTextDisabled]}>Remove</Text></TouchableOpacity></View>
-<View style={s.adminPhaseRange}><View style={{ flex: 1 }}><Text style={s.adminFieldDetail}>START MATCH</Text><TextInput editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={period.start} onChangeText={value => updateTransferPeriod(index, "start", value)} keyboardType="number-pad" /></View><Text style={s.adminPhaseTo}>to</Text><View style={{ flex: 1 }}><Text style={s.adminFieldDetail}>END MATCH</Text><TextInput editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={period.end} onChangeText={value => updateTransferPeriod(index, "end", value)} keyboardType="number-pad" /></View></View>
+<View style={s.adminPhaseRange}><View style={{ flex: 1 }}><Text style={s.adminFieldDetail}>START MATCH</Text><TextInput accessibilityLabel={`${period.name || `Transfer period ${index + 1}`} start match`} editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={period.start} onChangeText={value => updateTransferPeriod(index, "start", value)} keyboardType="number-pad" /></View><Text style={s.adminPhaseTo}>to</Text><View style={{ flex: 1 }}><Text style={s.adminFieldDetail}>END MATCH</Text><TextInput accessibilityLabel={`${period.name || `Transfer period ${index + 1}`} end match`} editable={canEdit} style={[s.adminPhaseNumberInput, !canEdit && s.adminInputReadOnly]} value={period.end} onChangeText={value => updateTransferPeriod(index, "end", value)} keyboardType="number-pad" /></View></View>
 <AdminNumberField label="Transfer allowance" detail={transferAllowanceDetail(period)} value={period.limit} onChange={value => updateTransferPeriod(index, "limit", value)} />
 <TouchableOpacity accessibilityRole="switch" accessibilityState={{ checked: period.firstMatchFree, disabled: !canEdit }} accessibilityLabel={`Free first match for ${period.name || `period ${index + 1}`}`} disabled={!canEdit} style={[s.transferFreeToggle, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.map((item, periodIndex) => periodIndex === index ? { ...item, firstMatchFree: !item.firstMatchFree } : item))}><View style={{ flex: 1 }}><Text style={s.transferFreeTitle}>Free first match</Text><Text style={s.transferFreeText}>{period.firstMatchFree ? `Match ${period.start || "—"} resets the carried XI and does not use this allowance.` : "Changes in the first match use this period's allowance."}</Text></View><View style={[s.transferSwitch, period.firstMatchFree && s.transferSwitchActive]}><View style={[s.transferSwitchThumb, period.firstMatchFree && s.transferSwitchThumbActive]} /></View></TouchableOpacity>
 </View>; })}<TouchableOpacity accessibilityRole="button" disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
-</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => settleAbandoned(fixture.id))}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
+</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Settle match ${fixture.match_number} at zero points`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => runAction(() => settleAbandoned(fixture.id))}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Publish scores for match ${fixture.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View accessibilityLiveRegion="polite" style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
 <Text style={s.adminMessageText}>{message}</Text>
-</View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity disabled={busy} style={[s.primary, busy && s.disabled]} onPress={requestPublicationConfirmation}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
+</View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={section === "format" ? "Publish league format" : section === "special" ? "Publish Unique and Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.primary, busy && s.disabled]} onPress={requestPublicationConfirmation}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
 <Text style={s.adminFootnote}>{section === "special" ? "Changes apply only from the selected unlocked match. Historical scoring remains pinned to its original version." : section === "phases" ? "Changing phases updates fixture assignments and phase-wise ranking." : section === "transfers" ? "Transfer periods apply immediately to future submissions; recorded usage is regrouped by the published match ranges." : "Milestone, strike-rate and economy tables remain preserved when these headline values are updated."}</Text>
 </ScrollView></AdminEditContext.Provider>;
 }
@@ -1014,7 +1184,7 @@ function LeagueRanking() {
   const selectedPhase = rankingPhases.find(item => item.code === phase) ?? rankingPhases[0];
   const phaseStandings = leagueOwners.map(owner => [owner, ownerPointsForMatches(owner, selectedPhase.matches)] as [string, number]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   return <View>
-    <Text style={s.sectionTitle}>League Ranking</Text>
+    <Text style={s.sectionTitle}>Standings</Text>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rankingPhaseTabs}>{rankingPhases.map(item => <TouchableOpacity key={item.code} style={[s.rankingPhaseTab, phase === item.code && s.rankingPhaseTabActive]} onPress={() => setPhase(item.code)}><Text style={[s.rankingPhaseName, phase === item.code && s.rankingPhaseNameActive]}>{item.name}</Text><Text style={[s.rankingPhaseRange, phase === item.code && s.rankingPhaseRangeActive]}>{item.range}</Text></TouchableOpacity>)}</ScrollView>
     <View style={s.pointsReset}><Text style={s.pointsResetTitle}>{selectedPhase.name} ranking</Text><Text style={s.pointsResetText}>{selectedPhase.matches.length ? `${selectedPhase.matches.length} calculated matches included.` : "No calculated matches in this phase yet. Rankings will update when match scores are published."}</Text></View>
     <View style={s.card}>{phaseStandings.map(([name, points], index) => { const rank = phaseStandings.findIndex(([, value]) => value === points) + 1; return <View key={name} style={s.standing}><Text style={s.position}>{rank}</Text><View style={s.badge}><Text style={s.badgeText}>{name[0]}</Text></View><Text style={s.owner}>{name}</Text><Text style={s.points}>{Math.round(points)} pts</Text></View>; })}</View>
@@ -1041,7 +1211,7 @@ function OwnerSquadPoints({ currentOwner }: { currentOwner: string }) {
       const totals = ownerPlayers.reduce((sum, item) => ({ batting: sum.batting + item.points.batting, bowling: sum.bowling + item.points.bowling, fielding: sum.fielding + item.points.fielding, bonus: sum.bonus + item.points.bonus, total: sum.total + item.points.total }), { batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 });
       const expanded = expandedOwner === ownerName;
       return <View key={ownerName} style={s.ownerSquadCard}>
-        <TouchableOpacity style={s.ownerSquadHeader} onPress={() => { setExpandedOwner(expanded ? "" : ownerName); setExpandedPlayer(""); }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${ownerName}${ownerName === currentOwner ? ", your squad" : ""}, ${ownerPlayers.length} players, ${totals.total} points`} accessibilityState={{ expanded }} style={s.ownerSquadHeader} onPress={() => { setExpandedOwner(expanded ? "" : ownerName); setExpandedPlayer(""); }}>
           <View style={s.badge}><Text style={s.badgeText}>{ownerName[0]}</Text></View><View style={{ flex: 1, marginLeft: 9 }}><Text style={s.ownerSquadName}>{ownerName}{ownerName === currentOwner ? " · You" : ""}</Text><Text style={s.ownerSquadMeta}>{ownerPlayers.length} auction players · through Match 5</Text></View><Text style={s.ownerSquadTotal}>{totals.total} pts</Text><Text style={s.pointsChevron}>{expanded ? "▲" : "▼"}</Text>
         </TouchableOpacity>
         {expanded && <View style={s.ownerSquadBody}>
@@ -1080,13 +1250,13 @@ function MatchesScreen() {
       return teamA.localeCompare(teamB) || pointsB.total - pointsA.total;
     });
     return <View key={match.id} style={s.pointsMatchCard}>
-      <TouchableOpacity style={s.pointsMatchHeader} onPress={() => { setExpandedMatch(expanded ? "" : match.id); setExpandedPlayer(""); }}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Match ${match.number}, ${match.teams}, ${match.status}`} accessibilityState={{ expanded }} style={s.pointsMatchHeader} onPress={() => { setExpandedMatch(expanded ? "" : match.id); setExpandedPlayer(""); }}>
         <View style={{ flex: 1 }}><Text style={s.pointsMatchTitle}>Match {match.number} · {match.teams}</Text><Text style={s.pointsMatchMeta}>{match.date} · {match.status}{scoringVersion ? ` · Points Rules v${scoringVersion.version}` : ""}</Text></View>
         <Text style={[s.pointsStatus, calculated ? s.pointsCalculated : s.pointsPending]}>{calculated ? "CALCULATED" : "UPCOMING"}</Text><Text style={s.pointsChevron}>{expanded ? "▲" : "▼"}</Text>
       </TouchableOpacity>
       {expanded && (calculated ? <View style={s.pointsMatchBody}>
         <View style={s.pointsColumns}><Text style={s.pointsColumnPlayer}>PLAYER</Text><Text style={s.pointsColumn}>BAT</Text><Text style={s.pointsColumn}>BOWL</Text><Text style={s.pointsColumn}>FLD</Text><Text style={s.pointsColumn}>BON</Text><Text style={s.pointsColumnTotal}>TOTAL</Text></View>
-        {rankedPlayers.map(([name, points], index) => { const player = players.find(item => item.name === name); const team = player?.team ?? "—"; const ownership = player?.owner === "Available" ? "OpenPlayer" : player?.owner ? `Owned by ${player.owner}` : "Owner unavailable"; const previousName = index ? rankedPlayers[index - 1][0] : ""; const previousTeam = previousName ? players.find(item => item.name === previousName)?.team : ""; const playerKey = `${match.id}-${name}`; const playerExpanded = expandedPlayer === playerKey; const stats = completedMatchStats[match.id]?.[name]; const details = stats ? calculatePointDetails(stats, scoringRules) : null; return <View key={name}>{team !== previousTeam && <View style={s.pointsTeamHeader}><Text style={s.pointsTeamHeaderText}>{team}</Text><Text style={s.pointsTeamHeaderMeta}>Highest points first</Text></View>}<TouchableOpacity style={s.pointsPlayerRow} onPress={() => setExpandedPlayer(playerExpanded ? "" : playerKey)}><Text style={s.playerBreakChevron}>{playerExpanded ? "▲" : "▼"}</Text><View style={s.pointsPlayerIdentity}><Text style={s.pointsPlayerName}>{name}</Text><Text style={s.pointsPlayerTeam}>{team} · {ownership}</Text></View><Text style={s.pointsCell}>{points.batting}</Text><Text style={s.pointsCell}>{points.bowling}</Text><Text style={s.pointsCell}>{points.fielding}</Text><Text style={s.pointsCell}>{points.bonus}</Text><Text style={s.pointsCellTotal}>{points.total}</Text></TouchableOpacity>{playerExpanded && details && <View style={s.fullBreakdown}><PointDetailSection title="BATTING" rows={details.batting} total={points.batting} /><PointDetailSection title="BOWLING" rows={details.bowling} total={points.bowling} /><PointDetailSection title="FIELDING" rows={details.fielding} total={points.fielding} /><PointDetailSection title="BONUS" rows={details.bonus} total={points.bonus} /></View>}</View>; })}
+        {rankedPlayers.map(([name, points], index) => { const player = players.find(item => item.name === name); const team = player?.team ?? "—"; const ownership = player?.owner === "Available" ? "Open" : player?.owner || "Owner unavailable"; const previousName = index ? rankedPlayers[index - 1][0] : ""; const previousTeam = previousName ? players.find(item => item.name === previousName)?.team : ""; const playerKey = `${match.id}-${name}`; const playerExpanded = expandedPlayer === playerKey; const stats = completedMatchStats[match.id]?.[name]; const details = stats ? calculatePointDetails(stats, scoringRules) : null; return <View key={name}>{team !== previousTeam && <View style={s.pointsTeamHeader}><Text style={s.pointsTeamHeaderText}>{team}</Text><Text style={s.pointsTeamHeaderMeta}>Highest points first</Text></View>}<TouchableOpacity accessibilityRole="button" accessibilityLabel={`${name}, ${team}, ${points.total} total points`} accessibilityState={{ expanded: playerExpanded }} style={s.pointsPlayerRow} onPress={() => setExpandedPlayer(playerExpanded ? "" : playerKey)}><Text style={s.playerBreakChevron}>{playerExpanded ? "▲" : "▼"}</Text><View style={s.pointsPlayerIdentity}><Text style={s.pointsPlayerName}>{name}</Text><Text style={s.pointsPlayerTeam}>{team} · {ownership}</Text></View><Text style={s.pointsCell}>{points.batting}</Text><Text style={s.pointsCell}>{points.bowling}</Text><Text style={s.pointsCell}>{points.fielding}</Text><Text style={s.pointsCell}>{points.bonus}</Text><Text style={s.pointsCellTotal}>{points.total}</Text></TouchableOpacity>{playerExpanded && details && <View style={s.fullBreakdown}><PointDetailSection title="BATTING" rows={details.batting} total={points.batting} /><PointDetailSection title="BOWLING" rows={details.bowling} total={points.bowling} /><PointDetailSection title="FIELDING" rows={details.fielding} total={points.fielding} /><PointDetailSection title="BONUS" rows={details.bonus} total={points.bonus} /></View>}</View>; })}
       </View> : <View style={s.pointsEmpty}><Text style={s.pointsEmptyTitle}>Team selection available before lock</Text><Text style={s.pointsEmptyText}>Points will appear after this match is marked complete and its Cricinfo scorecard is processed.</Text></View>)}
     </View>;
   })}</ScrollView>;
@@ -1097,6 +1267,7 @@ function PointDetailSection({ title, rows, total }: { title: string; rows: Array
 }
 
 function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnabled, ownerName, roster, fixtures, ruleVersions, rulesLoadMessage, selected, setSelected, captain, setCaptain, vice, setVice, submitted, setSubmitted, impactPlayer, setImpactPlayer, impactType, setImpactType, boosterCode, setBoosterCode, boosterPlayer, setBoosterPlayer }: { requestedFixtureId: string; leagueId: string; memberId: string; ownershipEnabled: boolean; ownerName: string; roster: Player[]; fixtures: UpcomingMatch[]; ruleVersions: SelectionRules[]; rulesLoadMessage: string; selected: string[]; setSelected: (players: string[]) => void; captain: string; setCaptain: (name: string) => void; vice: string; setVice: (name: string) => void; submitted: boolean; setSubmitted: (value: boolean) => void; impactPlayer: string; setImpactPlayer: (name: string) => void; impactType: ImpactType; setImpactType: (type: ImpactType) => void; boosterCode: BoosterCode; setBoosterCode: (code: BoosterCode) => void; boosterPlayer: string; setBoosterPlayer: (name: string) => void }) {
+  const { width: teamWidth } = useWindowDimensions();
   const runAction = useActionGuard();
   const teamScrollRef = useRef<ScrollView>(null);
   const fixtureStripRef = useRef<ScrollView>(null);
@@ -1117,6 +1288,8 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const [showSubmitConfirmation, setShowSubmitConfirmation] = useState(false);
   const [confirmedTransferCount, setConfirmedTransferCount] = useState(0);
   const [showFutureResetWarning, setShowFutureResetWarning] = useState(false);
+  useWebModalFocus(showFutureResetWarning, "future-reset-dialog");
+  useWebModalFocus(showSubmitConfirmation, "submit-confirmation-dialog");
   const [futureSubmittedMatches, setFutureSubmittedMatches] = useState<number[]>([]);
   const [showWarnings, setShowWarnings] = useState(false);
   const [firstMissingPriorMatch, setFirstMissingPriorMatch] = useState<number | null>(null);
@@ -1433,6 +1606,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={`${expanded ? "Collapse" : "Expand"} ${team} squad`}
+        accessibilityState={{ expanded }}
         style={[s.teamHeader, s.teamHeaderModern, expanded && s.teamHeaderExpanded, expanded && s.teamHeaderInGroup]}
         onPress={() => toggleTeam(team)}
       >
@@ -1442,20 +1616,20 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
         </View>
         <View style={s.teamHeaderIdentity}>
           <Text style={s.teamHeaderName}>{team} squad</Text>
-          <Text style={s.teamHeaderCount}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{playerCountSummary} · {activeRoleSummary}</Text>
+          <Text style={[s.teamHeaderCount, s.textMutedAccessible]}>{selectedFromTeam ? `${selectedFromTeam} selected · ` : ""}{playerCountSummary} · {activeRoleSummary}</Text>
         </View>
         <View style={[s.teamHeaderToggle, expanded && s.teamHeaderToggleExpanded]}>
           <Text style={s.teamChevron}>{expanded ? "▲" : "▼"}</Text>
         </View>
       </TouchableOpacity>
-      {expanded && teamPlayers.map((p, playerIndex) => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "OpenPlayer" : `Owned by ${p.owner}`; const labels = specialLabels[p.name] ?? []; const powerRestricted = isPowerRoleRestricted({ labels, playerOwner: p.owner, currentOwner: ownerName }); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, s.playerRowModern, s.playerRowInGroup, playerIndex === teamPlayers.length - 1 && s.playerRowLastInGroup, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
-<TouchableOpacity style={s.playerMain} onPress={() => { setFocusedPlayer(p.name); toggle(p.name); }}>
+      {expanded && teamPlayers.map((p, playerIndex) => { const active = selected.includes(p.name); const ownership = p.owner === ownerName ? "Mine" : p.owner === "Available" ? "Open" : p.owner; const labels = specialLabels[p.name] ?? []; const powerRestricted = isPowerRoleRestricted({ labels, playerOwner: p.owner, currentOwner: ownerName }); return <View key={p.name} onLayout={event => { playerPositions.current[`${team}:${p.name}`] = event.nativeEvent.layout.y; }} style={[s.playerRow, s.playerRowModern, s.playerRowInGroup, playerIndex === teamPlayers.length - 1 && s.playerRowLastInGroup, active && s.playerActive, focusedPlayer === p.name && s.playerFocused]}>
+<TouchableOpacity accessibilityRole="checkbox" accessibilityLabel={`${p.name}, ${p.team}, ${p.role}, ₹${p.price}m, ${ownership}`} accessibilityState={{ checked: active }} style={s.playerMain} onPress={() => { setFocusedPlayer(p.name); toggle(p.name); }}>
 <View style={[s.checkbox, active && s.checkboxActive]}>
 <Text style={s.check}>{active ? "✓" : ""}</Text>
 </View>
 <View style={{ flex: 1, marginLeft: 10 }}>
 <View style={s.specialNameRow}><Text style={s.playerName}>{p.name}</Text>{(specialLabels[p.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View>
-<View style={s.teamSubMeta}><IplTeamBadge code={p.team} /><Text style={s.meta}>{p.role}</Text><OwnerBadge owner={p.owner === "Available" ? "OpenPlayer" : p.owner} label={ownership} compact /></View>
+<View style={s.teamSubMeta}><IplTeamBadge code={p.team} /><Text style={s.meta}>{p.role}</Text><OwnerBadge owner={p.owner === "Available" ? "Open player" : p.owner} label={ownership} compact /></View>
 </View>
 <View style={s.playerMetrics}><Text style={s.price}>₹{p.price}m</Text><Text style={s.leaguePointValue}>{Math.round(leaguePlayerPoints[p.name] ?? 0)} pts</Text></View>
 </TouchableOpacity>{active && <View style={s.markers}>
@@ -1467,9 +1641,10 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   };
   return <View style={s.teamScreen}><ScrollView ref={teamScrollRef} contentContainerStyle={s.teamContent} scrollEventThrottle={16} onScroll={event => setShowScrollTop(event.nativeEvent.contentOffset.y > 520)}>
     <Text style={s.greeting}>Plan next 7 matches</Text><Text style={s.subtitle}>Select a fixture, prepare its XI, and submit before its own lock.</Text>
-    {immediateNextFixture ? <View style={s.lockCountdown}><View><Text style={s.lockCountdownLabel}>{nextLockIsFarAway ? "NEXT LINEUP LOCKS ON" : "NEXT LINEUP LOCKS IN"}</Text><Text style={s.lockCountdownMatch}>Match {immediateNextFixture.id.replace("M", "")} · {immediateNextFixture.home} vs {immediateNextFixture.away}</Text></View><Text style={[s.lockCountdownTime, nextLockIsFarAway && s.lockCountdownDate]}>{nextLockDisplay}</Text></View> : null}
+    {immediateNextFixture ? <View style={s.lockCountdown}><View style={s.lockCountdownDetails}><Text numberOfLines={1} style={s.lockCountdownLabel}>{nextLockIsFarAway ? "NEXT XI LOCKS ON" : "NEXT XI LOCKS IN"}</Text><Text style={s.lockCountdownMatch}>Match {immediateNextFixture.id.replace("M", "")} · {immediateNextFixture.home} vs {immediateNextFixture.away}</Text></View><Text numberOfLines={1} style={[s.lockCountdownTime, teamWidth < 360 && s.lockCountdownTimeCompact, nextLockIsFarAway && s.lockCountdownDate]}>{nextLockDisplay}</Text></View> : null}
     <View style={s.activeFixtureBanner}><View style={s.activeFixtureBadge}><Text style={s.activeFixtureBadgeText}>ACTIVE XI</Text></View><View style={s.activeFixtureDetails}><Text style={s.activeFixtureTitle}>Editing Match {activeMatchNumber}</Text><View style={s.activeFixtureTeams}><IplTeamBadge code={fixture.home} /><Text style={s.activeFixtureVs}>VS</Text><IplTeamBadge code={fixture.away} /></View></View><Text style={s.activeFixtureHint}>{hasSavedCurrentLineup ? "EDIT XI" : "NEW XI"}</Text></View>
-    <ScrollView ref={fixtureStripRef} horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; return <TouchableOpacity key={match.id} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, active && submitted ? s.statusSubmitted : null]}>{active && submitted ? "Submitted" : "XI carried · booster empty"}</Text></TouchableOpacity>; })}</ScrollView>
+    {teamWidth < 900 ? <View style={s.horizontalSectionCue}><Text style={s.horizontalSectionLabel}>UPCOMING MATCHES</Text><Text style={s.horizontalSectionHint}>SWIPE →</Text></View> : null}
+    <ScrollView ref={fixtureStripRef} horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; return <TouchableOpacity key={match.id} accessibilityRole="button" accessibilityLabel={`Match ${match.id.replace("M", "")}, ${match.home} versus ${match.away}, ${match.day} at ${match.time}`} accessibilityState={{ selected: active }} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, active && submitted ? s.statusSubmitted : null]}>{active && submitted ? "Submitted" : "XI carried · booster empty"}</Text></TouchableOpacity>; })}</ScrollView>
     <View style={s.boosterSection}><View style={s.boosterSectionHeading}><Text style={s.boosterSectionTitle}>Match booster</Text><Text style={s.boosterSectionHint}>Optional · choose one</Text></View><View style={s.boosterGrid}>
       <BoosterCard code="3X" name="Triple Impact" detail={tripleImpactAvailable ? "1 remaining · all phases" : `Used in Match ${used3X?.matchNumber} · unavailable`} active={boosterCode === "3X"} disabled={!tripleImpactAvailable} onPress={() => chooseBooster("3X")} />
       <BoosterCard code="2UP" name="Double Up" detail={doubleUpAvailable ? `${currentPhase?.name}: ${doubleUpPhaseLimit - doubleUpUsesInPhase.length} remaining` : doubleUpPhaseLimit <= 0 ? `Unavailable in ${currentPhase?.name ?? "this phase"}` : `${currentPhase?.name}: usage reached`} active={boosterCode === "2UP"} disabled={!doubleUpAvailable} onPress={() => chooseBooster("2UP")} />
@@ -1478,25 +1653,55 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     {boosterCode === "3X" && <View style={s.boosterHelp}><Text style={s.boosterHelpTitle}>{boosterPlayer ? `${boosterPlayer} receives 3X` : "Choose the 3X player below"}</Text><Text style={s.boosterHelpText}>Stacks multiplicatively: C+3X = 6×, VC+3X = 4.5×, and BAI/BOI+3X = 6× for that discipline.</Text></View>}
     {boosterCode === "2UP" && <View style={s.boosterHelp}><Text style={s.boosterHelpTitle}>Your final match total will be doubled</Text><Text style={s.boosterHelpText}>Availability follows the configured usage limit for {currentPhase?.name ?? "this league phase"}.</Text></View>}
     {boosterCode === "SUP-TR" && <View style={s.boosterHelp}><Text style={s.boosterHelpTitle}>Unlimited transfers enabled for this match</Text><Text style={s.boosterHelpText}>This submitted XI becomes the carried-forward team for following matches.</Text></View>}
-    <View style={s.selectionTitleRow}><View style={{ flex: 1 }}><Text style={s.greeting}>{submitted ? "Your submitted XI" : "Select your XI"}</Text><View style={s.titleTeamRow}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away} /><Text style={s.titleLock}>Locks {fixture.day} at {fixture.time}</Text></View></View><View style={s.selectionActions}><TouchableOpacity style={s.resetButton} onPress={resetXI}><Text style={s.resetButtonText}>Reset XI</Text></TouchableOpacity><TouchableOpacity style={s.clearButton} onPress={clearXI}><Text style={s.clearButtonText}>Clear XI</Text></TouchableOpacity></View></View>
+    <View style={s.selectionTitleRow}><View style={{ flex: 1 }}><Text style={s.greeting}>{submitted ? teamWidth < 360 ? "Submitted XI" : "Your submitted XI" : "Select your XI"}</Text><View style={s.titleTeamRow}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away} /><Text style={s.titleLock}>Locks {fixture.day} at {fixture.time}</Text></View></View><View style={s.selectionActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Reset lineup" style={s.resetButton} onPress={resetXI}><Text style={s.resetButtonText}>Reset XI</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Clear lineup" style={s.clearButton} onPress={clearXI}><Text style={s.clearButtonText}>Clear XI</Text></TouchableOpacity></View></View>
     <View style={s.activeRulesBanner}><View style={s.activeRulesHeading}><View style={s.activeRulesIcon}><Text style={s.activeRulesIconText}>✓</Text></View><View style={{ flex: 1 }}><Text style={s.activeRulesTitle}>Playing Rules v{rules.version}</Text><Text style={s.activeRulesText}>Minimum {rules.min_bowlers} bowlers · {rules.lineup_size} players · ₹{rules.lineup_budget}m budget</Text></View></View><View style={s.activeRulesChips}><View style={s.activeRulesChip}><Text style={s.activeRulesChipText}>C · VC · BAI · BOI optional</Text></View><View style={s.activeRulesChip}><Text style={s.activeRulesChipText}>C/VC cannot combine with BAI/BOI</Text></View></View></View>
     {firstMissingPriorMatch ? <View style={s.priorMatchBanner}><View style={s.priorMatchIcon}><Text style={s.priorMatchIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.priorMatchTitle}>SUBMIT MATCH {firstMissingPriorMatch} FIRST</Text><Text style={s.priorMatchText}>Match {firstMissingPriorMatch} is still open. Submit that XI before preparing Match {activeMatchNumber}.</Text></View></View> : freeTransferMatch ? <View style={s.freeTransferBanner}><View style={s.freeTransferIcon}><Text style={s.freeTransferIconText}>FREE</Text></View><View style={{ flex: 1 }}><Text style={s.freeTransferTitle}>FREE TRANSFER MATCH</Text><Text style={s.freeTransferText}>Your first submitted XI in {activeTransferPeriod?.name ?? "this period"}. All changes are free and your {transferLimit}-transfer balance remains unchanged.</Text></View></View> : null}
     {lineupLoadBusy ? <View style={s.carryForward}><ActivityIndicator color="#174D3D" /><Text style={s.carryForwardText}>Loading saved or carried-forward XI…</Text></View> : null}
     {rulesLoadMessage ? <View style={s.warningCard}><Text style={s.warningText}>⚠ {rulesLoadMessage}</Text></View> : null}
     {submitted && <View style={s.carryForward}><Text style={s.carryForwardText}>✓ This XI will carry forward to the next match automatically.</Text></View>}
     {!submitted && selected.length === rules.lineup_size && <View style={s.carryForward}><Text style={s.carryForwardText}>↳ Your latest submitted XI was carried forward. You can alter it before submitting this match.</Text></View>}
-    <Text style={s.selectedTitle}>Selected Players ({chosen.length}/{rules.lineup_size})</Text>
-    {chosen.length ? <View style={s.selectedList}>{chosen.map((player, index) => { const marker = captain === player.name ? "C" : vice === player.name ? "VC" : impactPlayer === player.name ? impactType : ""; const triple = boosterCode === "3X" && boosterPlayer === player.name; return <View key={player.name} style={[s.selectedListRow, marker === "C" && s.rowCaptain, marker === "VC" && s.rowVice, marker === "BAI" && s.rowBai, marker === "BOI" && s.rowBoi]}><Text style={s.selectedNumber}>{index + 1}</Text><TouchableOpacity style={{ flex: 1 }} onPress={() => focusPlayerInTeamList(player.name, player.team)}><View style={s.specialNameRow}><Text style={s.selectedChipName}>{player.name}</Text>{(specialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={s.teamSubMeta}><IplTeamBadge code={player.team} /><Text style={s.selectedChipMeta}>{player.role}</Text><Text style={s.selectedCost}>₹{Number(player.price).toFixed(1)}m</Text><Text style={s.selectedEditHint}>Tap to edit C/VC/BAI/BOI</Text></View></TouchableOpacity>{marker ? <MarkerBadge marker={marker} /> : null}{triple ? <MarkerBadge marker="3X" /> : null}<TouchableOpacity style={s.removeSelected} onPress={() => toggle(player.name)}><Text style={s.removeSelectedText}>×</Text></TouchableOpacity></View>; })}</View> : <View style={s.emptySelected}><Text style={s.emptySelectedText}>No players selected. Choose players from the team sections below.</Text></View>}
+    <View style={s.selectedXiSheet}>
+      <View style={s.selectedXiHeader}>
+        <View pointerEvents="none" style={s.selectedXiHeaderGlow} />
+        <View style={{ flex: 1 }}>
+          <Text style={s.selectedXiEyebrow}>MATCH {activeMatchNumber} · YOUR MATCH SHEET</Text>
+          <Text style={s.selectedXiTitle}>Selected XI</Text>
+          <View style={s.selectedXiMatchup}><IplTeamBadge code={fixture.home} /><Text style={s.selectedXiVs}>VS</Text><IplTeamBadge code={fixture.away} /><Text style={s.selectedXiLock} numberOfLines={1}>Locks {fixture.day} · {fixture.time}</Text></View>
+        </View>
+        <View style={[s.selectedXiStatus, (errors.length > 0 || chosen.length !== rules.lineup_size) && s.selectedXiStatusNeedsWork]}><Text style={s.selectedXiStatusValue}>{chosen.length}/{rules.lineup_size}</Text><Text style={s.selectedXiStatusLabel}>{errors.length ? "CHECK XI" : submitted ? "SUBMITTED" : chosen.length === rules.lineup_size ? "READY" : "BUILDING"}</Text></View>
+      </View>
+      <View style={s.selectedXiStats}>
+        <View style={s.selectedXiStat}><Text style={s.selectedXiStatLabel}>BUDGET</Text><Text numberOfLines={1} style={[s.selectedXiStatValue, total > rules.lineup_budget && s.selectedXiStatBad]}>₹{total.toFixed(1)} / ₹{rules.lineup_budget}m</Text></View>
+        <View style={s.selectedXiStatDivider} />
+        <View style={s.selectedXiStat}><Text style={s.selectedXiStatLabel}>LEADERS</Text><Text numberOfLines={1} style={s.selectedXiStatValue}>{captain ? "C ✓" : "C —"} · {vice ? "VC ✓" : "VC —"}</Text></View>
+        <View style={s.selectedXiStatDivider} />
+        <View style={s.selectedXiStat}><Text style={s.selectedXiStatLabel}>IMPACT</Text><Text numberOfLines={1} style={s.selectedXiStatValue}>{impactType || "Optional"}</Text></View>
+      </View>
+      <View style={s.selectedXiGuide}><Text style={s.selectedXiGuideText}>Tap a player to edit match roles</Text><View style={s.selectedXiLegend}><Text style={[s.selectedXiLegendChip, s.selectedXiLegendCaptain]}>C</Text><Text style={[s.selectedXiLegendChip, s.selectedXiLegendVice]}>VC</Text><Text style={[s.selectedXiLegendChip, s.selectedXiLegendImpact]}>IMPACT</Text></View></View>
+      {chosen.length ? <View style={s.selectedList}>{chosen.map((player, index) => { const marker = captain === player.name ? "C" : vice === player.name ? "VC" : impactPlayer === player.name ? impactType : ""; const triple = boosterCode === "3X" && boosterPlayer === player.name; const roleDetail = rolePresentation(player.role); return <View key={player.name} style={[s.selectedListRow, marker === "C" && s.rowCaptain, marker === "VC" && s.rowVice, marker === "BAI" && s.rowBai, marker === "BOI" && s.rowBoi]}><View pointerEvents="none" style={[s.selectedRowAccent, { backgroundColor: roleDetail.color }]} /><View style={[s.selectedNumberBadge, { backgroundColor: roleDetail.wash, borderColor: roleDetail.color }]}><Text style={[s.selectedNumber, { color: roleDetail.color }]}>{index + 1}</Text></View><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit ${player.name}, ${player.team}, ${roleDetail.label}`} style={s.selectedPlayerMain} onPress={() => focusPlayerInTeamList(player.name, player.team)}><View style={s.specialNameRow}><Text style={s.selectedChipName} numberOfLines={1}>{player.name}</Text>{(specialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={s.selectedPlayerMeta}><IplTeamBadge code={player.team} /><View style={[s.selectedRolePill, { backgroundColor: roleDetail.wash }]}><RoleGlyph role={player.role} color={roleDetail.color} /><Text style={[s.selectedRolePillText, { color: roleDetail.color }]}>{player.role}</Text></View><Text style={s.selectedCost}>₹{Number(player.price).toFixed(1)}m</Text></View></TouchableOpacity><View pointerEvents="none" style={s.selectedRowMarkers}>{marker ? <MarkerBadge marker={marker} /> : null}{triple ? <MarkerBadge marker="3X" /> : null}</View><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove ${player.name}`} style={s.removeSelected} onPress={() => toggle(player.name)}><Text style={s.removeSelectedText}>×</Text></TouchableOpacity></View>; })}</View> : <View style={s.selectedXiEmpty}><View style={s.selectedXiEmptyIcon}><Text style={s.selectedXiEmptyIconText}>XI</Text></View><Text style={s.selectedXiEmptyTitle}>Build your match XI</Text><Text style={s.emptySelectedText}>Choose players from the team sections below. Your selections will appear here.</Text></View>}
+    </View>
+    <View style={[s.lineupActionInline, submitted ? s.lineupActionSaved : errors.length ? s.lineupActionError : hasSavedCurrentLineup ? s.lineupActionChanged : s.lineupActionReady]}>
+      <View style={{ flex: 1 }}>
+        <Text style={s.stickyMatch}>MATCH {activeMatchNumber} · {fixture.home} VS {fixture.away}</Text>
+        <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining` : submitted ? "Lineup submitted" : hasSavedCurrentLineup ? "Changes not submitted" : "Ready to submit"}</Text>
+        <Text numberOfLines={2} style={s.stickyMeta}>{submitted ? "Saved · Edit a player above to enable resubmission" : hasSavedCurrentLineup ? `${selected.length}/${rules.lineup_size} · Δ${displayedMatchTransfers} vs prior · Resubmit to save` : teamWidth < 520 ? `${selected.length}/${rules.lineup_size} · ₹${total.toFixed(1)}m · Δ${displayedMatchTransfers} vs prior` : `${selected.length}/${rules.lineup_size} · ₹${total.toFixed(1)}m · ${displayedMatchTransfers} transfer${displayedMatchTransfers === 1 ? "" : "s"} vs previous XI`}</Text>
+      </View>
+      {submitted ? <View accessible accessibilityRole="text" accessibilityLabel={`Match ${activeMatchNumber} lineup saved`} style={s.submittedStatusPill}><View style={s.submittedStatusCheck}><Text style={s.submittedStatusCheckText}>✓</Text></View><Text style={s.submittedStatusText}>SAVED</Text></View> : <TouchableOpacity accessibilityRole="button" accessibilityLabel={errors.length ? `${showIssues ? "Hide" : "View"} submission issues` : lineupSubmitActionLabel({ hasSavedLineup: hasSavedCurrentLineup, unchanged: false })} accessibilityState={{ disabled: submitBusy }} disabled={submitBusy} style={[s.stickyButton, (submitBusy && s.disabled)]} onPress={() => errors.length ? setShowIssues(!showIssues) : runAction(submitXI)}>
+        {submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? showIssues ? "Hide issues" : "View issues" : lineupSubmitActionLabel({ hasSavedLineup: hasSavedCurrentLineup, unchanged: false })}</Text>}
+      </TouchableOpacity>}
+    </View>
+    {showIssues && errors.length > 0 ? <View style={s.issuePopup}><Text style={s.issuePopupTitle}>Issues to fix</Text>{errors.map(error => <Text key={error} style={s.issuePopupText}>• {error}</Text>)}</View> : null}
+    {submitMessage && !showSubmitConfirmation ? <View accessibilityLiveRegion="polite" style={[s.submitResult, submitMessage === "Your lineup has been saved." ? s.submitResultSuccess : s.submitResultError]}><Text style={s.submitResultText}>{submitMessage}</Text></View> : null}
     <View style={s.lineupSummaryCard}>
       <View style={s.summaryHeaderGrid}>
         <Summary icon="◎" label="PLAYERS" value={`${selected.length}`} suffix={` / ${rules.lineup_size}`} detail={selected.length === rules.lineup_size ? "Full squad" : `${rules.lineup_size - selected.length} still needed`} tone="players" bad={selected.length !== rules.lineup_size} />
         <Summary icon="₹" label="COST" value={`₹${total.toFixed(1)}m`} detail="Total spent" tone="cost" bad={total > rules.lineup_budget} />
-        <Summary icon="↔" label="MATCH TRANS." value={`${displayedMatchTransfers}`} detail="This match" tone="match" bad={false} />
-        <Summary icon="▦" label="PERIOD TRANS." value={displayedTransfers.includes(" / ") ? displayedTransfers.split(" / ")[0] : displayedTransfers} suffix={displayedTransfers.includes(" / ") ? ` / ${displayedTransfers.split(" / ")[1]}` : ""} detail="This period" tone="period" bad={false} />
+        <Summary icon="↔" label={"MATCH\nTRANSFERS"} value={`${displayedMatchTransfers}`} detail="This match" tone="match" bad={false} />
+        <Summary icon="▦" label={"PERIOD\nTRANSFERS"} value={displayedTransfers.includes(" / ") ? displayedTransfers.split(" / ")[0] : displayedTransfers} suffix={displayedTransfers.includes(" / ") ? ` / ${displayedTransfers.split(" / ")[1]}` : ""} detail="This period" tone="period" bad={false} />
       </View>
       <View style={s.summaryBody}>
         <View style={s.compactSummaryRow}>
-          <Text style={s.compactSummaryRowLabel}>OWNERSHIP</Text>
+          <Text style={s.compactSummaryRowLabel}>OWNERS</Text>
           <View style={s.compositionGrid}>
             {ownershipEnabled ? <><OwnershipSummary icon="♙" label="Mine" value={myPlayers} total={selected.length} tone="mine" /><OwnershipSummary icon="◎" label="Open" value={openPlayers} total={selected.length} tone="open" /><OwnershipSummary icon="♟" label="Others" value={otherOwnerPlayers} total={selected.length} tone="other" /><OwnershipSummary icon="◆" label={`${fixture.home}+${fixture.away}`} value={currentMatchPlayers} total={selected.length} tone="match" /></> : <><OwnershipSummary icon="◎" label="Open" value={selected.length} total={selected.length} tone="open" /><OwnershipSummary icon="◆" label={`${fixture.home}+${fixture.away}`} value={currentMatchPlayers} total={selected.length} tone="match" /></>}
           </View>
@@ -1508,48 +1713,36 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
         </View>
       </View>
     </View>
-    {submissionWarnings.length ? <View style={s.combinedWarning}><TouchableOpacity style={s.combinedWarningHeader} onPress={() => setShowWarnings(value => !value)}><View style={s.combinedWarningIcon}><Text style={s.combinedWarningIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.combinedWarningTitle}>{submissionWarnings.length} selection notice{submissionWarnings.length > 1 ? "s" : ""}</Text><Text style={s.combinedWarningSummary}>{submissionWarnings[0]}</Text></View><Text style={s.combinedWarningChevron}>{showWarnings ? "▲" : "▼"}</Text></TouchableOpacity>{showWarnings ? <View style={s.combinedWarningBody}>{submissionWarnings.map(warning => <Text key={warning} style={s.combinedWarningText}>• {warning}</Text>)}</View> : null}</View> : null}
+    {submissionWarnings.length ? <View style={s.combinedWarning}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`${submissionWarnings.length} selection notice${submissionWarnings.length > 1 ? "s" : ""}`} accessibilityState={{ expanded: showWarnings }} style={s.combinedWarningHeader} onPress={() => setShowWarnings(value => !value)}><View style={s.combinedWarningIcon}><Text style={s.combinedWarningIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.combinedWarningTitle}>{submissionWarnings.length} selection notice{submissionWarnings.length > 1 ? "s" : ""}</Text><Text style={s.combinedWarningSummary}>{submissionWarnings[0]}</Text></View><Text style={s.combinedWarningChevron}>{showWarnings ? "▲" : "▼"}</Text></TouchableOpacity>{showWarnings ? <View style={s.combinedWarningBody}>{submissionWarnings.map(warning => <Text key={warning} style={s.combinedWarningText}>• {warning}</Text>)}</View> : null}</View> : null}
     <View style={s.playerFiltersCard}>
-      <View style={s.playerFiltersHeading}><View><Text style={s.playerFiltersTitle}>Filter & sort players</Text><Text style={s.playerFiltersHint}>Find the right players without changing your XI</Text></View>{roleFilter !== "ALL" || ownershipFilter !== "ALL" ? <TouchableOpacity onPress={() => { setRoleFilter("ALL"); setOwnershipFilter("ALL"); }}><Text style={s.clearFiltersText}>Clear filters</Text></TouchableOpacity> : null}</View>
-      <Text style={s.playerFilterLabel}>ROLE</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>
-        {([['ALL', 'All roles'], ['BA', 'Batters'], ['WK', 'Wicketkeepers'], ['AL', 'All-rounders'], ['BO', 'Bowlers']] as Array<[PlayerRoleFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} style={[s.playerFilterChip, roleFilter === value && s.playerFilterChipActive]} onPress={() => setRoleFilter(value)}><Text style={[s.playerFilterChipText, roleFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}
-      </ScrollView>
-      {ownershipEnabled ? <><Text style={s.playerFilterLabel}>OWNERSHIP</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>
-          {([['ALL', 'All players'], ['MINE', 'My Players'], ['OTHER', 'Other Owners'], ['OPEN', 'OpenPlayer']] as Array<[PlayerOwnershipFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} style={[s.playerFilterChip, ownershipFilter === value && s.playerFilterChipActive]} onPress={() => setOwnershipFilter(value)}><Text style={[s.playerFilterChipText, ownershipFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}
-        </ScrollView></> : null}
-      <Text style={s.playerFilterLabel}>SORT BY</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>
-        {([['NAME', 'Name A–Z'], ['COST', 'Cost · High first'], ['POINTS', 'Points · High first']] as Array<[PlayerSort, string]>).map(([value, label]) => <TouchableOpacity key={value} style={[s.playerFilterChip, playerSort === value && s.playerFilterChipActive]} onPress={() => setPlayerSort(value)}><Text style={[s.playerFilterChipText, playerSort === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}
-      </ScrollView>
+      <View style={s.playerFiltersHeading}><View style={{ flex: 1 }}><Text style={s.playerFiltersTitle}>Filter & sort players</Text><Text style={s.playerFiltersHint}>Narrow the player list without changing your XI</Text></View>{roleFilter !== "ALL" || ownershipFilter !== "ALL" || playerSort !== "NAME" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Reset player filters and sorting" style={s.resetFiltersButton} onPress={() => { setRoleFilter("ALL"); setOwnershipFilter("ALL"); setPlayerSort("NAME"); }}><Text style={s.clearFiltersText}>Reset</Text></TouchableOpacity> : null}</View>
+      {teamWidth < 520 ? <View style={s.compactFiltersPanel}>
+        <View style={s.compactFilterSection}><Text style={s.compactFilterLabel}>ROLE</Text><View style={s.compactFilterOptions}>{([['ALL', 'All roles', 'All'], ['BA', 'Batters', 'Bat'], ['WK', 'Wicketkeepers', 'WK'], ['AL', 'All-rounders', 'All-R'], ['BO', 'Bowlers', 'Bowl']] as Array<[PlayerRoleFilter, string, string]>).map(([value, label, compactLabel]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: roleFilter === value }} style={[s.compactFilterChip, roleFilter === value && s.playerFilterChipActive]} onPress={() => setRoleFilter(value)}><Text numberOfLines={1} style={[s.compactFilterChipText, roleFilter === value && s.playerFilterChipTextActive]}>{compactLabel}</Text></TouchableOpacity>)}</View></View>
+        {ownershipEnabled ? <View style={s.compactFilterSection}><Text style={s.compactFilterLabel}>OWNER</Text><View style={s.compactFilterOptions}>{([['ALL', 'All players', 'All'], ['MINE', 'My players', 'Mine'], ['OTHER', 'Other owners', 'Others'], ['OPEN', 'Open players', 'Open']] as Array<[PlayerOwnershipFilter, string, string]>).map(([value, label, compactLabel]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: ownershipFilter === value }} style={[s.compactFilterChip, ownershipFilter === value && s.playerFilterChipActive]} onPress={() => setOwnershipFilter(value)}><Text numberOfLines={1} style={[s.compactFilterChipText, ownershipFilter === value && s.playerFilterChipTextActive]}>{compactLabel}</Text></TouchableOpacity>)}</View></View> : null}
+        <View style={s.compactFilterSection}><Text style={s.compactFilterLabel}>SORT</Text><View style={s.compactFilterOptions}>{([['NAME', 'Name A–Z', 'A–Z'], ['COST', 'Cost · High first', 'Cost ↓'], ['POINTS', 'Points · High first', 'Points ↓']] as Array<[PlayerSort, string, string]>).map(([value, label, compactLabel]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={`Sort by ${label}`} accessibilityState={{ selected: playerSort === value }} style={[s.compactFilterChip, playerSort === value && s.playerFilterChipActive]} onPress={() => setPlayerSort(value)}><Text numberOfLines={1} style={[s.compactFilterChipText, playerSort === value && s.playerFilterChipTextActive]}>{compactLabel}</Text></TouchableOpacity>)}</View></View>
+      </View> : <>
+        <View style={s.playerFilterLabelRow}><Text style={s.playerFilterLabel}>ROLE</Text></View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>{([['ALL', 'All roles'], ['BA', 'Batters'], ['WK', 'Wicketkeepers'], ['AL', 'All-rounders'], ['BO', 'Bowlers']] as Array<[PlayerRoleFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: roleFilter === value }} style={[s.playerFilterChip, roleFilter === value && s.playerFilterChipActive]} onPress={() => setRoleFilter(value)}><Text style={[s.playerFilterChipText, roleFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView>
+        {ownershipEnabled ? <><View style={s.playerFilterLabelRow}><Text style={s.playerFilterLabel}>OWNERSHIP</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>{([['ALL', 'All players'], ['MINE', 'My players'], ['OTHER', 'Other owners'], ['OPEN', 'Open players']] as Array<[PlayerOwnershipFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: ownershipFilter === value }} style={[s.playerFilterChip, ownershipFilter === value && s.playerFilterChipActive]} onPress={() => setOwnershipFilter(value)}><Text style={[s.playerFilterChipText, ownershipFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView></> : null}
+        <View style={s.playerFilterLabelRow}><Text style={s.playerFilterLabel}>SORT BY</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>{([['NAME', 'Name A–Z'], ['COST', 'Cost · High first'], ['POINTS', 'Points · High first']] as Array<[PlayerSort, string]>).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={`Sort by ${label}`} accessibilityState={{ selected: playerSort === value }} style={[s.playerFilterChip, playerSort === value && s.playerFilterChipActive]} onPress={() => setPlayerSort(value)}><Text style={[s.playerFilterChipText, playerSort === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView>
+      </>}
     </View>
-    <Text style={s.sectionTitle}>Playing teams</Text><View style={s.playingTeamHelp}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>and</Text><IplTeamBadge code={fixture.away} /><Text style={s.helperInline}>players are shown first.</Text></View>
+    <Text style={s.sectionTitle}>Playing teams</Text><View style={s.playingTeamHelp}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>and</Text><IplTeamBadge code={fixture.away} /><Text style={[s.helperInline, s.textMutedAccessible]}>players are shown first.</Text></View>
     {matchTeams.map(renderTeam)}
-    <Text style={s.otherTeamsTitle}>Other teams in Squad</Text><Text style={s.helper}>Tap to add or remove. Other-owner players use a transfer.</Text>
+    <Text style={s.otherTeamsTitle}>Other teams in squad</Text><Text style={[s.helper, s.textMutedAccessible]}>Tap to add or remove. Other-owner players use a transfer.</Text>
     {otherTeams.map(renderTeam)}
     <View style={[s.validation, errors.length ? s.invalid : s.valid]}><Text style={s.validationTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} to fix` : "Team is valid"}</Text>{errors.map(e => <Text key={e} style={s.validationText}>• {e}</Text>)}{!errors.length && <Text style={s.validationText}>Roles, cost, transfers and optional marker combinations are valid.</Text>}</View>
-  </ScrollView>{showScrollTop && !showIssues && !submitMessage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Scroll to top" style={s.scrollTopButton} onPress={() => teamScrollRef.current?.scrollTo({ y: 0, animated: true })}><Text style={s.scrollTopArrow}>↑</Text><Text style={s.scrollTopText}>Top</Text></TouchableOpacity> : null}{showIssues && errors.length > 0 && <View style={s.issuePopup}>
-<Text style={s.issuePopupTitle}>Issues to fix</Text>{errors.map(error => <Text key={error} style={s.issuePopupText}>• {error}</Text>)}</View>}{submitMessage && !showSubmitConfirmation ? <View style={[s.submitResult, submitMessage === "Your lineup has been saved." ? s.submitResultSuccess : s.submitResultError]}><Text style={s.submitResultText}>{submitMessage}</Text></View> : null}<View style={s.stickyAction}>
-<TouchableOpacity style={{ flex: 1 }} onPress={() => setShowIssues(!showIssues)}>
-<Text style={s.stickyMatch}>MATCH {activeMatchNumber} · {fixture.home} VS {fixture.away}</Text>
-<Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
-<Text style={s.stickyMeta}>{selected.length}/{rules.lineup_size} · ₹{total.toFixed(1)}m · {displayedMatchTransfers} transfer{displayedMatchTransfers === 1 ? "" : "s"} vs previous XI</Text>
-</TouchableOpacity>
-<TouchableOpacity disabled={submitBusy} style={[s.stickyButton, (!!errors.length || submitBusy) && s.disabled]} onPress={() => errors.length ? setShowIssues(true) : runAction(submitXI)}>
-{submitBusy ? <ActivityIndicator color="white" /> : <Text style={s.submitText}>{errors.length ? "View issues" : lineupSubmitActionLabel({ hasSavedLineup: hasSavedCurrentLineup, unchanged: submitted })}</Text>}
-</TouchableOpacity>
-</View><Modal visible={showFutureResetWarning} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}>
-<View style={s.submitModalOverlay}><View style={s.submitModalCard}>
+  </ScrollView>{showScrollTop && !showIssues && !submitMessage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Scroll to top" style={s.scrollTopButton} onPress={() => teamScrollRef.current?.scrollTo({ y: 0, animated: true })}><Text style={s.scrollTopArrow}>↑</Text><Text style={s.scrollTopText}>Top</Text></TouchableOpacity> : null}<Modal visible={showFutureResetWarning} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}>
+<View style={s.submitModalOverlay}><View nativeID="future-reset-dialog" accessibilityViewIsModal accessibilityRole="alert" accessibilityLabel={`Resubmission warning for Match ${activeMatchNumber}`} style={s.submitModalCard}>
 <View style={s.futureResetIcon}><Text style={s.futureResetIconText}>!</Text></View>
 <Text style={s.submitModalEyebrow}>RESUBMISSION WARNING</Text>
 <Text style={s.submitModalTitle}>Later teams will be reset</Text>
 <Text style={s.futureResetText}>Resubmitting Match {activeMatchNumber} will reset submitted Match{futureSubmittedMatches.length === 1 ? "" : "es"} {futureSubmittedMatches.join(", ")}.</Text>
 <View style={s.futureResetDetails}><Text style={s.futureResetDetail}>• Their transfers and boosters will be refunded.</Text><Text style={s.futureResetDetail}>• This revised XI will carry forward.</Text><Text style={s.futureResetDetail}>• You must submit those matches again in order.</Text></View>
-<View style={s.futureResetActions}><TouchableOpacity style={s.futureResetCancel} onPress={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}><Text style={s.futureResetCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={s.futureResetConfirm} onPress={() => { setShowFutureResetWarning(false); runAction(() => submitXI(true)); }}><Text style={s.futureResetConfirmText}>Reset & resubmit</Text></TouchableOpacity></View>
+<View style={s.futureResetActions}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel resubmission" style={s.futureResetCancel} onPress={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}><Text style={s.futureResetCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Reset later teams and resubmit Match ${activeMatchNumber}`} style={s.futureResetConfirm} onPress={() => { setShowFutureResetWarning(false); runAction(() => submitXI(true)); }}><Text style={s.futureResetConfirmText}>Reset & resubmit</Text></TouchableOpacity></View>
 </View></View>
 </Modal><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); setSubmitMessage(""); }}>
-<View style={s.submitModalOverlay}><View style={s.submitModalCard}>
+<View style={s.submitModalOverlay}><View nativeID="submit-confirmation-dialog" accessibilityViewIsModal accessibilityRole="alert" accessibilityLabel={`Match ${activeMatchNumber} submitted`} style={s.submitModalCard}>
 <View style={s.submitModalCheck}><Text style={s.submitModalCheckText}>✓</Text></View>
 <Text style={s.submitModalEyebrow}>LINEUP CONFIRMED</Text>
 <Text style={s.submitModalTitle}>Match {activeMatchNumber} submitted</Text>
@@ -1558,7 +1751,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 {futureSubmittedMatches.length ? <View style={s.futureResetSuccess}><Text style={s.futureResetSuccessTitle}>Future submissions reset</Text><Text style={s.futureResetSuccessText}>Matches {futureSubmittedMatches.join(", ")} now carry this revised XI and must be submitted again in order.</Text></View> : null}
 {submissionWarnings.length ? <View style={s.submitModalWarning}><View style={s.submitModalWarningHeading}><View style={s.submitModalWarningIcon}><Text style={s.submitModalWarningIconText}>!</Text></View><Text style={s.submitModalWarningTitle}>Submitted with {submissionWarnings.length} notice{submissionWarnings.length > 1 ? "s" : ""}</Text></View>{submissionWarnings.map(warning => <Text key={warning} style={s.submitModalWarningText}>• {warning}</Text>)}</View> : null}
 <Text style={s.submitModalNote}>{futureSubmittedMatches.length ? "Their transfers and boosters were refunded." : "Your XI is confirmed. You can make changes and resubmit until the lineup locks."}</Text>
-<TouchableOpacity style={s.submitModalButton} onPress={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); setSubmitMessage(""); }}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
+<TouchableOpacity accessibilityRole="button" accessibilityLabel="Close lineup confirmation" style={s.submitModalButton} onPress={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); setSubmitMessage(""); }}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
 </View></View>
 </Modal></View>;
 }
@@ -1628,7 +1821,7 @@ function LockedHistoryTestData() {
       <TouchableOpacity style={s.historyMatchHeader} onPress={() => { setExpandedMatch(matchExpanded ? "" : match.id); setExpandedOwner(matchExpanded ? "" : `${match.id}-Pandiyan`); }}><View style={{ flex: 1 }}><Text style={s.historyListTitle}>Match {index + 1} · {match.teams}</Text><Text style={s.historyListMeta}>{match.date} · Calculated</Text>{matchBoosters.length > 0 && <Text style={s.historyMatchBoosterOwners}>{matchBoosters.map(item => `${item.owner}: ${item.booster?.code}`).join(" · ")}</Text>}</View>{matchBoosters.length > 0 && <View style={s.historyMatchBoosterBadge}><Text style={s.historyMatchBoosterBadgeText}>⚡ BOOSTER USED</Text></View>}<Text style={s.historyStatus}>LOCKED</Text><Text style={s.pointsChevron}>{matchExpanded ? "▲" : "▼"}</Text></TouchableOpacity>
       {matchExpanded && <View style={s.historyOwners}>{testOwners.map(owner => ({ owner, points: ownerMatchPoints(owner, match.id) })).sort((a, b) => b.points - a.points || a.owner.localeCompare(b.owner)).map(({ owner, points: matchPoints }, ownerIndex, rankedOwners) => { const dayRank = rankedOwners.findIndex(item => item.points === matchPoints) + 1; const ownerKey = `${match.id}-${owner}`; const ownerExpanded = expandedOwner === ownerKey; const lineup = createTestXI(owner, match.id); const total = lineup.reduce((sum, player) => sum + player.price, 0); const impactMarker: ImpactType = seededScore(`${match.id}-${owner}-impact`) % 2 === 0 ? "BAI" : "BOI"; const booster = testBoosterFor(owner, match.id, lineup); return <View key={owner} style={s.historyOwnerCard}>
         <TouchableOpacity style={s.historyOwnerHeader} onPress={() => setExpandedOwner(ownerExpanded ? "" : ownerKey)}><View style={[s.dayRank, dayRank === 1 && s.dayRankFirst]}><Text style={[s.dayRankText, dayRank === 1 && s.dayRankTextFirst]}>#{dayRank}</Text></View><View style={s.badge}><Text style={s.badgeText}>{owner[0]}</Text></View><View style={{ flex: 1, marginLeft: 9 }}><View style={s.historyOwnerNameRow}><Text style={s.historyOwnerName}>{owner}</Text>{booster && <View style={s.historyBooster}><Text style={s.historyBoosterText}>{booster.code}</Text></View>}</View><Text style={s.historyOwnerMeta}>Match-day rank · 11 players · ₹{total.toFixed(1)}m{booster?.code === "2UP" ? " · total doubled" : booster?.code === "3X" ? ` · ${booster.playerName} tripled` : ""}</Text></View><Text style={s.historyOwnerPoints}>{Math.round(matchPoints)} pts</Text><Text style={s.pointsChevron}>{ownerExpanded ? "▲" : "▼"}</Text></TouchableOpacity>
-        {ownerExpanded && <View style={s.historyLineup}>{lineup.map((player, playerIndex) => { const marker = playerIndex === 0 ? "C" : playerIndex === 1 ? "VC" : playerIndex === 2 ? impactMarker : ""; const triple = booster?.code === "3X" && booster.playerName === player.name; const playerPoints = boostedPlayerPoints(match.id, player.name, marker, triple); return <View key={player.name} style={[s.historyPlayer, marker === "C" && s.rowCaptain, marker === "VC" && s.rowVice, marker === "BAI" && s.rowBai, marker === "BOI" && s.rowBoi, triple && s.rowTriple]}><View style={{ flex: 1 }}><Text style={s.historyPlayerName}>{playerIndex + 1}. {player.name}</Text><Text style={s.historyPlayerMeta}>{player.team} · {player.role} · {player.owner === owner ? "Mine" : player.owner === "Available" ? "OpenPlayer" : `Owned by ${player.owner}`}</Text></View><Text style={s.playerPoints}>{Math.round(playerPoints)} pts</Text>{marker ? <MarkerBadge marker={marker} /> : null}{triple ? <MarkerBadge marker="3X" /> : null}</View>; })}{booster?.code === "2UP" && <View style={s.doubleUpSummary}><Text style={s.doubleUpText}>2UP applied after all player, C, VC and Impact points</Text><Text style={s.doubleUpValue}>Final total ×2</Text></View>}</View>}
+        {ownerExpanded && <View style={s.historyLineup}>{lineup.map((player, playerIndex) => { const marker = playerIndex === 0 ? "C" : playerIndex === 1 ? "VC" : playerIndex === 2 ? impactMarker : ""; const triple = booster?.code === "3X" && booster.playerName === player.name; const playerPoints = boostedPlayerPoints(match.id, player.name, marker, triple); return <View key={player.name} style={[s.historyPlayer, marker === "C" && s.rowCaptain, marker === "VC" && s.rowVice, marker === "BAI" && s.rowBai, marker === "BOI" && s.rowBoi, triple && s.rowTriple]}><View style={{ flex: 1 }}><Text style={s.historyPlayerName}>{playerIndex + 1}. {player.name}</Text><Text style={s.historyPlayerMeta}>{player.team} · {player.role} · {player.owner === owner ? "Mine" : player.owner === "Available" ? "Open" : player.owner}</Text></View><Text style={s.playerPoints}>{Math.round(playerPoints)} pts</Text>{marker ? <MarkerBadge marker={marker} /> : null}{triple ? <MarkerBadge marker="3X" /> : null}</View>; })}{booster?.code === "2UP" && <View style={s.doubleUpSummary}><Text style={s.doubleUpText}>2UP applied after all player, C, VC and Impact points</Text><Text style={s.doubleUpValue}>Final total ×2</Text></View>}</View>}
       </View>; })}</View>}
     </View>; })}<Text style={s.testDataNote}>Test data only. Match 2 Pandiyan and Match 4 Jeba use 3X. Match 3 Sashi and Match 5 Saravana use 2UP.</Text>
   </>;
@@ -1639,27 +1832,81 @@ function HistoryScreen({ selected, captain, vice, submitted }: { selected: strin
   return <><Text style={s.greeting}>Team history</Text><Text style={s.subtitle}>Submitted and locked match lineups</Text>{submitted ? <View style={s.historyCard}><View style={s.historyHeader}><View><Text style={s.historyMatch}>RCB vs SRH</Text><Text style={s.historyDate}>Match 1 · Mar 28 · 7:30 PM</Text></View><Text style={s.historyStatus}>SUBMITTED</Text></View><View style={s.historyStats}><Text style={s.historyStat}>11 players</Text><Text style={s.historyStat}>₹{total.toFixed(1)}m</Text></View>{chosen.map(player => <View key={player.name} style={s.historyPlayer}><Text style={s.historyPlayerName}>{player.name}</Text><Text style={s.historyPlayerMeta}>{player.team} · {player.role}{captain === player.name ? " · C" : vice === player.name ? " · VC" : ""}</Text></View>)}</View> : <View style={s.emptyHistory}><Text style={s.emptyHistoryTitle}>No submitted teams yet</Text><Text style={s.emptyHistoryText}>Submitted or locked match teams will appear here and remain view-only.</Text></View>}</>;
 }
 type SummaryTone = "players" | "cost" | "match" | "period";
-function Summary({ label, value, suffix = "", tone, bad }: { icon: string; label: string; value: string; suffix?: string; detail: string; tone: SummaryTone; bad: boolean }) { const palette = tone === "players" ? { color: "#B866E8" } : tone === "cost" ? { color: "#78D951" } : tone === "match" ? { color: "#32B4F4" } : { color: "#FF6543" }; const centered = tone === "match"; return <View style={[s.summaryMetric, centered && s.summaryMetricCentered]}><View style={[s.summaryMetricDot, centered && s.summaryMetricDotCentered, { backgroundColor: palette.color }]} /><View style={[s.summaryMetricText, centered && s.summaryMetricTextCentered]}><Text numberOfLines={1} style={[s.summaryMetricLabel, centered && s.summaryMetricCenteredText]}>{label}</Text><Text numberOfLines={1} style={[s.summaryMetricValue, centered && s.summaryMetricCenteredText, { color: palette.color }, bad && s.summaryMetricBad]}>{value}<Text style={s.summaryMetricSuffix}>{suffix}</Text></Text></View></View>; }
-function OwnershipSummary({ label, value, tone }: { icon: string; label: string; value: number; total: number; tone: "mine" | "open" | "other" | "match" }) { const palette = tone === "mine" ? { color: "#24934A", wash: "#F0F8F2", border: "#CDE5D3" } : tone === "open" ? { color: "#C99200", wash: "#FFF9EA", border: "#F0DFAD" } : tone === "other" ? { color: "#D94A16", wash: "#FFF4EF", border: "#F0D2C6" } : { color: "#1264C4", wash: "#F0F5FC", border: "#CBDCF2" }; return <View style={[s.compositionCard, { backgroundColor: palette.wash, borderColor: palette.border }]}><Text style={[s.compositionValue, { color: palette.color }]}>{value}</Text><Text numberOfLines={1} style={s.compositionLabel}>{label}</Text></View>; }
+function Summary({ label, value, suffix = "", tone, bad }: { icon: string; label: string; value: string; suffix?: string; detail: string; tone: SummaryTone; bad: boolean }) { const centered = tone === "match" || tone === "period"; const color = bad ? UI_TOKENS.status.danger : UI.accent; return <View style={[s.summaryMetric, centered && s.summaryMetricCentered]}>{!centered ? <View style={[s.summaryMetricDot, { backgroundColor: color }]} /> : null}<View style={[s.summaryMetricText, centered && s.summaryMetricTextCentered]}><Text numberOfLines={2} style={[s.summaryMetricLabel, centered && s.summaryMetricCenteredText]}>{label}</Text>{centered ? <View style={s.summaryMetricCenteredValueRow}><View style={[s.summaryMetricDot, s.summaryMetricValueDot, { backgroundColor: color }]} /><Text numberOfLines={1} style={[s.summaryMetricValue, s.summaryMetricValueCentered, { color }, bad && s.summaryMetricBad]}>{value}<Text style={s.summaryMetricSuffix}>{suffix}</Text></Text></View> : <Text numberOfLines={1} style={[s.summaryMetricValue, { color }, bad && s.summaryMetricBad]}>{value}<Text style={s.summaryMetricSuffix}>{suffix}</Text></Text>}</View></View>; }
+function OwnershipSummary({ label, value, tone }: { icon: string; label: string; value: number; total: number; tone: "mine" | "open" | "other" | "match" }) { const color = tone === "mine" ? UI.primary : tone === "open" ? UI_TOKENS.status.warning : tone === "other" ? "#A64B2A" : "#275D92"; return <View style={[s.compositionCard, { backgroundColor: UI.card, borderColor: UI.border }]}><Text style={[s.compositionValue, { color }]}>{value}</Text><Text numberOfLines={1} style={s.compositionLabel}>{label}</Text></View>; }
 function RoleGlyph({ role, color }: { role: Role; color: string }) {
   if (role === "BO") return <View style={s.roleGlyph}><View style={[s.roleBall, { borderColor: color }]}><View style={[s.roleBallSeam, { backgroundColor: color }]} /></View></View>;
   if (role === "WK") return <View style={s.roleGlyph}><View style={[s.roleGloveLeft, { backgroundColor: color }]} /><View style={[s.roleGloveRight, { backgroundColor: color }]} /><View style={[s.roleGloveCuff, { backgroundColor: color }]} /></View>;
   return <View style={s.roleGlyph}><View style={[s.roleBatBlade, role === "AL" && s.roleBatBladeAllRounder, { backgroundColor: color }]} /><View style={[s.roleBatHandle, role === "AL" && s.roleBatHandleAllRounder, { backgroundColor: color }]} />{role === "AL" ? <View style={[s.roleAllRounderBall, { backgroundColor: color }]} /> : null}</View>;
 }
-function RoleSummary({ role, value }: { role: Role; value: number }) { const detail = role === "WK" ? { color: "#209447", wash: "#F0F8F2" } : role === "BA" ? { color: "#C99200", wash: "#FFF9EA" } : role === "AL" ? { color: "#6B35C6", wash: "#F6F1FC" } : { color: "#1264C4", wash: "#F0F5FC" }; return <View style={[s.roleSummaryCard, { borderColor: detail.color, backgroundColor: detail.wash }]}><RoleGlyph role={role} color={detail.color} /><Text style={[s.roleSummaryCode, { color: detail.color }]}>{role}</Text><Text style={[s.roleSummaryValue, { color: detail.color }]}>{value}</Text></View>; }
-function BoosterCard({ code, name, detail, active, disabled = false, onPress }: { code: Exclude<BoosterCode, "">; name: string; detail: string; active: boolean; disabled?: boolean; onPress: () => void }) { return <TouchableOpacity disabled={disabled} style={[s.boosterCard, disabled && s.boosterCardDisabled, active && s.boosterCardActive]} onPress={onPress}><Text style={[s.boosterCode, disabled && s.boosterTextDisabled, active && s.boosterCodeActive]}>{code}</Text><Text style={[s.boosterName, disabled && s.boosterTextDisabled, active && s.boosterNameActive]}>{name}</Text><Text style={[s.boosterDetail, active && s.boosterDetailActive]}>{detail}</Text></TouchableOpacity>; }
-function Marker({ text, active, disabled = false, onPress }: { text: string; active: boolean; disabled?: boolean; onPress: () => void }) { return <TouchableOpacity disabled={disabled} style={[s.marker, disabled && s.markerDisabled, active && (text === "C" ? s.badgeCaptain : text === "VC" ? s.badgeVice : text === "BAI" ? s.badgeBai : text === "BOI" ? s.badgeBoi : s.badgeTriple)]} onPress={onPress}><Text style={[s.markerText, disabled && s.markerTextDisabled, active && s.activeMarkerText]}>{text}</Text></TouchableOpacity>; }
+function rolePresentation(role: Role) { return role === "WK" ? { color: "#176A36", wash: "#F0F8F2", label: "Wicketkeeper" } : role === "BA" ? { color: "#765400", wash: "#FFF9EA", label: "Batter" } : role === "AL" ? { color: "#5B2AAE", wash: "#F6F1FC", label: "All-rounder" } : { color: "#0D559F", wash: "#F0F5FC", label: "Bowler" }; }
+function RoleSummary({ role, value }: { role: Role; value: number }) { const detail = rolePresentation(role); return <View style={[s.roleSummaryCard, { borderColor: detail.color, backgroundColor: detail.wash }]}><RoleGlyph role={role} color={detail.color} /><Text style={[s.roleSummaryCode, { color: detail.color }]}>{role}</Text><Text style={[s.roleSummaryValue, { color: detail.color }]}>{value}</Text></View>; }
+function BoosterCard({ code, name, detail, active, disabled = false, onPress }: { code: Exclude<BoosterCode, "">; name: string; detail: string; active: boolean; disabled?: boolean; onPress: () => void }) { return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${name}, ${detail}`} accessibilityState={{ selected: active, disabled }} disabled={disabled} style={[s.boosterCard, disabled && s.boosterCardDisabled, active && s.boosterCardActive]} onPress={onPress}><Text style={[s.boosterCode, disabled && s.boosterTextDisabled, active && s.boosterCodeActive]}>{code}</Text><Text style={[s.boosterName, disabled && s.boosterTextDisabled, active && s.boosterNameActive]}>{name}</Text><Text style={[s.boosterDetail, active && s.boosterDetailActive]}>{detail}</Text></TouchableOpacity>; }
+function Marker({ text, active, disabled = false, onPress }: { text: string; active: boolean; disabled?: boolean; onPress: () => void }) { return <TouchableOpacity accessibilityRole="button" accessibilityLabel={text === "C" ? "Captain" : text === "VC" ? "Vice captain" : text === "BAI" ? "Batting impact" : text === "BOI" ? "Bowling impact" : text} accessibilityState={{ selected: active, disabled }} disabled={disabled} style={[s.marker, disabled && s.markerDisabled, active && (text === "C" ? s.badgeCaptain : text === "VC" ? s.badgeVice : text === "BAI" ? s.badgeBai : text === "BOI" ? s.badgeBoi : s.badgeTriple)]} onPress={onPress}><Text style={[s.markerText, disabled && s.markerTextDisabled, active && s.activeMarkerText]}>{text}</Text></TouchableOpacity>; }
 function MarkerBadge({ marker }: { marker: string }) { return <View style={[s.markerBadge, marker === "C" ? s.badgeCaptain : marker === "VC" ? s.badgeVice : marker === "BAI" ? s.badgeBai : marker === "BOI" ? s.badgeBoi : s.badgeTriple]}><Text style={s.markerBadgeText}>{marker}</Text></View>; }
 
-const s = StyleSheet.create({
+const s = StyleSheet.create(normalizeUiStyles({
+  helpContent: { paddingTop: 18 },
+  helpHero: { position: "relative", overflow: "hidden", backgroundColor: "#071C3B", borderRadius: 22, padding: 20, ...CARD_SHADOW },
+  helpHeroGlow: { position: "absolute", width: 190, height: 190, borderRadius: 95, right: -72, top: -93, backgroundColor: "rgba(216,255,99,0.13)" },
+  helpHeroIcon: { width: 42, height: 42, borderRadius: 14, backgroundColor: UI.accent, alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  helpHeroIconText: { color: "#071C3B", fontSize: 24, lineHeight: 27, fontWeight: "900" },
+  helpEyebrow: { color: "#AEBBD0", fontSize: 9, lineHeight: 12, fontWeight: "900", letterSpacing: 1.3 },
+  helpTitle: { color: "#FFFFFF", fontSize: 27, lineHeight: 32, fontWeight: "900", marginTop: 5 },
+  helpSubtitle: { color: "#CDD5E2", fontSize: 12, lineHeight: 18, marginTop: 7, maxWidth: 560 },
+  helpHeroActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 18 },
+  helpPrimaryAction: { minHeight: 44, borderRadius: 12, backgroundColor: UI.accent, paddingHorizontal: 15, alignItems: "center", justifyContent: "center" },
+  helpPrimaryActionText: { color: "#071C3B", fontSize: 11, fontWeight: "900" },
+  helpSecondaryAction: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", backgroundColor: "rgba(255,255,255,0.07)", paddingHorizontal: 15, alignItems: "center", justifyContent: "center" },
+  helpSecondaryActionText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
+  helpSectionHeading: { marginTop: 23, marginBottom: 10 },
+  helpSectionTitle: { color: "#17352C", fontSize: 18, lineHeight: 22, fontWeight: "900" },
+  helpSectionSubtitle: { color: UI_TOKENS.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 },
+  helpQuickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  helpQuickCard: { flexGrow: 1, flexBasis: 220, minHeight: 86, flexDirection: "row", alignItems: "flex-start", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: UI.border, borderRadius: 15, padding: 12 },
+  helpQuickNumber: { width: 30, height: 30, borderRadius: 10, backgroundColor: "#E9F5BE", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  helpQuickNumberText: { color: "#173F35", fontSize: 13, fontWeight: "900" },
+  helpQuickCopy: { flex: 1, minWidth: 0 },
+  helpQuickTitle: { color: "#17352C", fontSize: 12, lineHeight: 15, fontWeight: "900" },
+  helpQuickText: { color: "#66766F", fontSize: 10, lineHeight: 15, marginTop: 3 },
+  helpTopicList: { gap: 8 },
+  helpTopicCard: { overflow: "hidden", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: UI.border, borderRadius: 16 },
+  helpTopicCardExpanded: { borderColor: "#9DB8AE", ...CARD_SHADOW },
+  helpTopicButton: { minHeight: 66, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10 },
+  helpTopicIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: "#EDF3F0", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  helpTopicIconText: { color: "#174D3D", fontSize: 13, lineHeight: 17, fontWeight: "900" },
+  helpTopicHeading: { flex: 1, minWidth: 0 },
+  helpTopicTitle: { color: "#17352C", fontSize: 12, lineHeight: 16, fontWeight: "900" },
+  helpTopicSummary: { color: "#6B7A74", fontSize: 9.5, lineHeight: 14, marginTop: 2 },
+  helpTopicChevron: { width: 30, color: "#174D3D", fontSize: 22, lineHeight: 25, fontWeight: "700", textAlign: "center", marginLeft: 5 },
+  helpTopicBody: { borderTopWidth: 1, borderTopColor: "#E7ECE9", backgroundColor: "#F9FBFA", paddingHorizontal: 13, paddingVertical: 10 },
+  helpBulletRow: { flexDirection: "row", alignItems: "flex-start", marginVertical: 4 },
+  helpBulletDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#7F9E28", marginTop: 5, marginRight: 9 },
+  helpBulletText: { flex: 1, minWidth: 0, color: "#42574F", fontSize: 10, lineHeight: 16 },
+  helpFaqCard: { flexDirection: "row", alignItems: "flex-start", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: UI.border, borderRadius: 15, padding: 12, marginBottom: 8 },
+  helpFaqMark: { width: 28, height: 28, borderRadius: 9, backgroundColor: "#F0EDFA", alignItems: "center", justifyContent: "center", marginRight: 10 },
+  helpFaqMarkText: { color: "#6542A0", fontSize: 13, fontWeight: "900" },
+  helpFaqCopy: { flex: 1, minWidth: 0 },
+  helpFaqQuestion: { color: "#17352C", fontSize: 11, lineHeight: 15, fontWeight: "900" },
+  helpFaqAnswer: { color: "#61716B", fontSize: 10, lineHeight: 16, marginTop: 4 },
+  helpRuleNote: { backgroundColor: "#FFF8E7", borderWidth: 1, borderColor: "#E8D390", borderRadius: 15, padding: 13, marginTop: 16 },
+  helpRuleNoteTitle: { color: "#69520B", fontSize: 11, lineHeight: 15, fontWeight: "900" },
+  helpRuleNoteText: { color: "#735F25", fontSize: 10, lineHeight: 16, marginTop: 4 },
+  helpFooterActions: { flexDirection: "row", gap: 8, marginTop: 12 },
+  helpFooterPrimary: { flex: 1, minHeight: 46, borderRadius: 13, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  helpFooterPrimaryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
+  helpFooterSecondary: { flex: 1, minHeight: 46, borderRadius: 13, borderWidth: 1, borderColor: "#BFCBC6", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  helpFooterSecondaryText: { color: "#174D3D", fontSize: 11, fontWeight: "900" },
   authSafe: { flex: 1, backgroundColor: UI.primaryDeep, alignItems: "center", justifyContent: "center", padding: 22 },
   authKeyboard: { flex: 1, width: "100%" },
   authScroll: { flexGrow: 1, justifyContent: "center", alignItems: "center" },
   authCard: { width: "100%", maxWidth: 430, backgroundColor: UI.surface, borderRadius: 24, padding: 24, borderWidth: 1, borderColor: "rgba(255,255,255,0.45)", shadowColor: "#000000", shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.24, shadowRadius: 28, elevation: 10 },
   authLogo: { width: 54, height: 54, borderRadius: 17, backgroundColor: UI.accent, alignItems: "center", justifyContent: "center", marginBottom: 20 },
   authLogoText: { color: "#071D17", fontSize: 18, fontWeight: "900" },
+  accessDeniedIcon: { width: 46, height: 46, borderRadius: 23, backgroundColor: UI_TOKENS.status.dangerWash, alignItems: "center", justifyContent: "center", marginBottom: 15 },
+  accessDeniedIconText: { color: UI_TOKENS.status.danger, fontSize: 24, lineHeight: 27, fontWeight: "900" },
   authTitle: { color: "#10251F", fontSize: 25, fontWeight: "900" },
-  authSubtitle: { color: "#718079", fontSize: 13, lineHeight: 19, marginTop: 7, marginBottom: 19 },
+  authSubtitle: { color: UI_TOKENS.colors.muted, fontSize: 13, lineHeight: 19, marginTop: 7, marginBottom: 19 },
   authInput: { backgroundColor: "white", borderWidth: 1, borderColor: "#D7DFDA", borderRadius: 12, color: "#10251F", fontSize: 15, paddingHorizontal: 14, paddingVertical: 13, marginBottom: 11 },
   authButton: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 5 },
   authButtonText: { color: "#10251F", fontWeight: "900" },
@@ -1693,12 +1940,12 @@ const s = StyleSheet.create({
   leagueEmblemYearRibbon: { position: "absolute", bottom: 5, minWidth: 31, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2, alignItems: "center" },
   leagueEmblemYear: { fontSize: 10, lineHeight: 12, fontWeight: "900", letterSpacing: 1.2 },
   leagueName: { color: "#173028", fontSize: 16, fontWeight: "900" },
-  leagueMeta: { color: "#7D8B85", fontSize: 9, marginTop: 3 },
+  leagueMeta: { color: UI_TOKENS.colors.muted, fontSize: 9, marginTop: 3 },
   leagueFormatNote: { color: "#4F665D", fontSize: 9, lineHeight: 13, marginTop: 5, paddingRight: 4 },
   leagueStatus: { alignSelf: "flex-start", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, fontWeight: "900", marginTop: 8 },
   leagueStatusActive: { color: "#285F39", backgroundColor: "#E2F1DF" },
   leagueStatusPending: { color: "#735F22", backgroundColor: "#F5EFD5" },
-  leagueArrow: { color: "#809089", fontSize: 27, marginLeft: 7 },
+  leagueArrow: { color: UI_TOKENS.colors.primary, fontSize: 27, marginLeft: 7 },
   invitationActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: "#EDF0ED" },
   invitationDecline: { borderWidth: 1, borderColor: "#C4CEC9", borderRadius: 10, paddingHorizontal: 15, paddingVertical: 10 },
   invitationDeclineText: { color: "#53665E", fontSize: 11, fontWeight: "800" },
@@ -1707,7 +1954,7 @@ const s = StyleSheet.create({
   pendingLeague: { backgroundColor: "white", borderRadius: 20, padding: 24, alignItems: "center" },
   pendingLeagueEyebrow: { color: "#829089", fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
   pendingLeagueTitle: { color: "#173028", fontSize: 25, fontWeight: "900", marginTop: 8 },
-  pendingLeagueMeta: { color: "#718079", fontSize: 11, marginTop: 5 },
+  pendingLeagueMeta: { color: UI_TOKENS.colors.muted, fontSize: 11, marginTop: 5 },
   pendingLeagueText: { color: "#66766F", fontSize: 11, lineHeight: 17, textAlign: "center", marginTop: 18 },
   teamHeaderExpanded: { borderColor: "#BFCBC5", backgroundColor: "#FBFCFB" },
   teamHeaderAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 6, borderRadius: 3 },
@@ -1725,21 +1972,25 @@ const s = StyleSheet.create({
   markerDisabled: { opacity: 0.3, backgroundColor: "#E8ECEA" },
   markerTextDisabled: { color: "#8E9994" },
   markerBadge: { minWidth: 32, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 5, alignItems: "center", marginRight: 7 },
-  badgeCaptain: { backgroundColor: "#D8A900" },
-  badgeVice: { backgroundColor: "#5578C9" },
-  badgeBai: { backgroundColor: "#BE5C8B" },
-  badgeBoi: { backgroundColor: "#238778" },
+  badgeCaptain: { backgroundColor: "#8A6100" },
+  badgeVice: { backgroundColor: "#3F5FA9" },
+  badgeBai: { backgroundColor: "#914266" },
+  badgeBoi: { backgroundColor: "#17695F" },
   badgeTriple: { backgroundColor: "#6A3FB5" },
   markerBadgeText: { color: "white", fontSize: 9, fontWeight: "900" },
   activeMarkerText: { color: "white" },
   teamScreen: { flex: 1, backgroundColor: "#F4F5EF" },
-  teamContent: { padding: 20, paddingBottom: Platform.OS === "android" ? 155 : 125 },
-  scrollTopButton: { position: "absolute", right: 16, bottom: Platform.OS === "android" ? 120 : 88, minWidth: 66, height: 40, borderRadius: 20, backgroundColor: "#173F35", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, zIndex: 4, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 8 },
+  teamContent: { padding: 20, paddingBottom: 32 },
+  scrollTopButton: { position: "absolute", right: 16, bottom: 16, minWidth: 70, height: 44, borderRadius: 22, backgroundColor: "#173F35", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, zIndex: 4, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 8 },
   scrollTopArrow: { color: UI.accent, fontSize: 18, lineHeight: 20, fontWeight: "900" },
   scrollTopText: { color: "white", fontSize: 11, fontWeight: "900" },
-  stickyAction: { position: "absolute", left: 0, right: 0, bottom: Platform.OS === "android" ? 32 : 0, minHeight: 74, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#DDE4DF", paddingHorizontal: 16, paddingVertical: 11, flexDirection: "row", alignItems: "center" },
+  lineupActionInline: { minHeight: 74, marginTop: 12, backgroundColor: "white", borderWidth: 1.5, borderLeftWidth: 5, borderRadius: 16, paddingHorizontal: 13, paddingVertical: 10, flexDirection: "row", alignItems: "center", shadowColor: "#0B2C22", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.11, shadowRadius: 9, elevation: 4 },
+  lineupActionSaved: { backgroundColor: "#F0F8F2", borderColor: "#74AD83", borderLeftColor: "#267043" },
+  lineupActionReady: { backgroundColor: "#EDF7F3", borderColor: "#74A895", borderLeftColor: "#17634E" },
+  lineupActionChanged: { backgroundColor: "#FFF8E2", borderColor: "#D9B55A", borderLeftColor: "#B77A08" },
+  lineupActionError: { backgroundColor: "#FFF2EE", borderColor: "#DB9B8D", borderLeftColor: "#A84A37" },
   submitWarning: { position: "absolute", left: 0, right: 0, bottom: Platform.OS === "android" ? 106 : 74, minHeight: 47, backgroundColor: "#FFF4D8", borderTopWidth: 1, borderTopColor: "#E6C86A", paddingHorizontal: 16, paddingVertical: 9, flexDirection: "row", alignItems: "center", zIndex: 3 },
-  submitResult: { position: "absolute", left: 12, right: 12, bottom: Platform.OS === "android" ? 114 : 82, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, zIndex: 5, borderWidth: 1 },
+  submitResult: { marginTop: 8, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
   submitResultWithWarnings: { bottom: 211 },
   submitResultSuccess: { backgroundColor: "#E7F6EC", borderColor: "#83BE94" },
   submitResultError: { backgroundColor: "#FFF1ED", borderColor: "#D99B8E" },
@@ -1781,108 +2032,127 @@ const s = StyleSheet.create({
   futureResetSuccessText: { color: "#46704D", fontSize: 10, lineHeight: 15, fontWeight: "700", textAlign: "center", marginTop: 3 },
   submitWarningIcon: { color: "#765D16", fontSize: 15, marginRight: 8 },
   submitWarningText: { flex: 1, color: "#765D16", fontSize: 9, lineHeight: 13, fontWeight: "800" },
-  stickyTitle: { color: "#173028", fontSize: 13, fontWeight: "900" },
-  stickyMatch: { color: "#4456A6", fontSize: 8, fontWeight: "900", letterSpacing: 0.5, marginBottom: 2 },
-  stickyMeta: { color: "#7D8B85", fontSize: 10, marginTop: 3 },
-  stickyButton: { marginLeft: "auto", backgroundColor: "#174D3D", borderRadius: 12, paddingHorizontal: 20, paddingVertical: 13 },
+  stickyTitle: { color: "#173028", fontSize: 14, fontWeight: "900" },
+  stickyMatch: { color: "#394B99", fontSize: 9, fontWeight: "900", letterSpacing: 0.4, marginBottom: 2 },
+  stickyMeta: { color: "#596861", fontSize: 10, lineHeight: 13, marginTop: 3 },
+  stickyButton: { minHeight: 48, marginLeft: 10, backgroundColor: "#174D3D", borderRadius: 12, paddingHorizontal: 16, paddingVertical: 11, alignItems: "center", justifyContent: "center", shadowColor: "#08271E", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 5, elevation: 3 },
+  submittedStatusPill: { minWidth: 90, minHeight: 48, marginLeft: 10, borderWidth: 1.5, borderColor: "#86B994", backgroundColor: "#E2F2E6", borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  submittedStatusCheck: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#267043", alignItems: "center", justifyContent: "center", marginRight: 6 },
+  submittedStatusCheckText: { color: "#FFFFFF", fontSize: 11, lineHeight: 13, fontWeight: "900" },
+  submittedStatusText: { color: "#25623C", fontSize: 10, fontWeight: "900", letterSpacing: 0.5 },
+  horizontalSectionCue: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2, marginBottom: 8 },
+  horizontalSectionLabel: { color: "#5F6D67", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
+  horizontalSectionHint: { color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
   fixtureStrip: { marginHorizontal: -20, marginBottom: 18 },
   lockCountdown: { backgroundColor: "#102D25", borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  lockCountdownLabel: { color: "#D8FF63", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
-  lockCountdownMatch: { color: "#FFFFFF", fontSize: 11, fontWeight: "800", marginTop: 4 },
+  lockCountdownDetails: { flex: 1, minWidth: 0, paddingRight: 8 },
+  lockCountdownLabel: { color: "#D8FF63", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  lockCountdownMatch: { color: "#FFFFFF", fontSize: 12, fontWeight: "800", marginTop: 4 },
   lockCountdownTime: { color: "#D8FF63", fontSize: 19, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  lockCountdownTimeCompact: { fontSize: 17 },
   lockCountdownDate: { fontSize: 12, maxWidth: 145, textAlign: "right" },
   activeFixtureBanner: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFF4EC", borderWidth: 1, borderColor: "#F0B28B", borderRadius: 15, paddingHorizontal: 13, paddingVertical: 10, marginBottom: 12 },
-  activeFixtureBadge: { backgroundColor: "#EF6A2C", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, marginRight: 10 },
-  activeFixtureBadgeText: { color: "#FFFFFF", fontSize: 7, fontWeight: "900", letterSpacing: 0.6 },
+  activeFixtureBadge: { backgroundColor: "#A53C15", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, marginRight: 10 },
+  activeFixtureBadgeText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
   activeFixtureDetails: { flex: 1 },
   activeFixtureTitle: { color: "#173028", fontSize: 14, fontWeight: "900" },
   activeFixtureTeams: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 },
-  activeFixtureVs: { color: "#7B8983", fontSize: 8, fontWeight: "900" },
-  activeFixtureHint: { color: "#9A4A27", fontSize: 8, fontWeight: "900", letterSpacing: 0.4, marginLeft: 8 },
+  activeFixtureVs: { color: "#596861", fontSize: 10, fontWeight: "900" },
+  activeFixtureHint: { color: "#8A3E20", fontSize: 10, fontWeight: "900", letterSpacing: 0.3, marginLeft: 8 },
   fixtureStripContent: { paddingHorizontal: 20, gap: 9 },
   fixtureCard: { width: 142, backgroundColor: "white", borderWidth: 1, borderColor: "#DCE4DF", borderRadius: 14, padding: 12 },
   fixtureCardActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" },
-  fixtureNumber: { color: "#8A9691", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  fixtureNumber: { color: "#5F6D67", fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
   fixtureTeams: { color: "#173028", fontSize: 15, fontWeight: "900", marginTop: 7 },
-  fixtureTime: { color: "#7D8B85", fontSize: 9, marginTop: 4 },
+  fixtureTime: { color: "#596861", fontSize: 10, marginTop: 4 },
   fixtureTextActive: { color: "white" },
   fixtureTeamRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 7 },
-  fixtureVs: { color: "#718079", fontSize: 8, fontWeight: "900" },
+  fixtureVs: { color: "#596861", fontSize: 10, fontWeight: "900" },
   titleTeamRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 7, marginBottom: 16 },
-  titleLock: { color: "#718079", fontSize: 9, marginLeft: 2 },
+  titleLock: { color: "#596861", fontSize: 11, marginLeft: 2 },
   teamSubMeta: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 },
   specialNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 },
   playingTeamHelp: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 10 },
-  playerFiltersCard: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DCE5E0", borderRadius: 17, padding: 13, marginTop: 14, shadowColor: "#18352D", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2 },
+  playerFiltersCard: { backgroundColor: UI.card, borderWidth: 1, borderColor: UI.border, borderRadius: UI_TOKENS.radius.card, padding: 13, marginTop: 14, ...CARD_SHADOW },
   playerFiltersHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   playerFiltersTitle: { color: "#17352C", fontSize: 14, fontWeight: "900" },
-  playerFiltersHint: { color: "#7B8984", fontSize: 9, marginTop: 2 },
-  clearFiltersText: { color: "#C55734", fontSize: 10, fontWeight: "900", paddingHorizontal: 8, paddingVertical: 5 },
-  playerFilterLabel: { color: "#899690", fontSize: 8, fontWeight: "900", letterSpacing: 1, marginBottom: 6 },
+  playerFiltersHint: { color: "#596861", fontSize: 11, marginTop: 2 },
+  resetFiltersButton: { minHeight: 36, borderRadius: 10, borderWidth: 1, borderColor: "#E0B7AA", backgroundColor: "#FFF4F0", paddingHorizontal: 11, alignItems: "center", justifyContent: "center", marginLeft: 8 },
+  clearFiltersText: { color: "#A84528", fontSize: 10, lineHeight: 13, fontWeight: "900" },
+  playerFilterLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  playerFilterLabel: { color: "#5F6D67", fontSize: 10, fontWeight: "900", letterSpacing: 0.9 },
+  playerFilterScrollHint: { color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
   playerFilterRow: { gap: 7, paddingBottom: 9 },
-  playerFilterChip: { minHeight: 32, borderRadius: 16, borderWidth: 1, borderColor: "#D5DEDA", backgroundColor: "#F4F7F5", paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
+  playerFilterChip: { minHeight: 44, borderRadius: 22, borderWidth: 1, borderColor: "#D5DEDA", backgroundColor: "#F4F7F5", paddingHorizontal: 14, alignItems: "center", justifyContent: "center" },
   playerFilterChipActive: { backgroundColor: "#173F35", borderColor: "#173F35" },
-  playerFilterChipText: { color: "#536860", fontSize: 10, fontWeight: "800" },
+  playerFilterChipText: { color: "#43574F", fontSize: 11, fontWeight: "800" },
   playerFilterChipTextActive: { color: "#D8FF63", fontWeight: "900" },
-  helperInline: { color: "#7D8984", fontSize: 11 },
+  compactFiltersPanel: { borderWidth: 1, borderColor: "#E0E7E3", borderRadius: 13, backgroundColor: "#F8FAF9", overflow: "hidden" },
+  compactFilterSection: { minHeight: 48, flexDirection: "row", alignItems: "center", paddingHorizontal: 9, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#E4EAE7" },
+  compactFilterLabel: { width: 51, color: "#66756F", fontSize: 8.5, fontWeight: "900", letterSpacing: 0.75 },
+  compactFilterOptions: { flex: 1, minWidth: 0, flexDirection: "row", gap: 5 },
+  compactFilterChip: { flex: 1, minWidth: 0, minHeight: 34, borderRadius: 10, borderWidth: 1, borderColor: "#D4DEDA", backgroundColor: "#FFFFFF", paddingHorizontal: 3, alignItems: "center", justifyContent: "center" },
+  compactFilterChipText: { color: "#40554D", fontSize: 9, fontWeight: "800" },
+  helperInline: { color: UI_TOKENS.colors.muted, fontSize: 11 },
+  textMutedAccessible: { color: UI_TOKENS.colors.muted },
   adminFixtureTeams: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
-  fixtureStatus: { color: "#7B6B24", backgroundColor: "#F6F0D7", alignSelf: "flex-start", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 8, fontWeight: "800", marginTop: 9 },
+  fixtureStatus: { color: "#675612", backgroundColor: "#F6F0D7", alignSelf: "flex-start", borderRadius: 7, paddingHorizontal: 8, paddingVertical: 5, fontSize: 10, fontWeight: "800", marginTop: 9 },
   statusSubmitted: { color: "#275B32", backgroundColor: "#DFF0DD" },
   lockedBanner: { backgroundColor: "#F5EAE7", borderRadius: 11, padding: 11, marginBottom: 11 },
   lockedBannerText: { color: "#6E3A30", fontSize: 11, fontWeight: "900" },
   ownerStrip: { marginHorizontal: -20, marginBottom: 12 },
-  ownerChip: { backgroundColor: "white", borderWidth: 1, borderColor: "#D8E1DC", borderRadius: 18, paddingHorizontal: 14, paddingVertical: 9, marginLeft: 8 },
+  ownerChip: { minHeight: 44, backgroundColor: "white", borderWidth: 1, borderColor: "#D8E1DC", borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, marginLeft: 8, justifyContent: "center" },
   ownerChipActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" },
   ownerChipText: { color: "#556A62", fontSize: 11, fontWeight: "800" },
   ownerChipTextActive: { color: "white" },
-  testDataNote: { color: "#87938E", fontSize: 9, textAlign: "center", marginTop: 10 },
+  testDataNote: { color: "#5F6D67", fontSize: 11, textAlign: "center", marginTop: 10 },
   matchHistoryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 11 },
   matchHistoryCard: { width: "31%", backgroundColor: "white", borderWidth: 1, borderColor: "#D8E1DC", borderRadius: 12, padding: 10 },
   matchHistoryCardActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" },
-  matchHistoryNumber: { color: "#84918C", fontSize: 7, fontWeight: "900" },
+  matchHistoryNumber: { color: "#5F6D67", fontSize: 9, fontWeight: "900" },
   matchHistoryTeams: { color: "#173028", fontSize: 12, fontWeight: "900", marginTop: 5 },
-  matchHistoryDate: { color: "#7D8B85", fontSize: 7, marginTop: 3 },
+  matchHistoryDate: { color: "#596861", fontSize: 9, marginTop: 3 },
   historyMatchCard: { backgroundColor: "white", borderRadius: 14, borderWidth: 1, borderColor: "#DFE6E1", marginBottom: 9, overflow: "hidden" },
   historyMatchBoosted: { borderColor: "#8C67C8", borderWidth: 2, backgroundColor: "#FCF9FF" },
   historyMatchHeader: { flexDirection: "row", alignItems: "center", padding: 13 },
   historyListTitle: { color: "#173028", fontSize: 13, fontWeight: "900" },
-  historyListMeta: { color: "#7D8B85", fontSize: 9, marginTop: 3 },
-  historyMatchBoosterOwners: { color: "#68409E", fontSize: 8, fontWeight: "900", marginTop: 5 },
+  historyListMeta: { color: "#596861", fontSize: 10, marginTop: 3 },
+  historyMatchBoosterOwners: { color: "#68409E", fontSize: 10, fontWeight: "900", marginTop: 5 },
   historyMatchBoosterBadge: { backgroundColor: "#EEE3FF", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 5, marginLeft: 6 },
-  historyMatchBoosterBadgeText: { color: "#603694", fontSize: 7, fontWeight: "900" },
+  historyMatchBoosterBadgeText: { color: "#603694", fontSize: 9, fontWeight: "900" },
   historyOwners: { backgroundColor: "#F1F4F1", borderTopWidth: 1, borderTopColor: "#E2E8E4", padding: 8 },
   historyOwnerCard: { backgroundColor: "white", borderRadius: 11, marginBottom: 7, overflow: "hidden" },
   historyOwnerHeader: { flexDirection: "row", alignItems: "center", padding: 10 },
   dayRank: { minWidth: 31, height: 31, borderRadius: 10, backgroundColor: "#EEF1EF", alignItems: "center", justifyContent: "center", marginRight: 7 },
   dayRankFirst: { backgroundColor: "#DDFB72" },
-  dayRankText: { color: "#64766F", fontSize: 9, fontWeight: "900" },
+  dayRankText: { color: "#53655D", fontSize: 10, fontWeight: "900" },
   dayRankTextFirst: { color: "#174D3D" },
   historyOwnerName: { color: "#20372F", fontFamily: OWNER_FONT, fontSize: 13, fontWeight: "700", letterSpacing: 0.2 },
   historyOwnerNameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   historyBooster: { backgroundColor: "#6A3FB5", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 },
-  historyBoosterText: { color: "white", fontSize: 7, fontWeight: "900" },
-  historyOwnerMeta: { color: "#829089", fontSize: 8, marginTop: 2 },
+  historyBoosterText: { color: "white", fontSize: 9, fontWeight: "900" },
+  historyOwnerMeta: { color: "#5F6D67", fontSize: 10, marginTop: 2 },
   historyOwnerPoints: { color: "#174D3D", fontSize: 12, fontWeight: "900", marginRight: 5 },
   historyLineup: { borderTopWidth: 1, borderTopColor: "#E7EBE8", paddingHorizontal: 9 },
   doubleUpSummary: { flexDirection: "row", alignItems: "center", backgroundColor: "#EDF6D2", borderRadius: 9, padding: 10, marginVertical: 7 },
-  doubleUpText: { flex: 1, color: "#5C714B", fontSize: 8, fontWeight: "800" },
+  doubleUpText: { flex: 1, color: "#4E653E", fontSize: 10, fontWeight: "800" },
   doubleUpValue: { color: "#31511F", fontSize: 10, fontWeight: "900" },
   historyCard: { backgroundColor: "white", borderRadius: 17, padding: 15 },
   historyHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
   historyMatch: { color: "#173028", fontSize: 18, fontWeight: "900" },
-  historyDate: { color: "#7D8B85", fontSize: 10, marginTop: 3 },
-  historyStatus: { marginLeft: "auto", color: "#2F6237", backgroundColor: "#E3F1E0", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, fontSize: 8, fontWeight: "900" },
+  historyDate: { color: "#596861", fontSize: 11, marginTop: 3 },
+  historyStatus: { marginLeft: "auto", color: "#2F6237", backgroundColor: "#E3F1E0", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, fontSize: 10, fontWeight: "900" },
   historyStats: { flexDirection: "row", gap: 8, marginBottom: 8 },
   historyStat: { color: "#416158", backgroundColor: "#EAF0ED", borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6, fontSize: 10, fontWeight: "800" },
   historyPlayer: { borderTopWidth: 1, borderTopColor: "#EDF0EE", paddingVertical: 9, flexDirection: "row", alignItems: "center" },
   historyPlayerName: { color: "#20372F", fontSize: 12, fontWeight: "800" },
-  historyPlayerMeta: { color: "#819089", fontSize: 9, marginTop: 2 },
+  historyPlayerMeta: { color: "#596861", fontSize: 10, marginTop: 2 },
   historyPoints: { color: "#174D3D", fontSize: 16, fontWeight: "900", marginBottom: 4 },
   playerPoints: { color: "#174D3D", fontSize: 11, fontWeight: "900", marginHorizontal: 8 },
   emptyHistory: { backgroundColor: "white", borderRadius: 17, padding: 28, alignItems: "center" },
   emptyHistoryTitle: { color: "#20372F", fontSize: 16, fontWeight: "900" },
   emptyHistoryText: { color: "#819089", fontSize: 11, textAlign: "center", marginTop: 6 },
-  issuePopup: { position: "absolute", left: 12, right: 12, bottom: Platform.OS === "android" ? 110 : 78, backgroundColor: "#FFF5F1", borderWidth: 1, borderColor: "#EDC9BE", borderRadius: 14, padding: 14, zIndex: 5 },
+  issuePopup: { marginTop: 8, backgroundColor: "#FFF5F1", borderWidth: 1, borderColor: "#EDC9BE", borderRadius: 14, padding: 12 },
   issuePopupWithWarnings: { bottom: 207 },
   issuePopupTitle: { color: "#6E2D21", fontSize: 13, fontWeight: "900", marginBottom: 5 },
   issuePopupText: { color: "#78483F", fontSize: 11, marginTop: 4 },
@@ -1907,25 +2177,27 @@ const s = StyleSheet.create({
   priorMatchIconText: { color: "white", fontSize: 16, fontWeight: "900" },
   priorMatchTitle: { color: "#873D28", fontSize: 11, fontWeight: "900", letterSpacing: 0.6 },
   priorMatchText: { color: "#865A4B", fontSize: 9, lineHeight: 13, marginTop: 3 },
-  lineupSummaryCard: { marginBottom: 2, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#D6DEE8", borderRadius: 12, overflow: "hidden", shadowColor: "#071D3A", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 5, elevation: 2 },
+  lineupSummaryCard: { marginTop: 14, marginBottom: 2, backgroundColor: UI.card, borderWidth: 1, borderColor: UI.border, borderRadius: UI_TOKENS.radius.card, overflow: "hidden", ...CARD_SHADOW },
   summaryHeaderGrid: { flexDirection: "row", backgroundColor: "#071C3B", paddingHorizontal: 4, paddingVertical: 6 },
-  summaryMetric: { flex: 1, minWidth: 0, minHeight: 42, flexDirection: "row", alignItems: "center", paddingHorizontal: 5, borderRightWidth: 1, borderRightColor: "rgba(171, 190, 218, 0.22)" },
+  summaryMetric: { flex: 1, minWidth: 0, minHeight: 48, flexDirection: "row", alignItems: "center", paddingHorizontal: 6, borderRightWidth: 1, borderRightColor: "rgba(171, 190, 218, 0.22)" },
   summaryMetricCentered: { justifyContent: "center" },
   summaryMetricDot: { width: 5, height: 5, borderRadius: 3, marginRight: 4 },
-  summaryMetricDotCentered: { position: "absolute", left: 5, marginRight: 0 },
+  summaryMetricCenteredValueRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 2 },
+  summaryMetricValueDot: { marginRight: 5 },
   summaryMetricText: { flex: 1, minWidth: 0 },
   summaryMetricTextCentered: { flex: 1, alignItems: "center" },
   summaryMetricCenteredText: { textAlign: "center" },
-  summaryMetricLabel: { color: "#D7DCE8", fontSize: 6, fontWeight: "900", letterSpacing: 0.15 },
-  summaryMetricValue: { fontSize: 14, lineHeight: 17, fontWeight: "900", marginTop: 1 },
+  summaryMetricLabel: { color: "#D7DCE8", fontSize: 8.5, lineHeight: 10, fontWeight: "900", letterSpacing: 0.1 },
+  summaryMetricValue: { fontSize: 15, lineHeight: 18, fontWeight: "900", marginTop: 2 },
+  summaryMetricValueCentered: { marginTop: 0, textAlign: "center" },
   summaryMetricSuffix: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
   summaryMetricBad: { color: "#FF9C8A" },
   summaryMetricDetailRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
   summaryMetricDetailDot: { width: 5, height: 5, borderRadius: 3, marginRight: 5 },
-  summaryMetricDetail: { color: "#C8D0DF", fontSize: 7.5, fontWeight: "700" },
+  summaryMetricDetail: { color: "#C8D0DF", fontSize: 9, fontWeight: "700" },
   summaryBody: { backgroundColor: "#FBFCFE", paddingHorizontal: 7, paddingVertical: 6 },
   compactSummaryRow: { flexDirection: "row", alignItems: "center" },
-  compactSummaryRowLabel: { width: 51, color: "#637087", fontSize: 6.5, fontWeight: "900", letterSpacing: 0.35 },
+  compactSummaryRowLabel: { width: 58, color: "#4E5C72", fontSize: 8.5, fontWeight: "900", letterSpacing: 0.3 },
   summarySectionHeading: { flexDirection: "row", alignItems: "center" },
   summarySectionIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: "#F2EDFC", alignItems: "center", justifyContent: "center", marginRight: 8 },
   summarySectionIconText: { color: "#17254A", fontSize: 9, fontWeight: "900" },
@@ -1935,18 +2207,18 @@ const s = StyleSheet.create({
   summaryTotalBadgeText: { color: "#17254A", fontSize: 7.5, fontWeight: "800" },
   summaryTotalBadgeValue: { color: "#0A3F83", fontWeight: "900" },
   compositionGrid: { flex: 1, flexDirection: "row", gap: 3 },
-  compositionCard: { flex: 1, minWidth: 0, height: 38, borderWidth: 1, borderRadius: 7, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  compositionCard: { flex: 1, minWidth: 0, height: 44, borderWidth: 1, borderRadius: 8, paddingHorizontal: 4, flexDirection: "row", alignItems: "center", justifyContent: "center" },
   compositionCardText: { flex: 1, minWidth: 0 },
   compositionIcon: { width: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center", marginRight: 3 },
   compositionIconText: { color: "#FFFFFF", fontSize: 7, fontWeight: "900" },
   compositionValue: { fontSize: 14, lineHeight: 16, fontWeight: "900", marginRight: 4 },
-  compositionLabel: { color: "#122044", fontSize: 7.5, fontWeight: "900" },
+  compositionLabel: { color: "#122044", fontSize: 9, fontWeight: "900" },
   compositionTrack: { height: 3, borderRadius: 2, backgroundColor: "rgba(70, 86, 112, 0.13)", overflow: "hidden", marginTop: 8 },
   compositionFill: { height: 3, borderRadius: 2 },
   compositionPercent: { fontSize: 7.5, fontWeight: "900", marginTop: 3 },
   summarySectionDivider: { height: 1, backgroundColor: "#E2E7ED", marginVertical: 5 },
   roleMixGrid: { flex: 1, flexDirection: "row", gap: 3 },
-  roleSummaryCard: { flex: 1, minWidth: 0, height: 31, borderWidth: 1, borderRadius: 7, paddingHorizontal: 4, flexDirection: "row", alignItems: "center" },
+  roleSummaryCard: { flex: 1, minWidth: 0, height: 40, borderWidth: 1, borderRadius: 8, paddingHorizontal: 5, flexDirection: "row", alignItems: "center" },
   roleGlyph: { position: "relative", width: 16, height: 18, marginRight: 3 },
   roleBatBlade: { position: "absolute", left: 6, top: 6, width: 5, height: 11, borderRadius: 1.5 },
   roleBatHandle: { position: "absolute", left: 7.5, top: 1, width: 2, height: 6, borderRadius: 1 },
@@ -1960,8 +2232,8 @@ const s = StyleSheet.create({
   roleGloveCuff: { position: "absolute", left: 3, bottom: 1, width: 10, height: 3, borderRadius: 1 },
   roleSummaryIcon: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.25, alignItems: "center", justifyContent: "center", marginRight: 8 },
   roleSummaryIconText: { fontSize: 7.5, fontWeight: "900" },
-  roleSummaryCode: { flex: 1, fontSize: 8, fontWeight: "900", marginRight: 2 },
-  roleSummaryValue: { fontSize: 13, fontWeight: "900" },
+  roleSummaryCode: { flex: 1, fontSize: 10, fontWeight: "900", marginRight: 2 },
+  roleSummaryValue: { fontSize: 14, fontWeight: "900" },
   selectionBreakdown: { backgroundColor: "#F1F4F2", paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8 },
   ownershipSummary: { flexDirection: "row" },
   openLeagueMatchSummary: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 11, paddingHorizontal: 14, paddingVertical: 11 },
@@ -1978,19 +2250,19 @@ const s = StyleSheet.create({
   impactHelpTitle: { color: "#354C7A", fontSize: 11, fontWeight: "900" },
   impactHelpText: { color: "#65728C", fontSize: 9, lineHeight: 13, marginTop: 3 },
   boosterGrid: { flexDirection: "row", gap: 7, marginTop: 6 },
-  boosterSection: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E4E8EE", borderRadius: 16, padding: 10, marginTop: 10, marginBottom: 10, shadowColor: "#111827", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 7, elevation: 2 },
+  boosterSection: { backgroundColor: UI.card, borderWidth: 1, borderColor: UI.border, borderRadius: UI_TOKENS.radius.card, padding: 10, marginTop: 10, marginBottom: 10, ...CARD_SHADOW },
   boosterSectionHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   boosterSectionTitle: { color: "#17243D", fontSize: 13, fontWeight: "900" },
-  boosterSectionHint: { color: "#7B8493", fontSize: 8, fontWeight: "700" },
+  boosterSectionHint: { color: UI_TOKENS.colors.muted, fontSize: 8, fontWeight: "700" },
   boosterCard: { flex: 1, minHeight: 68, borderWidth: 1, borderColor: "#D8E0DC", backgroundColor: "white", borderRadius: 11, paddingHorizontal: 9, paddingVertical: 7, justifyContent: "center" },
   boosterCardDisabled: { backgroundColor: "#ECEFED", borderColor: "#D7DDD9", opacity: 0.72 },
   boosterTextDisabled: { color: "#89958F" },
   boosterCardActive: { borderColor: "#174D3D", backgroundColor: "#174D3D" },
   boosterCode: { color: "#174D3D", fontSize: 12, fontWeight: "900" },
   boosterCodeActive: { color: "#DDFB72" },
-  boosterName: { color: "#334D44", fontSize: 8, fontWeight: "900", marginTop: 2 },
+  boosterName: { color: "#334D44", fontSize: 10, fontWeight: "900", marginTop: 2 },
   boosterNameActive: { color: "white" },
-  boosterDetail: { color: "#84918C", fontSize: 7, lineHeight: 9, marginTop: 2 },
+  boosterDetail: { color: "#5F6D67", fontSize: 9, lineHeight: 12, marginTop: 3 },
   boosterDetailActive: { color: "#BBD0C9" },
   boosterHelp: { backgroundColor: "#EDF6D2", borderRadius: 11, padding: 11, marginTop: 8 },
   boosterHelpTitle: { color: "#31511F", fontSize: 10, fontWeight: "900" },
@@ -2008,37 +2280,65 @@ const s = StyleSheet.create({
   combinedWarningText: { color: "#523A00", fontSize: 12, fontWeight: "700", lineHeight: 18 },
   selectionTitleRow: { flexDirection: "row", alignItems: "flex-start" },
   selectionActions: { marginLeft: 8, gap: 6 },
-  resetButton: { minHeight: 42, borderWidth: 1, borderColor: "#D4D9E1", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" },
-  resetButtonText: { color: "#6A423A", fontSize: 10, fontWeight: "900" },
-  clearButton: { borderWidth: 1, borderColor: "#D6AEA5", backgroundColor: "#FFF3F0", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 },
-  clearButtonText: { color: "#8B4337", fontSize: 10, fontWeight: "900" },
-  selectedTitle: { color: "#173028", fontSize: 14, fontWeight: "900", marginTop: 16, marginBottom: 7 },
-  selectedStrip: { marginHorizontal: -20 },
-  selectedStripContent: { paddingHorizontal: 20, gap: 8 },
-  selectedList: { backgroundColor: "white", borderRadius: 12, paddingHorizontal: 10 },
-  selectedListRow: { flexDirection: "row", alignItems: "center", paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: "#EDF0EE" },
-  selectedNumber: { width: 25, color: "#829089", fontSize: 10, fontWeight: "900" },
+  resetButton: { minHeight: 44, borderWidth: 1, borderColor: "#D4D9E1", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" },
+  resetButtonText: { color: "#60372F", fontSize: 11, fontWeight: "900" },
+  clearButton: { minHeight: 44, borderWidth: 1, borderColor: "#D6AEA5", backgroundColor: "#FFF3F0", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, alignItems: "center", justifyContent: "center" },
+  clearButtonText: { color: "#7A352B", fontSize: 11, fontWeight: "900" },
+  selectedXiSheet: { marginTop: 16, backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#CAD6DF", borderRadius: 20, overflow: "hidden", shadowColor: "#071C3B", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.16, shadowRadius: 16, elevation: 6 },
+  selectedXiHeader: { minHeight: 92, backgroundColor: "#081C3A", paddingHorizontal: 14, paddingVertical: 13, flexDirection: "row", alignItems: "center", position: "relative", overflow: "hidden" },
+  selectedXiHeaderGlow: { position: "absolute", width: 150, height: 150, borderRadius: 75, right: -52, top: -72, backgroundColor: "rgba(72, 132, 218, 0.20)" },
+  selectedXiEyebrow: { color: "#9DB0D1", fontSize: 8, lineHeight: 10, fontWeight: "900", letterSpacing: 0.8 },
+  selectedXiTitle: { color: "#FFFFFF", fontSize: 21, lineHeight: 25, fontWeight: "900", marginTop: 3 },
+  selectedXiMatchup: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 7 },
+  selectedXiVs: { color: "#AFC0DB", fontSize: 8, fontWeight: "900" },
+  selectedXiLock: { flexShrink: 1, color: "#C7D1E1", fontSize: 8.5, fontWeight: "700", marginLeft: 3 },
+  selectedXiStatus: { minWidth: 78, minHeight: 58, borderRadius: 15, borderWidth: 1, borderColor: "rgba(216,255,99,0.45)", backgroundColor: "rgba(216,255,99,0.10)", paddingHorizontal: 9, alignItems: "center", justifyContent: "center", marginLeft: 10 },
+  selectedXiStatusNeedsWork: { borderColor: "rgba(255,184,126,0.60)", backgroundColor: "rgba(255,142,78,0.12)" },
+  selectedXiStatusValue: { color: UI.accent, fontSize: 17, lineHeight: 20, fontWeight: "900" },
+  selectedXiStatusLabel: { color: "#E3E9F3", fontSize: 7, fontWeight: "900", letterSpacing: 0.65, marginTop: 2 },
+  selectedXiStats: { minHeight: 48, flexDirection: "row", alignItems: "center", backgroundColor: "#F2F5FA", borderBottomWidth: 1, borderBottomColor: "#DDE4ED", paddingHorizontal: 8, paddingVertical: 6 },
+  selectedXiStat: { flex: 1, minWidth: 0, alignItems: "center" },
+  selectedXiStatDivider: { width: 1, height: 27, backgroundColor: "#D4DCE7" },
+  selectedXiStatLabel: { color: "#718097", fontSize: 7, fontWeight: "900", letterSpacing: 0.65 },
+  selectedXiStatValue: { color: "#14294A", fontSize: 9.5, lineHeight: 12, fontWeight: "900", marginTop: 3, textAlign: "center" },
+  selectedXiStatBad: { color: UI_TOKENS.status.danger },
+  selectedXiGuide: { minHeight: 35, flexDirection: "row", alignItems: "center", paddingHorizontal: 11, paddingVertical: 6, backgroundColor: "#FBFCFE", borderBottomWidth: 1, borderBottomColor: "#E3E8EF" },
+  selectedXiGuideText: { flex: 1, color: "#607087", fontSize: 8.5, fontWeight: "800" },
+  selectedXiLegend: { flexDirection: "row", alignItems: "center", gap: 4 },
+  selectedXiLegendChip: { minWidth: 22, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 3, color: "#FFFFFF", fontSize: 6.5, fontWeight: "900", textAlign: "center" },
+  selectedXiLegendCaptain: { backgroundColor: "#8A6100" },
+  selectedXiLegendVice: { backgroundColor: "#3F5FA9" },
+  selectedXiLegendImpact: { backgroundColor: "#914266" },
+  selectedList: { backgroundColor: "#FFFFFF" },
+  selectedListRow: { minHeight: 72, flexDirection: "row", alignItems: "center", paddingLeft: 10, paddingRight: 7, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: "#E7EBF0", position: "relative" },
+  selectedRowAccent: { position: "absolute", left: 0, top: 8, bottom: 8, width: 4, borderTopRightRadius: 3, borderBottomRightRadius: 3 },
+  selectedNumberBadge: { width: 30, height: 30, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center", marginRight: 9 },
+  selectedNumber: { fontSize: 10, fontWeight: "900" },
+  selectedPlayerMain: { flex: 1, minWidth: 0, paddingVertical: 2 },
   selectedChip: { minWidth: 150, backgroundColor: "#EAF2EE", borderRadius: 11, paddingLeft: 10, paddingVertical: 9, paddingRight: 6, flexDirection: "row", alignItems: "center" },
-  selectedChipName: { color: "#1E3B31", fontSize: 10, fontWeight: "900" },
-  selectedChipMeta: { color: "#74857E", fontSize: 8, marginTop: 2 },
+  selectedChipName: { flexShrink: 1, color: "#152F29", fontSize: 12.5, lineHeight: 15, fontWeight: "900" },
+  selectedChipMeta: { color: "#596861", fontSize: 10, marginTop: 2 },
+  selectedPlayerMeta: { minHeight: 26, flexDirection: "row", alignItems: "center", gap: 5, marginTop: 5 },
+  selectedRolePill: { width: 48, minHeight: 24, borderRadius: 8, paddingHorizontal: 5, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  selectedRolePillText: { fontSize: 8, fontWeight: "900" },
   selectedCost: {
     color: "#173B31",
-    fontSize: 8,
+    fontSize: 9,
     fontWeight: "900",
     backgroundColor: "#F4EFD5",
     borderRadius: 7,
     paddingHorizontal: 6,
     paddingVertical: 3,
-    marginLeft: 5,
+    minWidth: 52,
+    textAlign: "center",
   },
-  selectedEditHint: {
-    color: "#74857E",
-    fontSize: 8,
-    marginLeft: 6,
-    flexShrink: 1,
-  },
-  removeSelected: { width: 25, height: 25, borderRadius: 8, backgroundColor: "white", alignItems: "center", justifyContent: "center", marginLeft: "auto" },
-  removeSelectedText: { color: "#7D4E45", fontSize: 18, lineHeight: 19, fontWeight: "700" },
+  selectedRowMarkers: { width: 48, minHeight: 30, flexDirection: "row", alignItems: "center", justifyContent: "center", marginLeft: 4 },
+  removeSelected: { width: 38, height: 42, borderRadius: 11, backgroundColor: "#FFF7F4", borderWidth: 1, borderColor: "#F0D7CF", alignItems: "center", justifyContent: "center", marginLeft: 3 },
+  removeSelectedText: { color: "#8B493E", fontSize: 18, lineHeight: 19, fontWeight: "700" },
+  selectedXiEmpty: { paddingHorizontal: 24, paddingVertical: 25, alignItems: "center", backgroundColor: "#FBFCFE" },
+  selectedXiEmptyIcon: { width: 42, height: 42, borderRadius: 14, backgroundColor: "#E5EBF5", alignItems: "center", justifyContent: "center" },
+  selectedXiEmptyIconText: { color: "#294770", fontSize: 12, fontWeight: "900" },
+  selectedXiEmptyTitle: { color: "#18344D", fontSize: 13, fontWeight: "900", marginTop: 9, marginBottom: 4 },
   emptySelected: { backgroundColor: "#EDF1EF", borderRadius: 10, padding: 11 },
   emptySelectedText: { color: "#77857F", fontSize: 10 },
   ownershipLabel: { color: "#697871", fontSize: 7.5, fontWeight: "900", letterSpacing: 0.25 },
@@ -2047,65 +2347,65 @@ const s = StyleSheet.create({
   pointsResetTitle: { color: "#174D3D", fontSize: 12, fontWeight: "900" },
   pointsResetText: { color: "#587068", fontSize: 10, lineHeight: 15, marginTop: 3 },
   adminLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
-  adminLoadingText: { color: "#60736B", fontSize: 11, fontWeight: "800" },
+  adminLoadingText: { color: UI_TOKENS.colors.muted, fontSize: 11, fontWeight: "800" },
   adminNotice: { backgroundColor: "#EAF2EE", borderRadius: 13, padding: 12, marginTop: 12 },
   adminNoticeTitle: { color: "#174D3D", fontSize: 11, fontWeight: "900" },
-  adminNoticeText: { color: "#61756D", fontSize: 9, lineHeight: 14, marginTop: 3 },
+  adminNoticeText: { color: UI_TOKENS.colors.muted, fontSize: 9, lineHeight: 14, marginTop: 3 },
   adminTabs: { flexDirection: "row", gap: 4, backgroundColor: "#E2E8E4", borderRadius: 12, padding: 4, marginTop: 12 },
   adminTab: { minWidth: 105, alignItems: "center", borderRadius: 9, paddingVertical: 10, paddingHorizontal: 8 },
   adminTabActive: { backgroundColor: "#174D3D" },
-  adminTabText: { color: "#60736B", fontSize: 9, fontWeight: "900" },
+  adminTabText: { color: "#52635B", fontSize: 9, fontWeight: "900" },
   adminTabTextActive: { color: "#DDFB72" },
-  adminCard: { backgroundColor: "#FFFFFF", borderRadius: 18, borderWidth: 1, borderColor: "#E4E8EE", paddingHorizontal: 15, paddingTop: 5, paddingBottom: 9, marginTop: 12, shadowColor: "#111827", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.07, shadowRadius: 9, elevation: 2 },
+  adminCard: { backgroundColor: UI.card, borderRadius: UI_TOKENS.radius.card, borderWidth: 1, borderColor: UI.border, paddingHorizontal: 15, paddingTop: 5, paddingBottom: 9, marginTop: 12, ...CARD_SHADOW },
   ownerAdminInput: { height: 46, backgroundColor: "#F4F7F5", borderWidth: 1, borderColor: "#DCE5E0", borderRadius: 10, paddingHorizontal: 12, color: "#173028", marginBottom: 9 },
   ownerInviteMessage: { backgroundColor: "#FFF0EC", borderRadius: 10, padding: 11, marginTop: 9 },
   ownerRoleRow: { flexDirection: "row", gap: 8, marginBottom: 2 },
-  ownerRoleButton: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: "#C9D3CE", borderRadius: 10, paddingVertical: 10 },
+  ownerRoleButton: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#C9D3CE", borderRadius: 10, paddingVertical: 10 },
   ownerRoleButtonActive: { backgroundColor: "#EAF6C7", borderColor: "#9BB73E" },
   ownerRoleText: { color: "#263B34", fontSize: 11, fontWeight: "800" },
   ownerAdminRow: { minHeight: 68, flexDirection: "row", alignItems: "center", backgroundColor: "white", borderRadius: 13, padding: 11, marginBottom: 8 },
   ownerDisplayName: { color: "#173028", fontSize: 13, fontWeight: "900", fontFamily: OWNER_FONT },
-  ownerActivate: { backgroundColor: "#DDFB72", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 },
+  ownerActivate: { minHeight: 44, backgroundColor: "#DDFB72", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9, justifyContent: "center" },
   ownerActivateText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
-  ownerSuspend: { borderWidth: 1, borderColor: "#D5A59B", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9 },
+  ownerSuspend: { minHeight: 44, borderWidth: 1, borderColor: "#D5A59B", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9, justifyContent: "center" },
   ownerSuspendText: { color: "#8B3D31", fontSize: 10, fontWeight: "900" },
   ownerAdminActions: { alignItems: "stretch", gap: 6, marginLeft: 7 },
-  ownerEditName: { borderWidth: 1, borderColor: "#9FAEDB", backgroundColor: "#F2F5FF", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 8, alignItems: "center" },
+  ownerEditName: { minHeight: 44, borderWidth: 1, borderColor: "#9FAEDB", backgroundColor: "#F2F5FF", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 8, alignItems: "center", justifyContent: "center" },
   ownerEditNameText: { color: "#43558C", fontSize: 9, fontWeight: "900" },
   ownerRenamePanel: { flex: 1, paddingVertical: 2 },
   ownerRenameInput: { minHeight: 42, borderWidth: 1, borderColor: "#8998C7", backgroundColor: "#FFFFFF", color: "#18223B", borderRadius: 10, paddingHorizontal: 11, fontSize: 12, fontWeight: "800" },
   ownerRenameActions: { flexDirection: "row", justifyContent: "flex-end", gap: 7, marginTop: 7 },
-  ownerRenameCancel: { borderWidth: 1, borderColor: "#C9D0D9", borderRadius: 9, paddingHorizontal: 12, paddingVertical: 8 },
+  ownerRenameCancel: { minHeight: 44, borderWidth: 1, borderColor: "#C9D0D9", borderRadius: 9, paddingHorizontal: 12, paddingVertical: 8, justifyContent: "center" },
   ownerRenameCancelText: { color: "#66717F", fontSize: 9, fontWeight: "900" },
-  ownerRenameSave: { minWidth: 82, backgroundColor: "#43558C", borderRadius: 9, paddingHorizontal: 12, paddingVertical: 8, alignItems: "center" },
+  ownerRenameSave: { minWidth: 82, minHeight: 44, backgroundColor: UI_TOKENS.colors.primary, borderRadius: 9, paddingHorizontal: 12, paddingVertical: 8, alignItems: "center", justifyContent: "center" },
   ownerRenameSaveText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900" },
   templateChoices: { gap: 8, paddingVertical: 10 },
-  templateChoice: { minWidth: 135, borderWidth: 1, borderColor: "#D3DDD8", backgroundColor: "#F5F8F6", borderRadius: 11, padding: 11 },
+  templateChoice: { minWidth: 135, minHeight: 44, borderWidth: 1, borderColor: UI_TOKENS.colors.border, backgroundColor: UI_TOKENS.colors.surface, borderRadius: 11, padding: 11 },
   templateChoiceActive: { borderColor: "#88A938", backgroundColor: "#F0F8D8" },
   templateChoiceName: { color: "#173028", fontSize: 11, fontWeight: "900" },
   adminGroupTitle: { color: "#174D3D", fontSize: 11, fontWeight: "900", paddingTop: 14, paddingBottom: 5 },
   adminField: { minHeight: 55, borderTopWidth: 1, borderTopColor: "#E8ECE9", flexDirection: "row", alignItems: "center", gap: 10 },
   adminFieldLabel: { color: "#2C433A", fontSize: 10, fontWeight: "800" },
-  adminFieldDetail: { color: "#89958F", fontSize: 8, marginTop: 2 },
+  adminFieldDetail: { color: UI_TOKENS.colors.muted, fontSize: 8, marginTop: 2 },
   formatToggle: { minWidth: 47, borderRadius: 9, backgroundColor: "#E5EAE7", paddingHorizontal: 10, paddingVertical: 8, alignItems: "center" },
   formatToggleActive: { backgroundColor: "#174D3D" },
-  formatToggleText: { color: "#718079", fontSize: 8, fontWeight: "900" },
+  formatToggleText: { color: "#52635B", fontSize: 8, fontWeight: "900" },
   formatToggleTextActive: { color: "#DDFB72" },
-  adminInput: { width: 78, height: 38, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#F8FAF9", borderRadius: 9, paddingHorizontal: 9, color: "#173028", fontSize: 12, fontWeight: "900", textAlign: "right" },
+  adminInput: { width: 82, height: 44, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#F8FAF9", borderRadius: 10, paddingHorizontal: 10, color: "#173028", fontSize: 12, fontWeight: "900", textAlign: "right" },
   adminInputReadOnly: { backgroundColor: "#EEF1EF", color: "#66766F" },
   adminMessage: { backgroundColor: "#FFF1ED", borderRadius: 10, padding: 10, marginTop: 10 },
   adminMessageSuccess: { backgroundColor: "#E5F3E1" },
   adminMessageText: { color: "#5D473F", fontSize: 9, fontWeight: "800", lineHeight: 13 },
-  adminFootnote: { color: "#7B8983", fontSize: 8, lineHeight: 12, textAlign: "center", marginTop: 8 },
+  adminFootnote: { color: UI_TOKENS.colors.muted, fontSize: 8, lineHeight: 12, textAlign: "center", marginTop: 8 },
   adminPhaseHelp: { backgroundColor: "#EAF2EE", borderRadius: 12, padding: 12, marginTop: 10 },
   adminPhaseCard: { backgroundColor: "white", borderRadius: 13, padding: 12, marginTop: 9, borderWidth: 1, borderColor: "#DEE6E1" },
   adminPhaseHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
-  adminPhaseNameInput: { flex: 1, height: 40, borderWidth: 1, borderColor: "#CFD9D4", borderRadius: 9, paddingHorizontal: 10, color: "#173028", fontSize: 11, fontWeight: "900" },
-  adminPhaseRemove: { paddingHorizontal: 8, paddingVertical: 8 },
+  adminPhaseNameInput: { flex: 1, height: 44, borderWidth: 1, borderColor: "#CFD9D4", borderRadius: 10, paddingHorizontal: 10, color: "#173028", fontSize: 12, fontWeight: "900" },
+  adminPhaseRemove: { minHeight: 44, paddingHorizontal: 8, paddingVertical: 8, justifyContent: "center" },
   adminPhaseRemoveText: { color: "#935448", fontSize: 8, fontWeight: "900" },
   adminPhaseRange: { flexDirection: "row", alignItems: "flex-end", gap: 10, marginTop: 10 },
-  adminPhaseNumberInput: { height: 40, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#F8FAF9", borderRadius: 9, paddingHorizontal: 10, marginTop: 4, color: "#173028", fontSize: 12, fontWeight: "900", textAlign: "center" },
-  adminPhaseTo: { color: "#7B8983", fontSize: 9, fontWeight: "800", paddingBottom: 14 },
+  adminPhaseNumberInput: { height: 44, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#F8FAF9", borderRadius: 10, paddingHorizontal: 10, marginTop: 4, color: "#173028", fontSize: 12, fontWeight: "900", textAlign: "center" },
+  adminPhaseTo: { color: UI_TOKENS.colors.muted, fontSize: 9, fontWeight: "800", paddingBottom: 14 },
   adminAddPhase: { borderWidth: 1, borderStyle: "dashed", borderColor: "#8FA49B", borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 9 },
   adminAddPhaseText: { color: "#174D3D", fontSize: 10, fontWeight: "900" },
   transferScreenIntro: { backgroundColor: "#153D33", borderRadius: 18, padding: 16, marginTop: 10 },
@@ -2115,12 +2415,12 @@ const s = StyleSheet.create({
   transferScreenTitle: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" },
   transferScreenSubtitle: { color: "#AFC9C0", fontSize: 9, fontWeight: "800", marginTop: 2 },
   transferScreenHelp: { color: "#C9DCD5", fontSize: 9, lineHeight: 14, marginTop: 12 },
-  transferPeriodCard: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 14, marginTop: 10, borderWidth: 1, borderColor: "#DCE5E0", shadowColor: "#12382F", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+  transferPeriodCard: { backgroundColor: UI.card, borderRadius: UI_TOKENS.radius.card, padding: 14, marginTop: 10, borderWidth: 1, borderColor: UI.border, ...CARD_SHADOW },
   transferPeriodHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   transferPeriodIndex: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#EAF2EE", alignItems: "center", justifyContent: "center" },
   transferPeriodIndexText: { color: "#174D3D", fontSize: 12, fontWeight: "900" },
   transferPeriodEyebrow: { color: "#85928C", fontSize: 7, fontWeight: "900", letterSpacing: 0.8, marginBottom: 3 },
-  transferPeriodNameInput: { height: 36, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#FBFCFB", borderRadius: 9, paddingHorizontal: 10, color: "#173028", fontSize: 11, fontWeight: "900" },
+  transferPeriodNameInput: { height: 44, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#FBFCFB", borderRadius: 10, paddingHorizontal: 10, color: "#173028", fontSize: 12, fontWeight: "900" },
   transferPeriodRemove: { borderWidth: 1, borderColor: "#E1B9B0", backgroundColor: "#FFF7F5", borderRadius: 9, paddingHorizontal: 9, paddingVertical: 8 },
   transferPeriodRemoveDisabled: { borderColor: "#E5E9E7", backgroundColor: "#F4F6F5" },
   transferPeriodRemoveText: { color: "#8D4639", fontSize: 8, fontWeight: "900" },
@@ -2137,7 +2437,7 @@ const s = StyleSheet.create({
   rankingPhaseTabActive: { borderColor: "#174D3D", backgroundColor: "#174D3D" },
   rankingPhaseName: { color: "#334D44", fontSize: 11, fontWeight: "900" },
   rankingPhaseNameActive: { color: "#DDFB72" },
-  rankingPhaseRange: { color: "#829089", fontSize: 8, marginTop: 3 },
+  rankingPhaseRange: { color: "#5F6D67", fontSize: 10, marginTop: 3 },
   rankingPhaseRangeActive: { color: "#BBD0C9" },
   leagueSectionTabs: { flexDirection: "row", backgroundColor: "#E4EAE6", borderRadius: 12, padding: 4, marginTop: 14, marginBottom: 4 },
   leagueSectionTab: { flex: 1, alignItems: "center", borderRadius: 9, paddingVertical: 10 },
@@ -2154,7 +2454,7 @@ const s = StyleSheet.create({
   ownerPointPlayer: { flex: 1, color: "#7C8A84", fontSize: 7, fontWeight: "900" },
   ownerPointCell: { width: 32, color: "#61736C", fontSize: 8, textAlign: "right" },
   ownerPointTotal: { width: 39, color: "#174D3D", fontSize: 9, fontWeight: "900", textAlign: "right" },
-  ownerPlayerRow: { flexDirection: "row", alignItems: "center", minHeight: 42, borderTopWidth: 1, borderTopColor: "#EDF0EE" },
+  ownerPlayerRow: { flexDirection: "row", alignItems: "center", minHeight: 48, borderTopWidth: 1, borderTopColor: "#EDF0EE" },
   ownerPlayerName: { color: "#263E35", fontSize: 10, fontWeight: "900" },
   ownerPlayerMeta: { color: "#84928C", fontSize: 7, marginTop: 2 },
   ownerMatchBreakdown: { backgroundColor: "#F2F5F3", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 5 },
@@ -2206,22 +2506,22 @@ const s = StyleSheet.create({
   topNavigationShell: { backgroundColor: "#F8FAF9", borderBottomWidth: 1, borderBottomColor: "#DDE4E0", shadowColor: "#091C16", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 4, zIndex: 5 },
   topNavigationContent: { flexGrow: 1, paddingHorizontal: 10, paddingVertical: 8, gap: 7 },
   topNavigationItem: { flexGrow: 1, minHeight: 49, minWidth: 88, borderRadius: 13, borderWidth: 1.5, borderColor: "transparent", paddingHorizontal: 11, paddingVertical: 6, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, position: "relative", overflow: "hidden" },
-  topNavigationLabel: { color: "#5F6F69", fontSize: 10, fontWeight: "800" },
+  topNavigationLabel: { color: "#4F5F58", fontSize: 11, fontWeight: "800" },
   topNavigationIndicator: { position: "absolute", left: 10, right: 10, bottom: 0, height: 4, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
-  mobilePrimaryNavigation: { height: Platform.OS === "android" ? 78 : 70, paddingBottom: Platform.OS === "android" ? 8 : 0, flexDirection: "row", alignItems: "stretch", backgroundColor: "#FBFCFD", borderTopWidth: 1, borderTopColor: "#DDE3E8", shadowColor: "#111827", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.14, shadowRadius: 12, elevation: 18, zIndex: 20 },
+  mobilePrimaryNavigation: { height: 70, paddingBottom: 0, flexDirection: "row", alignItems: "stretch", backgroundColor: "#FBFCFD", borderTopWidth: 1, borderTopColor: "#DDE3E8", shadowColor: "#111827", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.14, shadowRadius: 12, elevation: 18, zIndex: 20 },
   mobilePrimaryTab: { flex: 1, minWidth: 0, alignItems: "center", justifyContent: "center", paddingTop: 5, position: "relative" },
   mobilePrimaryTabActive: { backgroundColor: "#FFFFFF" },
-  mobilePrimaryTabLabel: { color: "#728079", fontSize: 8.5, fontWeight: "800", marginTop: 2 },
+  mobilePrimaryTabLabel: { color: "#56645E", fontSize: 10, fontWeight: "800", marginTop: 2 },
   mobilePrimaryIndicator: { position: "absolute", left: "24%", right: "24%", top: 0, height: 3, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
   mobileMoreGlyph: { color: "#536171", fontSize: 15, lineHeight: 17, fontWeight: "900", letterSpacing: 1 },
   mobileMoreGlyphActive: { color: "#FFFFFF" },
   mobileMoreOverlay: { flex: 1, backgroundColor: "rgba(3,18,15,0.56)", justifyContent: "flex-end" },
-  mobileMoreSheet: { backgroundColor: "#FBFCF9", borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 16, paddingTop: 9, paddingBottom: Platform.OS === "android" ? 30 : 20, borderWidth: 1, borderColor: "#D8E1DC", shadowColor: "#000000", shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.24, shadowRadius: 20, elevation: 24 },
+  mobileMoreSheet: { backgroundColor: "#FBFCF9", borderTopLeftRadius: UI_TOKENS.radius.sheet, borderTopRightRadius: UI_TOKENS.radius.sheet, paddingHorizontal: 16, paddingTop: 9, paddingBottom: 20, borderWidth: 1, borderColor: UI.border, shadowColor: "#000000", shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.24, shadowRadius: 20, elevation: 24 },
   mobileMoreHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: "#CBD4CF", alignSelf: "center", marginBottom: 10 },
   mobileMoreHeader: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  mobileMoreEyebrow: { color: "#7B8882", fontSize: 8, fontWeight: "900", letterSpacing: 1.4 },
+  mobileMoreEyebrow: { color: "#596861", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   mobileMoreTitle: { color: "#15342B", fontSize: 18, fontWeight: "900", marginTop: 2 },
-  mobileMoreClose: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#EDF1EF", alignItems: "center", justifyContent: "center" },
+  mobileMoreClose: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#EDF1EF", alignItems: "center", justifyContent: "center" },
   mobileMoreCloseText: { color: "#53675F", fontSize: 24, lineHeight: 26 },
   mobileMoreItem: { minHeight: 54, borderRadius: 15, borderWidth: 1, borderColor: "transparent", paddingHorizontal: 11, marginTop: 5, flexDirection: "row", alignItems: "center", gap: 11 },
   mobileMoreItemLabel: { flex: 1, color: "#304A42", fontSize: 13, fontWeight: "900" },
@@ -2236,11 +2536,19 @@ const s = StyleSheet.create({
   livePill: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(216,255,99,0.09)", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6 },
   liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: UI.accent, marginRight: 5 },
   headerModern: { minHeight: 80, paddingHorizontal: 16, paddingTop: 11, paddingBottom: 13, backgroundColor: "#111827", borderBottomWidth: 0, position: "relative", overflow: "hidden" },
-  headerAccent: { position: "absolute", left: 0, right: 0, bottom: 0, height: 4, backgroundColor: "#6D44C5", opacity: 0.95 },
+  headerModernMobile: { minHeight: 58, paddingHorizontal: 12, paddingTop: 6, paddingBottom: 8 },
+  headerAccent: { position: "absolute", left: 0, right: 0, bottom: 0, height: 4, backgroundColor: UI_TOKENS.colors.primary, opacity: 0.95 },
   logoModern: { width: 44, height: 44, borderRadius: 14, backgroundColor: UI.accent, shadowColor: "#000000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.27, shadowRadius: 7, elevation: 5 },
+  logoModernMobile: { width: 36, height: 36, borderRadius: 11 },
+  headerIdentityMobile: { marginLeft: 9, paddingRight: 5 },
   eyebrowModern: { color: "#A7B0C0", fontSize: 8, letterSpacing: 1.4 },
+  eyebrowModernMobile: { fontSize: 7, lineHeight: 9, letterSpacing: 1.05 },
   brandModern: { color: "#FFFFFF", fontSize: 18, lineHeight: 21, marginTop: 1 },
+  brandModernMobile: { fontSize: 15, lineHeight: 18, marginTop: 0 },
   signedInAsModern: { flexShrink: 1, color: "#C0C8D5", fontSize: 10 },
+  signedInAsModernMobile: { fontSize: 9, lineHeight: 11 },
+  headerMetaRowMobile: { marginTop: 0 },
+  livePillMobile: { paddingHorizontal: 8, paddingVertical: 4 },
   signOutButtonModern: { borderColor: "rgba(255,255,255,0.20)", backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 9, paddingHorizontal: 10, paddingVertical: 6 },
   signOutTextModern: { color: "#E7EAF0", fontSize: 9 },
   tabBarModern: { left: 10, right: 10, bottom: Platform.OS === "android" ? 32 : 8, height: 76, paddingTop: 7, paddingHorizontal: 5, backgroundColor: "#FAFBFC", borderWidth: 1, borderColor: "#E2E6EC", borderRadius: 24, shadowColor: "#111827", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.18, shadowRadius: 16, elevation: 16 },
@@ -2255,7 +2563,7 @@ const s = StyleSheet.create({
   navIconCalendarTop: { position: "absolute", top: 8, left: 9, right: 9, height: 2, borderRadius: 1, opacity: 0.9 },
   leagueCardModern: { overflow: "hidden", borderRadius: 22, paddingLeft: 18, paddingVertical: 17, shadowColor: "#001A12", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 15, elevation: 7 },
   leagueCardAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 6 },
-  pageSurface: { backgroundColor: "#F5F6F8", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18 },
+  pageSurface: { backgroundColor: UI.canvas, paddingHorizontal: 18 },
   selectionSummaryModern: { backgroundColor: "#18223B", borderRadius: 0 },
   teamGroupExpanded: { backgroundColor: "#FFFFFF", borderRadius: 16, borderWidth: 1, borderColor: "#E0E6E2", overflow: "hidden", shadowColor: "#0E2F25", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
   teamHeaderModern: { minHeight: 65, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#FFFFFF", borderColor: "#E0E6E2", shadowColor: "#0E2F25", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 1 },
@@ -2263,7 +2571,7 @@ const s = StyleSheet.create({
   playerRowModern: { borderRadius: 16, borderColor: "#E4E8EE", shadowColor: "#111827", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.07, shadowRadius: 6, elevation: 2 },
   playerRowInGroup: { borderRadius: 0, marginBottom: 0, borderWidth: 0, borderBottomWidth: 1, borderBottomColor: "#EDF0ED", shadowOpacity: 0, shadowRadius: 0, elevation: 0 },
   playerRowLastInGroup: { borderBottomWidth: 0 },
-  safe: { flex: 1, backgroundColor: "#071D17" }, header: { flexDirection: "row", alignItems: "center", padding: 16 }, logo: { width: 42, height: 42, borderRadius: 13, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center" }, logoHomeActive: { borderWidth: 2, borderColor: "white" }, logoText: { fontSize: 26, lineHeight: 28, fontWeight: "900", color: "#071D17", marginTop: -2 }, eyebrow: { color: "#80A399", fontSize: 9, fontWeight: "800", letterSpacing: 1.5 }, brand: { color: "white", fontSize: 18, fontWeight: "900" }, live: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, content: { backgroundColor: "#F4F5EF", borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 110, minHeight: 750 }, greeting: { color: "#10251F", fontSize: 25, fontWeight: "900" }, subtitle: { color: "#718079", fontSize: 13, marginTop: 4, marginBottom: 18 }, hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 31, fontWeight: "900", marginTop: 10 }, vs: { color: "#DDFB72", fontSize: 18 }, heroMeta: { color: "#B7CDC6", fontSize: 12, marginTop: 6 }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" }, stats: { flexDirection: "row", gap: 8, marginTop: 12 }, stat: { flex: 1, backgroundColor: "white", borderRadius: 14, padding: 12 }, statLabel: { color: "#87938E", fontSize: 8, fontWeight: "900" }, statValue: { color: "#10251F", fontSize: 17, fontWeight: "900", marginTop: 5 }, sectionTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 10 }, card: { backgroundColor: "white", borderRadius: 18, paddingHorizontal: 14 }, standing: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#EDF0EA" }, position: { width: 23, color: "#819089", fontWeight: "800" }, badge: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#E8F4EF", alignItems: "center", justifyContent: "center" }, badgeText: { color: "#174D3D", fontWeight: "900" }, owner: { flex: 1, marginLeft: 9, fontWeight: "800", color: "#1B3029" }, points: { color: "#51665F", fontSize: 11 }, auction: { backgroundColor: "white", borderRadius: 20, alignItems: "center", padding: 20 }, timer: { alignSelf: "flex-end", color: "#496209", fontWeight: "900" }, avatar: { width: 66, height: 66, borderRadius: 22, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center" }, avatarText: { color: "#DDFB72", fontSize: 22, fontWeight: "900" }, auctionName: { fontSize: 20, fontWeight: "900", marginTop: 10 }, bidLabel: { color: "#87938E", fontSize: 9, fontWeight: "900", marginTop: 16 }, bid: { fontSize: 30, fontWeight: "900" }, meta: { color: "#7D8B85", fontSize: 9, marginTop: 3 }, selectionSummary: { flexDirection: "row", backgroundColor: "#123C31", borderRadius: 17, paddingVertical: 14 }, summary: { flex: 1, alignItems: "center" }, summaryLabel: { color: "#9BC1B6", fontSize: 8, fontWeight: "900" }, summaryValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900", marginTop: 4 }, roles: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 6, paddingTop: 7, paddingHorizontal: 3, borderTopWidth: 1, borderTopColor: "#D8E1DC" }, rolesLabel: { color: "#6B7A73", fontSize: 7.5, fontWeight: "900", letterSpacing: 0.5, marginRight: 3 }, roleChip: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DCE5E0", color: "#365248", borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6, fontSize: 9, fontWeight: "900" }, helper: { color: "#7D8984", fontSize: 11, marginBottom: 10 }, otherTeamsTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 4 }, teamGroup: { marginBottom: 12 }, teamHeader: { flexDirection: "row", alignItems: "center", backgroundColor: "#E3ECE7", borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 7 }, teamHeaderName: { color: "#18223B", fontSize: 12, fontWeight: "900" }, teamHeaderCount: { color: "#758091", fontSize: 7.5, lineHeight: 11, fontWeight: "800", marginTop: 3 }, playerRow: { backgroundColor: "white", borderRadius: 13, marginBottom: 8, borderWidth: 1, borderColor: "transparent" }, playerActive: { borderColor: "#9AB64B", backgroundColor: "#FBFDEF" }, playerFocused: { borderColor: "#6A3FB5", borderWidth: 2, backgroundColor: "#F8F1FF" }, playerMain: { flexDirection: "row", alignItems: "center", padding: 11 }, checkbox: { width: 23, height: 23, borderRadius: 7, borderWidth: 1, borderColor: "#B8C3BD", alignItems: "center", justifyContent: "center" }, checkboxActive: { backgroundColor: "#174D3D" }, check: { color: "white", fontWeight: "900" }, playerName: { color: "#173028", fontSize: 13, fontWeight: "800" }, price: { color: "#173028", fontSize: 12, fontWeight: "900" }, markers: { flexDirection: "row", gap: 7, paddingLeft: 44, paddingBottom: 9 }, marker: { borderWidth: 1, borderColor: "#B9C5BF", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 5 }, markerActive: { backgroundColor: "#DDFB72", borderColor: "#9BB73E" }, markerText: { color: "#253A32", fontSize: 10, fontWeight: "900" }, validation: { borderRadius: 14, padding: 14, marginTop: 12 }, invalid: { backgroundColor: "#FFF0EC" }, valid: { backgroundColor: "#EAF6E5" }, validationTitle: { fontWeight: "900", color: "#263B34" }, validationText: { color: "#5E6D67", fontSize: 11, marginTop: 3 }, submit: { backgroundColor: "#174D3D", borderRadius: 14, padding: 15, alignItems: "center", marginTop: 11 }, disabled: { backgroundColor: "#AAB5B0" }, submitText: { color: "white", fontWeight: "900" }, success: { color: "#2F6B37", textAlign: "center", fontWeight: "800", marginTop: 10 }, tabBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 82, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E9E4", flexDirection: "row", paddingTop: 9 }, tab: { flex: 1, alignItems: "center" }, cricketBallIcon: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#BFC8C4", marginBottom: 5, position: "relative" }, cricketBallIconActive: { backgroundColor: "#C53A45" }, cricketBallIconSeam: { position: "absolute", width: 1.5, height: 17, backgroundColor: "#FFFFFF", left: 9.25, top: 1.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconSeamActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBallIconStitch: { position: "absolute", width: 5, height: 1, backgroundColor: "#FFFFFF", left: 7.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconStitchTop: { top: 6 }, cricketBallIconStitchBottom: { top: 12 }, cricketBallIconStitchActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBatIcon: { width: 20, height: 20, marginBottom: 5, position: "relative", transform: [{ rotate: "-38deg" }] }, cricketBatHandle: { position: "absolute", width: 4, height: 8, borderRadius: 2, backgroundColor: "#8D9A95", top: 0, left: 8 }, cricketBatHandleActive: { backgroundColor: "#174D3D" }, cricketBatBlade: { position: "absolute", width: 9, height: 14, borderRadius: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: "#C7CECA", top: 6, left: 5.5 }, cricketBatBladeActive: { backgroundColor: "#D5A558" }, tabText: { color: "#8A9691", fontSize: 10, fontWeight: "700" }, tabTextActive: { color: "#174D3D", fontWeight: "900" }
+  safe: { flex: 1, backgroundColor: "#071D17" }, header: { flexDirection: "row", alignItems: "center", padding: 16 }, logo: { width: 42, height: 42, borderRadius: 13, backgroundColor: "#DDFB72", alignItems: "center", justifyContent: "center" }, logoHomeActive: { borderWidth: 2, borderColor: "white" }, logoText: { fontSize: 26, lineHeight: 28, fontWeight: "900", color: "#071D17", marginTop: -2 }, eyebrow: { color: "#80A399", fontSize: 9, fontWeight: "800", letterSpacing: 1.5 }, brand: { color: "white", fontSize: 18, fontWeight: "900" }, live: { color: "#DDFB72", fontSize: 10, fontWeight: "900" }, content: { backgroundColor: "#F4F5EF", borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 110, minHeight: 750 }, greeting: { color: "#10251F", fontSize: 25, fontWeight: "900" }, subtitle: { color: UI_TOKENS.colors.muted, fontSize: 13, marginTop: 4, marginBottom: 18 }, hero: { backgroundColor: "#123C31", borderRadius: 22, padding: 20 }, heroLabel: { color: "#9BC1B6", fontSize: 10, fontWeight: "800" }, heroTitle: { color: "white", fontSize: 31, fontWeight: "900", marginTop: 10 }, vs: { color: "#DDFB72", fontSize: 18 }, heroMeta: { color: "#B7CDC6", fontSize: 12, marginTop: 6 }, primary: { backgroundColor: "#DDFB72", borderRadius: 13, padding: 14, alignItems: "center", marginTop: 16 }, primaryText: { color: "#10251F", fontWeight: "900" }, stats: { flexDirection: "row", gap: 8, marginTop: 12 }, stat: { flex: 1, backgroundColor: "white", borderRadius: 14, padding: 12 }, statLabel: { color: "#87938E", fontSize: 8, fontWeight: "900" }, statValue: { color: "#10251F", fontSize: 17, fontWeight: "900", marginTop: 5 }, sectionTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 10 }, card: { backgroundColor: "white", borderRadius: 18, paddingHorizontal: 14 }, standing: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#EDF0EA" }, position: { width: 23, color: "#819089", fontWeight: "800" }, badge: { width: 31, height: 31, borderRadius: 10, backgroundColor: "#E8F4EF", alignItems: "center", justifyContent: "center" }, badgeText: { color: "#174D3D", fontWeight: "900" }, owner: { flex: 1, marginLeft: 9, fontWeight: "800", color: "#1B3029" }, points: { color: "#51665F", fontSize: 11 }, auction: { backgroundColor: "white", borderRadius: 20, alignItems: "center", padding: 20 }, timer: { alignSelf: "flex-end", color: "#496209", fontWeight: "900" }, avatar: { width: 66, height: 66, borderRadius: 22, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center" }, avatarText: { color: "#DDFB72", fontSize: 22, fontWeight: "900" }, auctionName: { fontSize: 20, fontWeight: "900", marginTop: 10 }, bidLabel: { color: "#87938E", fontSize: 9, fontWeight: "900", marginTop: 16 }, bid: { fontSize: 30, fontWeight: "900" }, meta: { color: "#7D8B85", fontSize: 9, marginTop: 3 }, selectionSummary: { flexDirection: "row", backgroundColor: "#123C31", borderRadius: 17, paddingVertical: 14 }, summary: { flex: 1, alignItems: "center" }, summaryLabel: { color: "#9BC1B6", fontSize: 8, fontWeight: "900" }, summaryValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900", marginTop: 4 }, roles: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 6, paddingTop: 7, paddingHorizontal: 3, borderTopWidth: 1, borderTopColor: "#D8E1DC" }, rolesLabel: { color: "#6B7A73", fontSize: 7.5, fontWeight: "900", letterSpacing: 0.5, marginRight: 3 }, roleChip: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#DCE5E0", color: "#365248", borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6, fontSize: 9, fontWeight: "900" }, helper: { color: "#7D8984", fontSize: 11, marginBottom: 10 }, otherTeamsTitle: { color: "#10251F", fontSize: 18, fontWeight: "900", marginTop: 22, marginBottom: 4 }, teamGroup: { marginBottom: 12 }, teamHeader: { flexDirection: "row", alignItems: "center", backgroundColor: "#E3ECE7", borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginBottom: 7 }, teamHeaderName: { color: "#18223B", fontSize: 12, fontWeight: "900" }, teamHeaderCount: { color: "#758091", fontSize: 7.5, lineHeight: 11, fontWeight: "800", marginTop: 3 }, playerRow: { backgroundColor: "white", borderRadius: 13, marginBottom: 8, borderWidth: 1, borderColor: "transparent" }, playerActive: { borderColor: "#9AB64B", backgroundColor: "#FBFDEF" }, playerFocused: { borderColor: UI_TOKENS.colors.primary, borderWidth: 2, backgroundColor: UI_TOKENS.colors.primarySoft }, playerMain: { flexDirection: "row", alignItems: "center", padding: 11 }, checkbox: { width: 23, height: 23, borderRadius: 7, borderWidth: 1, borderColor: "#B8C3BD", alignItems: "center", justifyContent: "center" }, checkboxActive: { backgroundColor: "#174D3D" }, check: { color: "white", fontWeight: "900" }, playerName: { color: "#173028", fontSize: 13, fontWeight: "800" }, price: { color: "#173028", fontSize: 12, fontWeight: "900" }, markers: { flexDirection: "row", gap: 7, paddingLeft: 44, paddingBottom: 9 }, marker: { minWidth: 44, minHeight: 44, borderWidth: 1, borderColor: "#B9C5BF", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, alignItems: "center", justifyContent: "center" }, markerActive: { backgroundColor: "#DDFB72", borderColor: "#9BB73E" }, markerText: { color: "#253A32", fontSize: 10, fontWeight: "900" }, validation: { borderRadius: 14, padding: 14, marginTop: 12 }, invalid: { backgroundColor: "#FFF0EC" }, valid: { backgroundColor: "#EAF6E5" }, validationTitle: { fontWeight: "900", color: "#263B34" }, validationText: { color: "#5E6D67", fontSize: 11, marginTop: 3 }, submit: { backgroundColor: "#174D3D", borderRadius: 14, padding: 15, alignItems: "center", marginTop: 11 }, disabled: { backgroundColor: "#AAB5B0" }, submitText: { color: "white", fontWeight: "900" }, success: { color: "#2F6B37", textAlign: "center", fontWeight: "800", marginTop: 10 }, tabBar: { position: "absolute", left: 0, right: 0, bottom: 0, height: 82, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E9E4", flexDirection: "row", paddingTop: 9 }, tab: { flex: 1, alignItems: "center" }, cricketBallIcon: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#BFC8C4", marginBottom: 5, position: "relative" }, cricketBallIconActive: { backgroundColor: "#C53A45" }, cricketBallIconSeam: { position: "absolute", width: 1.5, height: 17, backgroundColor: "#FFFFFF", left: 9.25, top: 1.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconSeamActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBallIconStitch: { position: "absolute", width: 5, height: 1, backgroundColor: "#FFFFFF", left: 7.5, transform: [{ rotate: "24deg" }], opacity: 0.8 }, cricketBallIconStitchTop: { top: 6 }, cricketBallIconStitchBottom: { top: 12 }, cricketBallIconStitchActive: { backgroundColor: "#FFE8D9", opacity: 1 }, cricketBatIcon: { width: 20, height: 20, marginBottom: 5, position: "relative", transform: [{ rotate: "-38deg" }] }, cricketBatHandle: { position: "absolute", width: 4, height: 8, borderRadius: 2, backgroundColor: "#8D9A95", top: 0, left: 8 }, cricketBatHandleActive: { backgroundColor: "#174D3D" }, cricketBatBlade: { position: "absolute", width: 9, height: 14, borderRadius: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: "#C7CECA", top: 6, left: 5.5 }, cricketBatBladeActive: { backgroundColor: "#D5A558" }, tabText: { color: "#8A9691", fontSize: 10, fontWeight: "700" }, tabTextActive: { color: "#174D3D", fontWeight: "900" }
   ,playerMetrics: { minWidth: 58, alignItems: "flex-end", marginLeft: 8 },
   leaguePointValue: { color: "#6A3FB5", fontSize: 9, fontWeight: "900", marginTop: 3 },
-});
+}));
