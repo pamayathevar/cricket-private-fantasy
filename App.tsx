@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, ImageBackground, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, ImageBackground, KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import type { Session } from "@supabase/supabase-js";
 import { Player, Role, squadPlayers as players } from "./squadData";
 import { completedMatchPoints, completedMatchStats } from "./completedMatchPoints";
@@ -30,6 +30,8 @@ type DatabaseMembership = {
 type SelectionRules = { version: number; effective_from_match_number: number; lineup_size: number; lineup_budget: number; min_batters: number; min_bowlers: number; min_wicketkeepers: number; min_all_rounders: number; max_from_one_team: number; captain_multiplier: number; vice_captain_multiplier: number };
 
 const standardTabs: Tab[] = ["Ranking", "Team", "Matches", "PlayerSquad", "Squads", "History", "Admin"];
+const mobilePrimaryTabs: Tab[] = ["Team", "Ranking", "History", "Matches"];
+const mobileMoreTabs: Tab[] = ["PlayerSquad", "Squads", "Admin"];
 const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Matches: "Fixtures", Ranking: "Ranking", PlayerSquad: "Squad", Squads: "Owner", Admin: "Rules" };
 const IPL_2026_DATABASE_ID = "10000000-0000-4000-8000-000000002026";
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
@@ -187,7 +189,10 @@ function MembershipGate({ session }: { session: Session }) {
 }
 
 function FantasyApp({ session, memberships, refreshMemberships }: { session: Session; memberships: DatabaseMembership[]; refreshMemberships: () => Promise<void> }) {
+  const { width: appWidth } = useWindowDimensions();
+  const useMobileNavigation = appWidth < 700;
   const [tab, setTab] = useState<Tab>("Home");
+  const [showMobileMore, setShowMobileMore] = useState(false);
   const [activeLeagueId, setActiveLeagueId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [captain, setCaptain] = useState("");
@@ -269,7 +274,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     <StatusBar barStyle="light-content" />
     <View style={s.appShell}>
       <View style={[s.header, s.headerModern]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : "#6D44C5" }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={s.headerIdentity}><Text style={[s.eyebrow, s.eyebrowModern]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={s.headerMetaRow}><Text style={[s.signedInAs, s.signedInAsModern]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={s.livePill}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
-      {activeLeague && tab !== "Home" ? <View style={s.topNavigationShell}><ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} contentContainerStyle={s.topNavigationContent}>{tabs.map(item => {
+      {activeLeague && tab !== "Home" && !useMobileNavigation ? <View style={s.topNavigationShell}><ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} contentContainerStyle={s.topNavigationContent}>{tabs.map(item => {
         const active = tab === item;
         const accent = tabAccent(item);
         const label = tabLabels[item] ?? item;
@@ -279,7 +284,40 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
           {active ? <View pointerEvents="none" style={[s.topNavigationIndicator, { backgroundColor: accent }]} /> : null}
         </TouchableOpacity>;
       })}</ScrollView></View> : null}
-      {leagueContent}
+      <View style={s.leagueContentShell}>{leagueContent}</View>
+      {activeLeague && tab !== "Home" && useMobileNavigation ? <View accessibilityRole="tablist" style={s.mobilePrimaryNavigation}>
+        {mobilePrimaryTabs.map(item => {
+          const active = tab === item;
+          const accent = tabAccent(item);
+          const label = tabLabels[item] ?? item;
+          return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.mobilePrimaryTab, active && s.mobilePrimaryTabActive]} onPress={() => { setShowMobileMore(false); setTab(item); }}>
+            <CricketTabIcon item={item} active={active} />
+            <Text style={[s.mobilePrimaryTabLabel, active && { color: accent }]}>{label}</Text>
+            {active ? <View pointerEvents="none" style={[s.mobilePrimaryIndicator, { backgroundColor: accent }]} /> : null}
+          </TouchableOpacity>;
+        })}
+        <TouchableOpacity accessibilityRole="tab" accessibilityLabel={`More${mobileMoreTabs.includes(tab) ? ", selected" : ""}`} accessibilityState={{ selected: mobileMoreTabs.includes(tab) }} style={[s.mobilePrimaryTab, mobileMoreTabs.includes(tab) && s.mobilePrimaryTabActive]} onPress={() => setShowMobileMore(true)}>
+          <View style={[s.navIconShell, { backgroundColor: mobileMoreTabs.includes(tab) ? tabAccent(tab) : "#EDF1F5" }]}><Text style={[s.mobileMoreGlyph, mobileMoreTabs.includes(tab) && s.mobileMoreGlyphActive]}>•••</Text></View>
+          <Text style={[s.mobilePrimaryTabLabel, mobileMoreTabs.includes(tab) && { color: tabAccent(tab) }]}>More</Text>
+          {mobileMoreTabs.includes(tab) ? <View pointerEvents="none" style={[s.mobilePrimaryIndicator, { backgroundColor: tabAccent(tab) }]} /> : null}
+        </TouchableOpacity>
+      </View> : null}
+      <Modal visible={showMobileMore && useMobileNavigation} transparent animationType="slide" statusBarTranslucent onRequestClose={() => setShowMobileMore(false)}>
+        <TouchableOpacity activeOpacity={1} style={s.mobileMoreOverlay} onPress={() => setShowMobileMore(false)}>
+          <View style={s.mobileMoreSheet} onStartShouldSetResponder={() => true}>
+            <View style={s.mobileMoreHandle} />
+            <View style={s.mobileMoreHeader}><View style={{ flex: 1 }}><Text style={s.mobileMoreEyebrow}>MORE</Text><Text style={s.mobileMoreTitle}>League navigation</Text></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close more menu" style={s.mobileMoreClose} onPress={() => setShowMobileMore(false)}><Text style={s.mobileMoreCloseText}>×</Text></TouchableOpacity></View>
+            {mobileMoreTabs.filter(item => tabs.includes(item)).map(item => {
+              const active = tab === item;
+              const accent = tabAccent(item);
+              const label = tabLabels[item] ?? item;
+              return <TouchableOpacity key={item} style={[s.mobileMoreItem, active && { backgroundColor: `${accent}16`, borderColor: `${accent}55` }]} onPress={() => { setTab(item); setShowMobileMore(false); }}><CricketTabIcon item={item} active={active} /><Text style={[s.mobileMoreItemLabel, active && { color: accent }]}>{label}</Text><Text style={[s.mobileMoreArrow, active && { color: accent }]}>{active ? "✓" : "›"}</Text></TouchableOpacity>;
+            })}
+            <View style={s.mobileMoreDivider} />
+            <TouchableOpacity style={s.mobileMoreSignOut} onPress={() => supabase.auth.signOut()}><Text style={s.mobileMoreSignOutText}>Sign out</Text></TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   </SafeAreaView>;
 }
@@ -2161,6 +2199,7 @@ const s = StyleSheet.create({
   detailValue: { color: "#213A31", fontSize: 8, fontWeight: "900" },
   detailEmpty: { color: "#9AA49F", fontSize: 8, paddingVertical: 3 },
   appShell: { flex: 1, width: "100%", maxWidth: 1180, alignSelf: "center", backgroundColor: UI.primaryDeep, shadowColor: "#00150F", shadowOffset: { width: 0, height: 0 }, shadowOpacity: Platform.OS === "web" ? 0.2 : 0, shadowRadius: 24 },
+  leagueContentShell: { flex: 1, minHeight: 0 },
   headerIdentity: { flex: 1, marginLeft: 11, paddingRight: 8, minWidth: 0 },
   headerMetaRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 3 },
   headerActions: { alignItems: "flex-end", gap: 6, marginLeft: 5 },
@@ -2169,6 +2208,27 @@ const s = StyleSheet.create({
   topNavigationItem: { flexGrow: 1, minHeight: 49, minWidth: 88, borderRadius: 13, borderWidth: 1.5, borderColor: "transparent", paddingHorizontal: 11, paddingVertical: 6, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, position: "relative", overflow: "hidden" },
   topNavigationLabel: { color: "#5F6F69", fontSize: 10, fontWeight: "800" },
   topNavigationIndicator: { position: "absolute", left: 10, right: 10, bottom: 0, height: 4, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
+  mobilePrimaryNavigation: { height: Platform.OS === "android" ? 78 : 70, paddingBottom: Platform.OS === "android" ? 8 : 0, flexDirection: "row", alignItems: "stretch", backgroundColor: "#FBFCFD", borderTopWidth: 1, borderTopColor: "#DDE3E8", shadowColor: "#111827", shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.14, shadowRadius: 12, elevation: 18, zIndex: 20 },
+  mobilePrimaryTab: { flex: 1, minWidth: 0, alignItems: "center", justifyContent: "center", paddingTop: 5, position: "relative" },
+  mobilePrimaryTabActive: { backgroundColor: "#FFFFFF" },
+  mobilePrimaryTabLabel: { color: "#728079", fontSize: 8.5, fontWeight: "800", marginTop: 2 },
+  mobilePrimaryIndicator: { position: "absolute", left: "24%", right: "24%", top: 0, height: 3, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
+  mobileMoreGlyph: { color: "#536171", fontSize: 15, lineHeight: 17, fontWeight: "900", letterSpacing: 1 },
+  mobileMoreGlyphActive: { color: "#FFFFFF" },
+  mobileMoreOverlay: { flex: 1, backgroundColor: "rgba(3,18,15,0.56)", justifyContent: "flex-end" },
+  mobileMoreSheet: { backgroundColor: "#FBFCF9", borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 16, paddingTop: 9, paddingBottom: Platform.OS === "android" ? 30 : 20, borderWidth: 1, borderColor: "#D8E1DC", shadowColor: "#000000", shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.24, shadowRadius: 20, elevation: 24 },
+  mobileMoreHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: "#CBD4CF", alignSelf: "center", marginBottom: 10 },
+  mobileMoreHeader: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
+  mobileMoreEyebrow: { color: "#7B8882", fontSize: 8, fontWeight: "900", letterSpacing: 1.4 },
+  mobileMoreTitle: { color: "#15342B", fontSize: 18, fontWeight: "900", marginTop: 2 },
+  mobileMoreClose: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#EDF1EF", alignItems: "center", justifyContent: "center" },
+  mobileMoreCloseText: { color: "#53675F", fontSize: 24, lineHeight: 26 },
+  mobileMoreItem: { minHeight: 54, borderRadius: 15, borderWidth: 1, borderColor: "transparent", paddingHorizontal: 11, marginTop: 5, flexDirection: "row", alignItems: "center", gap: 11 },
+  mobileMoreItemLabel: { flex: 1, color: "#304A42", fontSize: 13, fontWeight: "900" },
+  mobileMoreArrow: { color: "#81908A", fontSize: 23, fontWeight: "800" },
+  mobileMoreDivider: { height: 1, backgroundColor: "#E0E6E2", marginVertical: 12 },
+  mobileMoreSignOut: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: "#E4C7C1", backgroundColor: "#FFF5F2", alignItems: "center", justifyContent: "center" },
+  mobileMoreSignOutText: { color: "#8A4035", fontSize: 12, fontWeight: "900" },
   homeIcon: { width: 25, height: 25, alignItems: "center", justifyContent: "flex-end" },
   homeIconRoof: { position: "absolute", top: 1, width: 18, height: 18, backgroundColor: UI.primaryDeep, transform: [{ rotate: "45deg" }], borderRadius: 2 },
   homeIconBody: { width: 20, height: 16, backgroundColor: UI.primaryDeep, alignItems: "center", justifyContent: "flex-end" },
