@@ -1279,6 +1279,8 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const [roleFilter, setRoleFilter] = useState<PlayerRoleFilter>("ALL");
   const [ownershipFilter, setOwnershipFilter] = useState<PlayerOwnershipFilter>("ALL");
   const [playerSort, setPlayerSort] = useState<PlayerSort>("NAME");
+  const [playerSearch, setPlayerSearch] = useState("");
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [expandedTeams, setExpandedTeams] = useState<string[]>([]);
   const [focusedPlayer, setFocusedPlayer] = useState("");
   const [submitBusy, setSubmitBusy] = useState(false);
@@ -1577,18 +1579,26 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   };
   const toggleTeam = (team: string) => setExpandedTeams(expandedTeams.includes(team) ? expandedTeams.filter(item => item !== team) : [...expandedTeams, team]);
   const playerMatchesFilters = (player: Player) => {
+    const searchMatches = !playerSearch.trim() || player.name.toLocaleLowerCase().includes(playerSearch.trim().toLocaleLowerCase());
     const roleMatches = roleFilter === "ALL" || player.role === roleFilter;
     const ownershipMatches = ownershipFilter === "ALL"
       || (ownershipFilter === "MINE" && player.owner === ownerName)
       || (ownershipFilter === "OPEN" && player.owner === "Available")
       || (ownershipFilter === "OTHER" && player.owner !== ownerName && player.owner !== "Available");
-    return roleMatches && ownershipMatches;
+    return searchMatches && roleMatches && ownershipMatches;
   };
   const sortPlayers = (teamPlayers: Player[]) => [...teamPlayers].sort((left, right) => {
     if (playerSort === "COST") return Number(right.price) - Number(left.price) || left.name.localeCompare(right.name);
     if (playerSort === "POINTS") return (leaguePlayerPoints[right.name] ?? 0) - (leaguePlayerPoints[left.name] ?? 0) || left.name.localeCompare(right.name);
     return left.name.localeCompare(right.name);
   });
+  const compactPlayerFilters = teamWidth < 520;
+  const filteredPlayerCount = roster.filter(playerMatchesFilters).length;
+  const visibleTeamNames = [...matchTeams, ...otherTeams].filter(team => roster.some(player => player.team === team && playerMatchesFilters(player)));
+  const allVisibleTeamsExpanded = visibleTeamNames.length > 0 && visibleTeamNames.every(team => expandedTeams.includes(team));
+  const activePlayerFilterCount = Number(roleFilter !== "ALL") + Number(ownershipFilter !== "ALL") + Number(playerSort !== "NAME");
+  const playerFiltersApplied = !!playerSearch.trim() || activePlayerFilterCount > 0;
+  const resetPlayerFilters = () => { setPlayerSearch(""); setRoleFilter("ALL"); setOwnershipFilter("ALL"); setPlayerSort("NAME"); };
   const renderTeam = (team: string) => {
     const allTeamPlayers = roster.filter(player => player.team === team);
     const teamPlayers = sortPlayers(allTeamPlayers.filter(playerMatchesFilters));
@@ -1715,17 +1725,19 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     </View>
     {submissionWarnings.length ? <View style={s.combinedWarning}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`${submissionWarnings.length} selection notice${submissionWarnings.length > 1 ? "s" : ""}`} accessibilityState={{ expanded: showWarnings }} style={s.combinedWarningHeader} onPress={() => setShowWarnings(value => !value)}><View style={s.combinedWarningIcon}><Text style={s.combinedWarningIconText}>!</Text></View><View style={{ flex: 1 }}><Text style={s.combinedWarningTitle}>{submissionWarnings.length} selection notice{submissionWarnings.length > 1 ? "s" : ""}</Text><Text style={s.combinedWarningSummary}>{submissionWarnings[0]}</Text></View><Text style={s.combinedWarningChevron}>{showWarnings ? "▲" : "▼"}</Text></TouchableOpacity>{showWarnings ? <View style={s.combinedWarningBody}>{submissionWarnings.map(warning => <Text key={warning} style={s.combinedWarningText}>• {warning}</Text>)}</View> : null}</View> : null}
     <View style={s.playerFiltersCard}>
-      <View style={s.playerFiltersHeading}><View style={{ flex: 1 }}><Text style={s.playerFiltersTitle}>Filter & sort players</Text><Text style={s.playerFiltersHint}>Narrow the player list without changing your XI</Text></View>{roleFilter !== "ALL" || ownershipFilter !== "ALL" || playerSort !== "NAME" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Reset player filters and sorting" style={s.resetFiltersButton} onPress={() => { setRoleFilter("ALL"); setOwnershipFilter("ALL"); setPlayerSort("NAME"); }}><Text style={s.clearFiltersText}>Reset</Text></TouchableOpacity> : null}</View>
-      {teamWidth < 520 ? <View style={s.compactFiltersPanel}>
+      <View style={s.playerFiltersHeading}><View style={{ flex: 1 }}><Text style={s.playerFiltersTitle}>Find a player</Text><Text style={s.playerFiltersHint}>{filteredPlayerCount} of {roster.length} players · grouped by IPL team</Text></View>{playerFiltersApplied ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Reset player search, filters and sorting" style={s.resetFiltersButton} onPress={resetPlayerFilters}><Text style={s.clearFiltersText}>Reset</Text></TouchableOpacity> : null}</View>
+      <View style={s.playerSearchRow}><TextInput accessibilityLabel="Search league players by name" style={s.playerSearchInput} value={playerSearch} onChangeText={setPlayerSearch} placeholder="Search player name" placeholderTextColor="#839089" />{compactPlayerFilters ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={filtersExpanded ? "Hide player filters" : "Show player filters"} accessibilityState={{ expanded: filtersExpanded }} style={[s.playerFiltersToggle, (filtersExpanded || activePlayerFilterCount > 0) && s.playerFiltersToggleActive]} onPress={() => setFiltersExpanded(value => !value)}><Text style={[s.playerFiltersToggleText, (filtersExpanded || activePlayerFilterCount > 0) && s.playerFiltersToggleTextActive]}>Filters{activePlayerFilterCount ? ` · ${activePlayerFilterCount}` : ""}</Text><Text style={[s.playerFiltersToggleIcon, (filtersExpanded || activePlayerFilterCount > 0) && s.playerFiltersToggleTextActive]}>{filtersExpanded ? "▲" : "▼"}</Text></TouchableOpacity> : null}</View>
+      {compactPlayerFilters ? filtersExpanded ? <View style={s.compactFiltersPanel}>
         <View style={s.compactFilterSection}><Text style={s.compactFilterLabel}>ROLE</Text><View style={s.compactFilterOptions}>{([['ALL', 'All roles', 'All'], ['BA', 'Batters', 'Bat'], ['WK', 'Wicketkeepers', 'WK'], ['AL', 'All-rounders', 'All-R'], ['BO', 'Bowlers', 'Bowl']] as Array<[PlayerRoleFilter, string, string]>).map(([value, label, compactLabel]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: roleFilter === value }} style={[s.compactFilterChip, roleFilter === value && s.playerFilterChipActive]} onPress={() => setRoleFilter(value)}><Text numberOfLines={1} style={[s.compactFilterChipText, roleFilter === value && s.playerFilterChipTextActive]}>{compactLabel}</Text></TouchableOpacity>)}</View></View>
         {ownershipEnabled ? <View style={s.compactFilterSection}><Text style={s.compactFilterLabel}>OWNER</Text><View style={s.compactFilterOptions}>{([['ALL', 'All players', 'All'], ['MINE', 'My players', 'Mine'], ['OTHER', 'Other owners', 'Others'], ['OPEN', 'Open players', 'Open']] as Array<[PlayerOwnershipFilter, string, string]>).map(([value, label, compactLabel]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: ownershipFilter === value }} style={[s.compactFilterChip, ownershipFilter === value && s.playerFilterChipActive]} onPress={() => setOwnershipFilter(value)}><Text numberOfLines={1} style={[s.compactFilterChipText, ownershipFilter === value && s.playerFilterChipTextActive]}>{compactLabel}</Text></TouchableOpacity>)}</View></View> : null}
-        <View style={s.compactFilterSection}><Text style={s.compactFilterLabel}>SORT</Text><View style={s.compactFilterOptions}>{([['NAME', 'Name A–Z', 'A–Z'], ['COST', 'Cost · High first', 'Cost ↓'], ['POINTS', 'Points · High first', 'Points ↓']] as Array<[PlayerSort, string, string]>).map(([value, label, compactLabel]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={`Sort by ${label}`} accessibilityState={{ selected: playerSort === value }} style={[s.compactFilterChip, playerSort === value && s.playerFilterChipActive]} onPress={() => setPlayerSort(value)}><Text numberOfLines={1} style={[s.compactFilterChipText, playerSort === value && s.playerFilterChipTextActive]}>{compactLabel}</Text></TouchableOpacity>)}</View></View>
-      </View> : <>
+        <View style={[s.compactFilterSection, s.compactFilterSectionLast]}><Text style={s.compactFilterLabel}>SORT</Text><View style={s.compactFilterOptions}>{([['NAME', 'Name A–Z', 'A–Z'], ['COST', 'Cost · High first', 'Cost ↓'], ['POINTS', 'Points · High first', 'Points ↓']] as Array<[PlayerSort, string, string]>).map(([value, label, compactLabel]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={`Sort by ${label}`} accessibilityState={{ selected: playerSort === value }} style={[s.compactFilterChip, playerSort === value && s.playerFilterChipActive]} onPress={() => setPlayerSort(value)}><Text numberOfLines={1} style={[s.compactFilterChipText, playerSort === value && s.playerFilterChipTextActive]}>{compactLabel}</Text></TouchableOpacity>)}</View></View>
+      </View> : null : <>
         <View style={s.playerFilterLabelRow}><Text style={s.playerFilterLabel}>ROLE</Text></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>{([['ALL', 'All roles'], ['BA', 'Batters'], ['WK', 'Wicketkeepers'], ['AL', 'All-rounders'], ['BO', 'Bowlers']] as Array<[PlayerRoleFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: roleFilter === value }} style={[s.playerFilterChip, roleFilter === value && s.playerFilterChipActive]} onPress={() => setRoleFilter(value)}><Text style={[s.playerFilterChipText, roleFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView>
         {ownershipEnabled ? <><View style={s.playerFilterLabelRow}><Text style={s.playerFilterLabel}>OWNERSHIP</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>{([['ALL', 'All players'], ['MINE', 'My players'], ['OTHER', 'Other owners'], ['OPEN', 'Open players']] as Array<[PlayerOwnershipFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: ownershipFilter === value }} style={[s.playerFilterChip, ownershipFilter === value && s.playerFilterChipActive]} onPress={() => setOwnershipFilter(value)}><Text style={[s.playerFilterChipText, ownershipFilter === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView></> : null}
         <View style={s.playerFilterLabelRow}><Text style={s.playerFilterLabel}>SORT BY</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.playerFilterRow}>{([['NAME', 'Name A–Z'], ['COST', 'Cost · High first'], ['POINTS', 'Points · High first']] as Array<[PlayerSort, string]>).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="button" accessibilityLabel={`Sort by ${label}`} accessibilityState={{ selected: playerSort === value }} style={[s.playerFilterChip, playerSort === value && s.playerFilterChipActive]} onPress={() => setPlayerSort(value)}><Text style={[s.playerFilterChipText, playerSort === value && s.playerFilterChipTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView>
       </>}
+      {compactPlayerFilters && visibleTeamNames.length ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={allVisibleTeamsExpanded ? "Collapse all shown teams" : "Expand all shown teams"} accessibilityState={{ expanded: allVisibleTeamsExpanded }} style={s.playerFiltersExpandButton} onPress={() => setExpandedTeams(current => allVisibleTeamsExpanded ? current.filter(team => !visibleTeamNames.includes(team)) : Array.from(new Set([...current, ...visibleTeamNames])))}><Text style={s.playerFiltersExpandButtonText}>{allVisibleTeamsExpanded ? "Collapse all shown teams" : `Expand ${visibleTeamNames.length} shown team${visibleTeamNames.length === 1 ? "" : "s"}`}</Text></TouchableOpacity> : null}
     </View>
     <Text style={s.sectionTitle}>Playing teams</Text><View style={s.playingTeamHelp}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>and</Text><IplTeamBadge code={fixture.away} /><Text style={[s.helperInline, s.textMutedAccessible]}>players are shown first.</Text></View>
     {matchTeams.map(renderTeam)}
@@ -2077,6 +2089,15 @@ const s = StyleSheet.create(normalizeUiStyles({
   playerFiltersHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   playerFiltersTitle: { color: "#17352C", fontSize: 14, fontWeight: "900" },
   playerFiltersHint: { color: "#596861", fontSize: 11, marginTop: 2 },
+  playerSearchRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  playerSearchInput: { flex: 1, minWidth: 0, minHeight: 44, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, backgroundColor: UI_TOKENS.colors.card, borderRadius: 12, color: UI_TOKENS.colors.ink, fontSize: 11, fontWeight: "800", paddingHorizontal: 12 },
+  playerFiltersToggle: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, backgroundColor: UI_TOKENS.colors.surface, borderRadius: 12, paddingHorizontal: 11 },
+  playerFiltersToggleActive: { backgroundColor: UI_TOKENS.colors.primary, borderColor: UI_TOKENS.colors.primary },
+  playerFiltersToggleText: { color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900" },
+  playerFiltersToggleTextActive: { color: UI_TOKENS.colors.accent },
+  playerFiltersToggleIcon: { color: UI_TOKENS.colors.primary, fontSize: 8, fontWeight: "900", marginLeft: 6 },
+  playerFiltersExpandButton: { minHeight: 44, borderRadius: 11, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, backgroundColor: UI_TOKENS.colors.surface, alignItems: "center", justifyContent: "center", marginTop: 10 },
+  playerFiltersExpandButtonText: { color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900" },
   resetFiltersButton: { minHeight: 36, borderRadius: 10, borderWidth: 1, borderColor: "#E0B7AA", backgroundColor: "#FFF4F0", paddingHorizontal: 11, alignItems: "center", justifyContent: "center", marginLeft: 8 },
   clearFiltersText: { color: "#A84528", fontSize: 10, lineHeight: 13, fontWeight: "900" },
   playerFilterLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
@@ -2089,6 +2110,7 @@ const s = StyleSheet.create(normalizeUiStyles({
   playerFilterChipTextActive: { color: "#D8FF63", fontWeight: "900" },
   compactFiltersPanel: { borderWidth: 1, borderColor: "#E0E7E3", borderRadius: 13, backgroundColor: "#F8FAF9", overflow: "hidden" },
   compactFilterSection: { minHeight: 48, flexDirection: "row", alignItems: "center", paddingHorizontal: 9, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#E4EAE7" },
+  compactFilterSectionLast: { borderBottomWidth: 0 },
   compactFilterLabel: { width: 51, color: "#66756F", fontSize: 8.5, fontWeight: "900", letterSpacing: 0.75 },
   compactFilterOptions: { flex: 1, minWidth: 0, flexDirection: "row", gap: 5 },
   compactFilterChip: { flex: 1, minWidth: 0, minHeight: 34, borderRadius: 10, borderWidth: 1, borderColor: "#D4DEDA", backgroundColor: "#FFFFFF", paddingHorizontal: 3, alignItems: "center", justifyContent: "center" },
