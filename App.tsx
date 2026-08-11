@@ -1512,9 +1512,8 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     <Text style={s.otherTeamsTitle}>Other teams in Squad</Text><Text style={s.helper}>Tap to add or remove. Other-owner players use a transfer.</Text>
     {otherTeams.map(renderTeam)}
     <View style={[s.validation, errors.length ? s.invalid : s.valid]}><Text style={s.validationTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} to fix` : "Team is valid"}</Text>{errors.map(e => <Text key={e} style={s.validationText}>• {e}</Text>)}{!errors.length && <Text style={s.validationText}>Roles, cost, transfers and optional marker combinations are valid.</Text>}</View>
-    {submitMessage ? <View style={[s.adminMessage, submitMessage === "Your lineup has been saved." && s.adminMessageSuccess]}><Text style={s.adminMessageText}>{submitMessage}</Text></View> : null}
   </ScrollView>{showScrollTop && !showIssues && !submitMessage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Scroll to top" style={s.scrollTopButton} onPress={() => teamScrollRef.current?.scrollTo({ y: 0, animated: true })}><Text style={s.scrollTopArrow}>↑</Text><Text style={s.scrollTopText}>Top</Text></TouchableOpacity> : null}{showIssues && errors.length > 0 && <View style={s.issuePopup}>
-<Text style={s.issuePopupTitle}>Issues to fix</Text>{errors.map(error => <Text key={error} style={s.issuePopupText}>• {error}</Text>)}</View>}{submitMessage ? <View style={[s.submitResult, submitMessage === "Your lineup has been saved." ? s.submitResultSuccess : s.submitResultError]}><Text style={s.submitResultText}>{submitMessage}</Text></View> : null}<View style={s.stickyAction}>
+<Text style={s.issuePopupTitle}>Issues to fix</Text>{errors.map(error => <Text key={error} style={s.issuePopupText}>• {error}</Text>)}</View>}{submitMessage && !showSubmitConfirmation ? <View style={[s.submitResult, submitMessage === "Your lineup has been saved." ? s.submitResultSuccess : s.submitResultError]}><Text style={s.submitResultText}>{submitMessage}</Text></View> : null}<View style={s.stickyAction}>
 <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowIssues(!showIssues)}>
 <Text style={s.stickyMatch}>MATCH {activeMatchNumber} · {fixture.home} VS {fixture.away}</Text>
 <Text style={s.stickyTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} remaining · Tap to ${showIssues ? "hide" : "view"}` : "Ready to submit"}</Text>
@@ -1532,7 +1531,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 <View style={s.futureResetDetails}><Text style={s.futureResetDetail}>• Their transfers and boosters will be refunded.</Text><Text style={s.futureResetDetail}>• This revised XI will carry forward.</Text><Text style={s.futureResetDetail}>• You must submit those matches again in order.</Text></View>
 <View style={s.futureResetActions}><TouchableOpacity style={s.futureResetCancel} onPress={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}><Text style={s.futureResetCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={s.futureResetConfirm} onPress={() => { setShowFutureResetWarning(false); runAction(() => submitXI(true)); }}><Text style={s.futureResetConfirmText}>Reset & resubmit</Text></TouchableOpacity></View>
 </View></View>
-</Modal><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); }}>
+</Modal><Modal visible={showSubmitConfirmation} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); setSubmitMessage(""); }}>
 <View style={s.submitModalOverlay}><View style={s.submitModalCard}>
 <View style={s.submitModalCheck}><Text style={s.submitModalCheckText}>✓</Text></View>
 <Text style={s.submitModalEyebrow}>LINEUP CONFIRMED</Text>
@@ -1542,7 +1541,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
 {futureSubmittedMatches.length ? <View style={s.futureResetSuccess}><Text style={s.futureResetSuccessTitle}>Future submissions reset</Text><Text style={s.futureResetSuccessText}>Matches {futureSubmittedMatches.join(", ")} now carry this revised XI and must be submitted again in order.</Text></View> : null}
 {submissionWarnings.length ? <View style={s.submitModalWarning}><View style={s.submitModalWarningHeading}><View style={s.submitModalWarningIcon}><Text style={s.submitModalWarningIconText}>!</Text></View><Text style={s.submitModalWarningTitle}>Submitted with {submissionWarnings.length} notice{submissionWarnings.length > 1 ? "s" : ""}</Text></View>{submissionWarnings.map(warning => <Text key={warning} style={s.submitModalWarningText}>• {warning}</Text>)}</View> : null}
 <Text style={s.submitModalNote}>{futureSubmittedMatches.length ? "Their transfers and boosters were refunded." : "Your XI is confirmed. You can make changes and resubmit until the lineup locks."}</Text>
-<TouchableOpacity style={s.submitModalButton} onPress={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); }}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
+<TouchableOpacity style={s.submitModalButton} onPress={() => { setShowSubmitConfirmation(false); setFutureSubmittedMatches([]); setSubmitMessage(""); }}><Text style={s.submitModalButtonText}>Done</Text></TouchableOpacity>
 </View></View>
 </Modal></View>;
 }
