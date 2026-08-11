@@ -188,7 +188,6 @@ function MembershipGate({ session }: { session: Session }) {
 
 function FantasyApp({ session, memberships, refreshMemberships }: { session: Session; memberships: DatabaseMembership[]; refreshMemberships: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("Home");
-  const [showNavigationMenu, setShowNavigationMenu] = useState(false);
   const [activeLeagueId, setActiveLeagueId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [captain, setCaptain] = useState("");
@@ -269,38 +268,18 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   return <SafeAreaView style={s.safe}>
     <StatusBar barStyle="light-content" />
     <View style={s.appShell}>
-      <View style={[s.header, s.headerModern]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : "#6D44C5" }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={s.headerIdentity}><Text style={[s.eyebrow, s.eyebrowModern]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={s.headerMetaRow}><Text style={[s.signedInAs, s.signedInAsModern]} numberOfLines={1}>{memberName}</Text>{activeLeague && tab !== "Home" ? <View style={[s.headerPageChip, { backgroundColor: `${tabAccent(tab)}28` }]}><Text style={[s.headerPageChipText, { color: tabAccent(tab) }]}>{tabLabels[tab] ?? tab}</Text></View> : null}</View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={s.livePill}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : null}{activeLeague && tab !== "Home" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open navigation menu" style={s.navigationMenuButton} onPress={() => setShowNavigationMenu(true)}><Text style={s.navigationMenuButtonIcon}>☰</Text><Text style={s.navigationMenuButtonText}>Menu</Text></TouchableOpacity> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
+      <View style={[s.header, s.headerModern]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : "#6D44C5" }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={s.headerIdentity}><Text style={[s.eyebrow, s.eyebrowModern]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={s.headerMetaRow}><Text style={[s.signedInAs, s.signedInAsModern]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={s.livePill}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
+      {activeLeague && tab !== "Home" ? <View style={s.topNavigationShell}><ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} contentContainerStyle={s.topNavigationContent}>{tabs.map(item => {
+        const active = tab === item;
+        const accent = tabAccent(item);
+        const label = tabLabels[item] ?? item;
+        return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.topNavigationItem, active && { backgroundColor: `${accent}16`, borderColor: accent }]} onPress={() => setTab(item)}>
+          <CricketTabIcon item={item} active={active} />
+          <Text style={[s.topNavigationLabel, active && { color: accent }]}>{label}</Text>
+          {active ? <View pointerEvents="none" style={[s.topNavigationIndicator, { backgroundColor: accent }]} /> : null}
+        </TouchableOpacity>;
+      })}</ScrollView></View> : null}
       {leagueContent}
-      <Modal visible={showNavigationMenu} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowNavigationMenu(false)}>
-        <TouchableOpacity activeOpacity={1} style={s.navigationMenuOverlay} onPress={() => setShowNavigationMenu(false)}>
-          <View style={s.navigationMenuCard} onStartShouldSetResponder={() => true}>
-            <View style={s.navigationMenuHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.navigationMenuEyebrow}>LEAGUE MENU</Text>
-                <Text style={s.navigationMenuLeague} numberOfLines={2}>{activeLeague?.name}</Text>
-              </View>
-              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close menu" style={s.navigationMenuClose} onPress={() => setShowNavigationMenu(false)}>
-                <Text style={s.navigationMenuCloseText}>×</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} bounces={false} contentContainerStyle={s.navigationMenuScroll}>
-              {tabs.map(item => {
-                const active = tab === item;
-                const accent = tabAccent(item);
-                const menuLabel = item === "Team" ? "Select XI" : tabLabels[item] ?? item;
-                return <TouchableOpacity key={item} style={[s.navigationMenuItem, active && { backgroundColor: `${accent}18`, borderColor: `${accent}55` }]} onPress={() => { setTab(item); setShowNavigationMenu(false); }}>
-                  <CricketTabIcon item={item} active={active} />
-                  <Text style={[s.navigationMenuItemText, active && { color: accent, fontWeight: "900" }]}>{menuLabel}</Text>
-                  {active ? <View style={[s.navigationMenuCheck, { backgroundColor: accent }]}><Text style={s.navigationMenuCheckText}>✓</Text></View> : <Text style={s.navigationMenuArrow}>›</Text>}
-                </TouchableOpacity>;
-              })}
-              <View style={s.navigationMenuDivider} />
-              <TouchableOpacity style={s.navigationMenuHome} onPress={() => { setTab("Home"); setShowNavigationMenu(false); }}><Text style={s.navigationMenuHomeIcon}>⌂</Text><Text style={s.navigationMenuHomeText}>All leagues</Text></TouchableOpacity>
-              <TouchableOpacity style={s.navigationMenuSignOut} onPress={() => supabase.auth.signOut()}><Text style={s.navigationMenuSignOutText}>Sign out</Text></TouchableOpacity>
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </View>
   </SafeAreaView>;
 }
@@ -2184,31 +2163,12 @@ const s = StyleSheet.create({
   appShell: { flex: 1, width: "100%", maxWidth: 1180, alignSelf: "center", backgroundColor: UI.primaryDeep, shadowColor: "#00150F", shadowOffset: { width: 0, height: 0 }, shadowOpacity: Platform.OS === "web" ? 0.2 : 0, shadowRadius: 24 },
   headerIdentity: { flex: 1, marginLeft: 11, paddingRight: 8, minWidth: 0 },
   headerMetaRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 3 },
-  headerPageChip: { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 3 },
-  headerPageChipText: { fontSize: 9, fontWeight: "900" },
   headerActions: { alignItems: "flex-end", gap: 6, marginLeft: 5 },
-  navigationMenuButton: { minHeight: 38, borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 6 },
-  navigationMenuButtonIcon: { color: "white", fontSize: 17, fontWeight: "900" },
-  navigationMenuButtonText: { color: "white", fontSize: 11, fontWeight: "900" },
-  navigationMenuOverlay: { flex: 1, backgroundColor: "rgba(3,18,15,0.58)", alignItems: "flex-end", paddingTop: Platform.OS === "android" ? 70 : 86, paddingRight: 14 },
-  navigationMenuCard: { width: 286, maxHeight: "88%", backgroundColor: "#FBFCF8", borderRadius: 22, paddingHorizontal: 13, paddingTop: 12, paddingBottom: 10, borderWidth: 1, borderColor: "#D8E1DC", shadowColor: "#000", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.3, shadowRadius: 24, elevation: 18 },
-  navigationMenuHeader: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 4, paddingBottom: 8 },
-  navigationMenuEyebrow: { color: "#75847E", fontSize: 8, fontWeight: "900", letterSpacing: 1.4, marginTop: 2 },
-  navigationMenuLeague: { color: "#102A23", fontSize: 15, lineHeight: 19, fontWeight: "900", marginTop: 3, paddingRight: 6 },
-  navigationMenuClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginLeft: 5 },
-  navigationMenuCloseText: { color: "#52675F", fontSize: 23, lineHeight: 25, fontWeight: "600" },
-  navigationMenuScroll: { paddingBottom: 2 },
-  navigationMenuItem: { minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: "transparent", paddingHorizontal: 9, marginBottom: 3, flexDirection: "row", alignItems: "center", gap: 9 },
-  navigationMenuItemText: { flex: 1, color: "#304A42", fontSize: 12, fontWeight: "800" },
-  navigationMenuCheck: { width: 21, height: 21, borderRadius: 11, alignItems: "center", justifyContent: "center" },
-  navigationMenuCheckText: { color: "white", fontSize: 12, lineHeight: 14, fontWeight: "900" },
-  navigationMenuArrow: { color: "#83918C", fontSize: 24, lineHeight: 24 },
-  navigationMenuDivider: { height: 1, backgroundColor: "#E1E7E3", marginVertical: 8 },
-  navigationMenuHome: { minHeight: 44, borderRadius: 12, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 10 },
-  navigationMenuHomeIcon: { color: "#175B49", fontSize: 21, fontWeight: "900" },
-  navigationMenuHomeText: { color: "#1D4137", fontSize: 13, fontWeight: "900" },
-  navigationMenuSignOut: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: "#E3C6C0", backgroundColor: "#FFF5F2", marginTop: 7, alignItems: "center", justifyContent: "center" },
-  navigationMenuSignOutText: { color: "#8A4035", fontSize: 12, fontWeight: "900" },
+  topNavigationShell: { backgroundColor: "#F8FAF9", borderBottomWidth: 1, borderBottomColor: "#DDE4E0", shadowColor: "#091C16", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 4, zIndex: 5 },
+  topNavigationContent: { flexGrow: 1, paddingHorizontal: 10, paddingVertical: 8, gap: 7 },
+  topNavigationItem: { flexGrow: 1, minHeight: 49, minWidth: 88, borderRadius: 13, borderWidth: 1.5, borderColor: "transparent", paddingHorizontal: 11, paddingVertical: 6, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, position: "relative", overflow: "hidden" },
+  topNavigationLabel: { color: "#5F6F69", fontSize: 10, fontWeight: "800" },
+  topNavigationIndicator: { position: "absolute", left: 10, right: 10, bottom: 0, height: 4, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
   homeIcon: { width: 25, height: 25, alignItems: "center", justifyContent: "flex-end" },
   homeIconRoof: { position: "absolute", top: 1, width: 18, height: 18, backgroundColor: UI.primaryDeep, transform: [{ rotate: "45deg" }], borderRadius: 2 },
   homeIconBody: { width: 20, height: 16, backgroundColor: UI.primaryDeep, alignItems: "center", justifyContent: "flex-end" },
@@ -2229,7 +2189,7 @@ const s = StyleSheet.create({
   tabActive: { backgroundColor: "#FFFFFF", borderRadius: 17, shadowColor: "#111827", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.1, shadowRadius: 7, elevation: 3 },
   tabIndicator: { position: "absolute", bottom: 0, width: 32, height: 4, borderRadius: 2, backgroundColor: UI.primary },
   navIconShell: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center", position: "relative" },
-  navIconShellActive: { transform: [{ translateY: -3 }, { scale: 1.05 }], shadowColor: "#111827", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 5 },
+  navIconShellActive: { shadowColor: "#111827", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4, elevation: 3 },
   navIconGlyph: { fontSize: 20, lineHeight: 23, fontWeight: "900", textAlign: "center" },
   navIconGlyphSmall: { fontSize: 12, letterSpacing: -0.5 },
   navIconCalendarTop: { position: "absolute", top: 8, left: 9, right: 9, height: 2, borderRadius: 1, opacity: 0.9 },
