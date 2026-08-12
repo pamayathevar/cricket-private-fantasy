@@ -38,14 +38,22 @@ const {
   firstMissingOpenPriorMatch,
   fixtureOwnerAction,
   fixtureOwnerActionLabel,
+  fixtureStripStatusLabel,
   hasSubmittedInTransferPeriod,
   isFreeTransferSubmission,
   isLineupLocked,
+  isNoResultFixture,
   isPowerRoleRestricted,
   isSuperTransferAvailable,
   lineupSubmitActionLabel,
   selectSingleMatchBooster,
 } = loadTypeScriptModule("lineupWorkflowRules.ts");
+
+const {
+  formatOversFromBalls,
+  latestPublishedPlayerPoints,
+  scorecardDismissalLabel,
+} = loadTypeScriptModule("scorecardRules.ts");
 
 const blankStats = {
   runs: 0,
@@ -70,6 +78,29 @@ const blankStats = {
 };
 
 const tests = [
+  ["scorecard overs preserve cricket's base-six ball notation", () => {
+    assert.equal(formatOversFromBalls(0), "0.0");
+    assert.equal(formatOversFromBalls(17), "2.5");
+    assert.equal(formatOversFromBalls(24), "4.0");
+  }],
+  ["scorecards use only the latest published calculation for each player", () => {
+    const rows = [
+      { player_id: "p1", calculation_version: 1, published_at: "2026-08-01", total_points: 10 },
+      { player_id: "p1", calculation_version: 2, published_at: "2026-08-02", total_points: 20 },
+      { player_id: "p2", calculation_version: 1, published_at: null, total_points: 99 },
+      { player_id: "p3", calculation_version: 1, published_at: "2026-08-01", total_points: 30 },
+    ];
+    const latest = latestPublishedPlayerPoints(rows);
+    assert.equal(latest.length, 2);
+    assert.equal(latest.find(row => row.player_id === "p1")?.total_points, 20);
+    assert.equal(latest.find(row => row.player_id === "p3")?.total_points, 30);
+  }],
+  ["scorecards show only verified dismissal text and never infer it", () => {
+    assert.equal(scorecardDismissalLabel({ dismissalText: " c Phil Salt b Jacob Duffy " }), "c Phil Salt b Jacob Duffy");
+    assert.equal(scorecardDismissalLabel({ how_out: "run out (Virat Kohli)" }), "run out (Virat Kohli)");
+    assert.equal(scorecardDismissalLabel({ not_out: true }), "not out");
+    assert.equal(scorecardDismissalLabel({ dismissal: "" }), "");
+  }],
   ["batting includes runs, boundary bonuses and the run milestone", () => {
     const points = calculatePlayerPoints({
       ...blankStats,
@@ -222,6 +253,12 @@ const tests = [
     ];
     assert.equal(firstMissingOpenPriorMatch(fixtures, new Set(), Date.parse("2026-08-09T12:00:00.000Z")), null);
   }],
+  ["abandoned and cancelled fixtures are both No Result", () => {
+    assert.equal(isNoResultFixture("abandoned"), true);
+    assert.equal(isNoResultFixture("cancelled"), true);
+    assert.equal(isNoResultFixture("completed"), false);
+    assert.equal(isNoResultFixture(null), false);
+  }],
   ["the first actual submission in a transfer period is free", () => {
     const period = { start_match_number: 1, end_match_number: 35, first_match_free: true };
     assert.equal(isFreeTransferSubmission({ period, hasPriorPeriodLineup: false, firstMissingPriorMatch: null, loading: false }), true);
@@ -234,6 +271,15 @@ const tests = [
     assert.equal(countLineupChanges(["A", "B", "C", "D"], previous), 0);
     const ownedPlayers = new Set(["E"]);
     assert.equal(countLineupChanges(["A", "B", "E", "F"], previous, player => !ownedPlayers.has(player)), 1);
+  }],
+  ["a locked XI after No Result is rebased against the last valid XI", () => {
+    const match3 = new Set(["A", "B", "C", "D"]);
+    const voidMatch4 = new Set(["A", "B", "E", "F"]);
+    const lockedMatch5 = ["A", "B", "E", "G"];
+    assert.equal(countLineupChanges(lockedMatch5, voidMatch4), 1);
+    assert.equal(countLineupChanges(lockedMatch5, match3), 2);
+    const ownedPlayers = new Set(["E"]);
+    assert.equal(countLineupChanges(lockedMatch5, match3, player => !ownedPlayers.has(player)), 1);
   }],
   ["a submitted lineup is detected only inside the active transfer period", () => {
     const fixtures = [
@@ -254,6 +300,12 @@ const tests = [
     assert.equal(lineupSubmitActionLabel({ hasSavedLineup: false, unchanged: false }), "Submit XI");
     assert.equal(lineupSubmitActionLabel({ hasSavedLineup: true, unchanged: true }), "Submitted ✓");
     assert.equal(lineupSubmitActionLabel({ hasSavedLineup: true, unchanged: false }), "Resubmit XI");
+  }],
+  ["fixture submission badges do not depend on the active match", () => {
+    const submittedFixtures = new Set(["match-3"]);
+    const activeFixtureId = "match-4";
+    assert.equal(fixtureStripStatusLabel({ hasSubmission: submittedFixtures.has("match-3") }), "Submitted");
+    assert.equal(fixtureStripStatusLabel({ hasSubmission: submittedFixtures.has(activeFixtureId) }), "XI carried · booster empty");
   }],
   ["available fixtures offer Submit XI or Edit XI based on submission state", () => {
     const available = { availableForSelection: true, locked: false, completed: false, published: false };

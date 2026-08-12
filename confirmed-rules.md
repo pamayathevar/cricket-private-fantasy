@@ -25,7 +25,7 @@ The live-auction module is temporarily disabled in the mobile navigation and def
 - Submitted XIs are private before match start. At the scheduled start, all locked owner lineups become visible to every owner in the private league.
 - Each match permits one optional Impact player, marked as either BAI or BOI. Only the selected batting or bowling discipline scores at 2×; fielding and other bonuses do not score for that Impact calculation. The Impact player cannot be captain or vice-captain.
 - BAI/BOI and C/VC are mutually exclusive on the same player. A player marked C or VC cannot receive BAI or BOI, and an Impact player cannot receive C or VC.
-- Abandoned matches score zero and return applicable transfers.
+- A fixture marked abandoned or cancelled is settled as **No Result**: owners score zero with no match rank, its transfers and booster usage are returned, and its XI does not carry forward. For each owner who submitted that fixture, every later submitted XI that is still unlocked is reset. A later locked XI is never changed, but the first surviving locked XI's transfer charge is recalculated against the latest valid XI before the No Result fixture; that locked XI then becomes the normal carry-forward baseline. For example, if Match 4 is void after Match 5 locks, Match 5's players stay fixed, its transfers are recalculated from Match 3, and later submissions carry forward from Match 5. If no later XI has locked, the next submission carries forward from Match 3. Owners who skipped Match 4 are unaffected.
 
 ## Confirmed boosters
 

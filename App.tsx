@@ -10,7 +10,7 @@ import { ipl2026Members } from "./leagueMembers";
 import { supabase } from "./supabase";
 import { IplTeamBadge, OwnerBadge, SpecialPlayerBadge, ProductionDashboard, ProductionHistory, ProductionMatches, ProductionPlayerSquad, ProductionRanking, ProductionSquads, teamBadge } from "./SupabaseScreens";
 import { userActionError } from "./errorMessages";
-import { boosterForFixture, countLineupChanges, firstMissingOpenPriorMatch, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
+import { boosterForFixture, countLineupChanges, firstMissingOpenPriorMatch, fixtureStripStatusLabel, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isNoResultFixture, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
 import { CARD_SHADOW, UI_TOKENS, normalizeUiStyles } from "./uiTokens";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Help" | "Admin";
@@ -327,7 +327,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Help" ? <HelpScreen openTeam={() => setTab("Team")} openFixtures={() => setTab("Matches")} openHistory={() => setTab("History")} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView key={`ranking:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView key={`players:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView key={`squads:${leagueDatabaseId}`} contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView key={`rules:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} /> : tab === "Help" ? <HelpScreen openTeam={() => setTab("Team")} openFixtures={() => setTab("Matches")} openHistory={() => setTab("History")} openRules={() => setTab("Admin")} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView key={`ranking:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView key={`players:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} /></ScrollView> : tab === "Squads" ? <ScrollView key={`squads:${leagueDatabaseId}`} contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView key={`rules:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
   return <SafeAreaView edges={showMobileNavigation ? ["top", "left", "right"] : ["top", "bottom", "left", "right"]} style={s.safe}>
     <StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} />
     <View style={s.appShell}>
@@ -687,79 +687,181 @@ function OwnerTabContent({ leagueId, currentOwner, roster }: { leagueId: string;
   </>;
 }
 
-type HelpTopicId = "navigation" | "lineup" | "transfers" | "roles" | "submission" | "history";
+type HelpTopicId = "navigation" | "lineup" | "ownership" | "transfers" | "submission" | "roles" | "boosters" | "special" | "scoring" | "results" | "noresult" | "defaults" | "administration";
+type HelpTopic = { id: HelpTopicId; icon: string; title: string; summary: string; bullets: string[] };
 
-const helpTopics: Array<{ id: HelpTopicId; icon: string; title: string; summary: string; bullets: string[] }> = [
+const helpTopics: HelpTopic[] = [
   {
-    id: "navigation", icon: "⌂", title: "Find your way around", summary: "What each main tab is for.",
+    id: "navigation", icon: "⌂", title: "App navigation", summary: "Know where to build, inspect and follow your team.",
     bullets: [
-      "League is your match sheet: choose a fixture, build your XI and submit it.",
-      "Ranking shows the league table; Results shows submitted teams and published points.",
-      "Fixtures shows match times and status. Player Pool and Owner Squads explain availability and ownership.",
-      "Rules contains the live league configuration. On mobile, Player Pool, Owner Squads, Help and Rules are under More.",
+      "League is the main match sheet: choose a fixture, build the Selected XI, review transfers and submit.",
+      "Ranking shows Overall and phase tables. Results contains match records, revealed owner XIs and published point breakdowns.",
+      "Fixtures shows match time, lock/status and your submission state. Player Pool shows eligibility; Owner Squads shows auction ownership.",
+      "Rules is the live, league-specific configuration. On mobile, Player Pool, Owner Squads, Help and Rules are under More.",
     ],
   },
   {
-    id: "lineup", icon: "XI", title: "Build your Selected XI", summary: "Pick players, stay within the rules and set match roles.",
+    id: "lineup", icon: "XI", title: "Selected XI and eligibility", summary: "Build a valid team using the rules effective for that fixture.",
     bullets: [
-      "Choose an upcoming fixture, then add players until Selected XI shows 11/11.",
-      "The live validation panel checks budget, role mix, team limits and other league rules.",
-      "Tap a selected player to edit C, VC, BAI or BOI. Use × only when you want to remove that player.",
-      "The lineup summary shows cost, ownership mix, role mix and transfers before you submit.",
+      "Select the required number of active, eligible players. This league normally uses 11 players and a ₹100m limit, but the values displayed on the match sheet are authoritative.",
+      "The XI must satisfy the configured minimum Batters (BA), Bowlers (BO), Wicketkeepers (WK), All-rounders (AL), and maximum players from one IPL team.",
+      "The app validates budget, roles, team limits, ownership restrictions, markers and boosters before saving. An invalid submission is rejected and the last valid XI remains saved.",
+      "Tap a Selected XI row to find and edit that player. Use × only to remove the player. The summary shows cost, ownership, role mix and transfer use.",
+      "Withdrawn or deactivated players cannot be selected for future unlocked matches. Official replacement players enter as active Open Players; historical XIs and scores remain unchanged.",
     ],
   },
   {
-    id: "transfers", icon: "⇄", title: "Understand transfers", summary: "See what changes are charged and where the allowance goes.",
+    id: "ownership", icon: "◎", title: "Mine, Open and other owners", summary: "Understand availability, transfer charging and borrowed-player scoring.",
     bullets: [
-      "Match Transfers compares this XI with your previous submitted XI.",
-      "Period Transfers shows transfers used against the allowance for the current period.",
-      "Using one of your own players is not charged as a transfer. The first submission in a period may also be free if the league enables it.",
-      "Super Transfer removes the transfer limit for one match. The live Rules page is authoritative for your league.",
+      "Mine means the player belongs to your auction squad. Adding one of your own players is not charged as an incoming transfer.",
+      "Open means no league owner currently owns the player. Other owners' eligible players and Open Players can be selected when the league format permits it.",
+      "In an all-open league, ownership and auction prices are hidden; every eligible player is available, but configured transfers still apply to lineup changes.",
+      "In a Unique-player league, using another owner's player deducts the configured greater-of percentage or minimum fee from that player's contribution. The current default is the greater of 30% or 15 points, so a zero contribution can become −15.",
+      "In a Royalty league, the borrower keeps the full credited contribution. The owning player receives a separate royalty credit; using your own player never creates royalty.",
     ],
   },
   {
-    id: "roles", icon: "★", title: "Roles and boosters", summary: "Use multipliers without accidentally combining restricted roles.",
+    id: "transfers", icon: "⇄", title: "Transfers and periods", summary: "How Match Transfers and the period allowance are calculated.",
     bullets: [
-      "C and VC multiply a player's full score; the usual values are 2× and 1.5×.",
-      "BAI doubles batting points only. BOI doubles bowling points only.",
-      "C or VC cannot be combined with BAI or BOI on the same player.",
-      "3X triples one player's impact, 2UP doubles the final match total and SUP-TR enables unlimited transfers for that match.",
+      "Match Transfers counts chargeable players entering this XI compared with your previous valid submitted XI—not the number of players removed.",
+      "Your own players are excluded from the charge. Open/other-owner additions are charged when the league uses ownership; all incoming changes are chargeable in an all-open league.",
+      "Period Transfers is the total used inside the current configured match range. Each period has its own allowance and cannot overlap another period.",
+      "If the period enables a free first submission, your first actual valid XI in that period is free—even if an earlier match in the period was missed or became No Result.",
+      "An earlier scheduled match that is still open must be submitted first. A missed match whose lock has passed is skipped and does not permanently block later submission.",
+      "SUP-TR removes the match transfer limit once for that match. Its submitted XI still becomes the normal carry-forward baseline.",
     ],
   },
   {
-    id: "submission", icon: "✓", title: "Submit, resubmit and lock", summary: "Know what Saved means and what changes before lock.",
+    id: "submission", icon: "✓", title: "Submit, carry forward and resubmit", summary: "What SAVED means and how future match sheets are affected.",
     bullets: [
-      "Submit XI saves a valid team. SAVED is a status, not a button—edit a player to enable resubmission.",
-      "Before lock, changed teams show Resubmit XI. Review the transfer count and warning before confirming.",
-      "Resubmitting an earlier match resets later submitted lineups, refunds their transfers and boosters, and carries the revised XI forward. Submit those later matches again.",
-      "Once a match locks, its XI cannot be changed.",
+      "Submit XI stores a valid match sheet. SAVED is confirmation, not a button; change a player or match role and it becomes Resubmit XI.",
+      "The latest valid submitted XI automatically starts the next match. You can edit that carried team until the next match locks.",
+      "A booster never carries forward. Every new fixture begins with no booster, even when all 11 players carry forward.",
+      "Resubmitting an earlier unlocked match resets every later submitted XI that is still unlocked. Their transfers and boosters are refunded, and those matches must be submitted again in order.",
+      "Normal resubmission cannot change an earlier XI once a later submitted XI has locked. No Result settlement is the special exception: it preserves the locked later XI and recalculates its transfer charge.",
+      "Locking uses the fixture's configured server time. After lock, the XI, C/VC, BAI/BOI and booster cannot be edited.",
     ],
   },
   {
-    id: "history", icon: "◷", title: "Follow results", summary: "Review fixtures, revealed teams, scores and standings.",
+    id: "roles", icon: "★", title: "C, VC, BAI and BOI", summary: "Optional match roles and the combinations that are blocked.",
     bullets: [
-      "Fixtures shows whether a match is upcoming, locked or completed.",
-      "Other owners' lineups stay hidden before lock when lineup privacy is enabled.",
-      "Results shows submitted teams and their scoring details after the league publishes them.",
-      "Ranking updates from published match points. Use the phase selector to compare the relevant period.",
+      "Captain (C), Vice-Captain (VC), Batting Impact (BAI) and Bowling Impact (BOI) are optional. A valid XI can be submitted without any of them.",
+      "C multiplies the player's full eligible contribution; VC uses the configured smaller multiplier. The common values are 2× and 1.5×.",
+      "BAI multiplies batting points only. BOI multiplies bowling points only. Fielding points and unrelated bonuses are not included in that Impact calculation.",
+      "The same player cannot combine C or VC with BAI or BOI. Captain and Vice-Captain must be different players, and the Impact player must be different from both.",
+      "Unique or automatically Unique players may restrict C, VC, BAI, BOI or 3X for a borrowing owner. The owning owner can use the permitted power roles.",
+    ],
+  },
+  {
+    id: "boosters", icon: "⚡", title: "3X, 2UP and Super Transfer", summary: "Limits, multiplier order and carry-forward behavior.",
+    bullets: [
+      "Only one booster can be active in a match. 3X, 2UP and SUP-TR cannot be combined.",
+      "3X targets one selected player and is normally available once across the league. It stacks multiplicatively: C+3X = 6×, VC+3X = 4.5×, and BAI/BOI+3X = 6× for that discipline.",
+      "2UP doubles the owner's final match total after player contributions and ownership adjustments. IPL 2026 permits one use in Phase 1 and one in Phase 2; it is unavailable in Phase 3/Playoffs.",
+      "SUP-TR is normally available once across all phases and permits unlimited transfers for one match. It changes transfer charging only; lineup and Unique restrictions still apply.",
+      "Boosters apply only to the submitted fixture and never carry forward. Resetting an unlocked XI or settling its fixture as No Result returns that fixture's booster usage.",
+      "Availability shown on the match sheet and Rules page is authoritative because future leagues may configure different phase limits.",
+    ],
+  },
+  {
+    id: "special", icon: "◆", title: "Unique, Marquee and Royalty rules", summary: "Phase selections, borrowing restrictions and automatic Unique status.",
+    bullets: [
+      "A Unique-player league normally requires two owned Unique Players per owner per phase. Other owners may still select them, but configured power roles are restricted and the borrowing fee applies.",
+      "A Royalty league normally requires two owned Marquee Players per phase. Regular borrowed players use the configured percentage/minimum royalty; Marquee Players use the higher configured rate. Royalty is extra owner credit, not a borrower deduction.",
+      "Royalty is calculated separately for each borrower from that borrower's credited contribution after applicable C/VC, BAI/BOI, 3X or 2UP effects. It cannot be negative, and the configured minimum can apply even to zero or negative player points.",
+      "In Royalty mode, locked-XI appearances accumulate across the league. With the default threshold of 48, the 49th appearance makes the player automatically Unique starting with the next match; locked/published matches are never recalculated.",
+      "Automatic Unique does not remove Marquee status. A Marquee player can retain the Marquee royalty rate while borrower power roles are restricted.",
+      "A later phase's selection window opens when the previous phase starts and normally closes 24 hours before the phase's first match. If no valid change is submitted, the prior selections carry forward.",
+      "The final/playoff phase does not allow a new selection. Injured, withdrawn or deactivated Unique/Marquee Players cannot be replaced mid-phase unless the live Rules explicitly allow it.",
+    ],
+  },
+  {
+    id: "scoring", icon: "＋", title: "Points and calculation order", summary: "Where totals come from and why published history does not change.",
+    bullets: [
+      "Player totals combine the live batting, bowling, fielding and bonus rules, including configured milestones, strike-rate and economy rules.",
+      "C/VC multiply the eligible full player contribution. BAI/BOI multiply only the selected discipline. 3X applies to its target; 2UP doubles the final owner total.",
+      "Other-player deductions or royalty are calculated under the league's active format and displayed as explainable adjustments in Results.",
+      "Negative player and owner totals are valid when penalties or minimum other-player fees exceed positive points.",
+      "Scores are calculated, reviewed and then published. Ranking changes only from published scores; a correction uses an explicit audited workflow.",
+      "Every match retains the playing and points-rule version effective for it. Later rule changes never silently rewrite a locked or published result.",
+    ],
+  },
+  {
+    id: "results", icon: "1·2", title: "Privacy, Results and Ranking", summary: "When teams become visible and how tables are built.",
+    bullets: [
+      "You can always see your own submitted XI. Other owners' XIs remain private before lock when lineup privacy is enabled.",
+      "At lock, eligible submitted owner XIs become visible to active league members. Results shows the owner, match, transfer record, players and published point breakdown.",
+      "Overall Ranking includes every published scored match. Phase rankings include only fixtures assigned to that configured phase.",
+      "A No Result fixture gives no match rank and is excluded from matches-scored counts, even though its zero-point settlement remains in the audit/history record.",
+      "Rank and points-behind values update only after score publication or an audited correction.",
+    ],
+  },
+  {
+    id: "noresult", icon: "↺", title: "Cancelled match / No Result", summary: "Refunds, carry-forward resets and the locked-next-match edge case.",
+    bullets: [
+      "After an admin marks an abandoned or cancelled fixture as No Result, owners receive zero points, no match rank, and a refund of that fixture's charged transfers and booster.",
+      "The No Result XI is cancelled and cannot carry forward. For owners who submitted it, every later submitted XI that is still unlocked is removed and its transfers/booster are also refunded.",
+      "If no later XI has locked, the next match starts from the latest valid XI before the No Result fixture.",
+      "If the first later match is already locked, its players, roles and booster stay exactly as submitted. Its old transfer charge is replaced by the difference from the latest valid pre-void XI.",
+      "Example: Match 4 becomes No Result after Match 5 locks. Match 4 usage is refunded; Match 5 stays fixed but its transfers are recalculated Match 3→Match 5. Match 5 then carries forward normally.",
+      "Owners who skipped the No Result fixture are not reset or recharged because their lineup chain never depended on that XI.",
+      "Settlement is one audited admin transaction and is safe against an accidental repeated tap.",
+    ],
+  },
+  {
+    id: "defaults", icon: "26", title: "Current IPL 2026 defaults", summary: "The confirmed starting values for this competition.",
+    bullets: [
+      "Auction budget is ₹100m per owner and the auction squad capacity is 30 players. A match XI uses 11 players with a ₹100m lineup budget plus the live role and IPL-team limits.",
+      "Phase 1 is Matches 1–35, Phase 2 is Matches 36–70, and Phase 3 / Playoffs is Matches 71–74.",
+      "League-stage transfer allowance is 105 for Matches 1–70. Playoff allowance is 4 for Matches 71–74. In each period, the owner's first actual valid submission is free.",
+      "Captain is 2×, Vice-Captain is 1.5×, and BAI/BOI is 2× for the selected discipline under the confirmed starting rules.",
+      "3X is available once across all phases. 2UP is available once in Phase 1 and once in Phase 2, but not Phase 3. SUP-TR is available once across all phases.",
+      "These are starting defaults only. If the live Rules page shows a newer version effective for your fixture, the live value wins.",
+    ],
+  },
+  {
+    id: "administration", icon: "≡", title: "Live rules and administration", summary: "What can vary by league and when rule changes take effect.",
+    bullets: [
+      "League format, ownership, lineup limits, points, phases, transfer periods, boosters, Unique/Marquee and royalty settings are league-specific—not global constants.",
+      "Only an active league administrator can publish configuration changes or settle scoring. Owners have read-only access to the active Rules.",
+      "Playing, points and special-player changes create a new version with an Effective from match. Started, locked and published fixtures retain their prior version.",
+      "Active phase ranges cannot overlap. Transfer periods must cover the configured match sequence without overlaps or gaps.",
+      "The values shown on the selected fixture's League sheet and live Rules page override generic examples in this guide.",
     ],
   },
 ];
 
-function HelpScreen({ openTeam, openFixtures, openHistory }: { openTeam: () => void; openFixtures: () => void; openHistory: () => void }) {
+function HelpScreen({ openTeam, openFixtures, openHistory, openRules }: { openTeam: () => void; openFixtures: () => void; openHistory: () => void; openRules: () => void }) {
   const [expandedTopic, setExpandedTopic] = useState<HelpTopicId | null>("lineup");
+  const [ruleSearch, setRuleSearch] = useState("");
   const quickStart = [
     ["1", "Choose a fixture", "Open League and select an upcoming match."],
     ["2", "Build your XI", "Select 11 valid players within the live rules."],
     ["3", "Set match roles", "Add C, VC or optional impact roles and boosters."],
     ["4", "Submit before lock", "Review transfers, then save your match sheet."],
   ];
-  const faqs = [
+  const faqs: Array<[string, string]> = [
     ["Why is SAVED not tappable?", "SAVED confirms that the current XI is stored. Change a player or role and it becomes a Resubmit XI action."],
-    ["What happens if I resubmit an earlier match?", "Any later submitted lineups are reset, their charged transfers and boosters are refunded, and the revised XI is carried forward. You must submit those later matches again."],
+    ["Why is my transfer count lower than the number of player changes?", "Match Transfers counts chargeable incoming players. Your own players are not charged in an ownership league, and a free first XI or SUP-TR can make the displayed charge zero."],
+    ["What happens if I resubmit an earlier match?", "Every later submitted XI that is still unlocked is reset, its charged transfers and booster are refunded, and the revised XI carries forward. Submit those later matches again in order."],
+    ["Can I resubmit when a later match has already locked?", "No. Normal resubmission cannot rewrite a chain that already has a locked later XI. The No Result admin workflow is the special exception and changes only the transfer baseline—not the locked players."],
+    ["What happens when a match has No Result?", "The match scores zero with no winner and its usage is returned. If the next match is already locked, its team stays fixed and is recharged against the last valid team before the void match. That locked team then carries forward normally. Other later unlocked XIs must be submitted again."],
+    ["What if I did not submit the cancelled match?", "Your later XI and transfer records are untouched. No Result resets/rebases only owners whose lineup chain used the void fixture."],
+    ["Does a booster carry to the next match?", "No. Players may carry forward, but every fixture starts with no booster selected. A booster must be explicitly selected and submitted for that match."],
+    ["Why did an other-owner player score negative points?", "In a Unique/fee league, the configured minimum borrowing fee may apply even when the player's contribution is zero. With a 15-point minimum, zero becomes −15."],
     ["When can other owners see my team?", "When lineup privacy is enabled, other owners cannot see it until that fixture locks."],
     ["Why can’t I submit a later fixture?", "An earlier open fixture may need a submitted XI first. Open the indicated prior match and submit it before continuing."],
+    ["Can an injured Unique or Marquee Player be replaced immediately?", "Not under the confirmed default. The player remains fixed for the current phase and can change only in the next eligible selection window; the playoff phase does not allow changes."],
+    ["Which rule value should I trust?", "Trust the values shown on the selected match sheet and live Rules page. This guide explains behavior, but league and fixture-effective configuration controls the actual limits."],
   ];
+  const normalizedSearch = ruleSearch.trim().toLowerCase();
+  const matchingTopics = normalizedSearch
+    ? helpTopics.filter(topic => [topic.title, topic.summary, ...topic.bullets].some(value => value.toLowerCase().includes(normalizedSearch)))
+    : helpTopics;
+  const matchingFaqs = normalizedSearch
+    ? faqs.filter(([question, answer]) => `${question} ${answer}`.toLowerCase().includes(normalizedSearch))
+    : faqs;
+  const hasRuleMatches = matchingTopics.length > 0 || matchingFaqs.length > 0;
   return <ScrollView contentContainerStyle={[s.content, s.pageSurface, s.helpContent]}>
     <View style={s.helpHero}>
       <View style={s.helpHeroGlow} />
@@ -770,6 +872,7 @@ function HelpScreen({ openTeam, openFixtures, openHistory }: { openTeam: () => v
       <View style={s.helpHeroActions}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open League match sheet" style={s.helpPrimaryAction} onPress={openTeam}><Text style={s.helpPrimaryActionText}>Open League sheet</Text></TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="View fixtures" style={s.helpSecondaryAction} onPress={openFixtures}><Text style={s.helpSecondaryActionText}>View fixtures</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="View live league rules" style={s.helpSecondaryAction} onPress={openRules}><Text style={s.helpSecondaryActionText}>View live rules</Text></TouchableOpacity>
       </View>
     </View>
 
@@ -780,28 +883,30 @@ function HelpScreen({ openTeam, openFixtures, openHistory }: { openTeam: () => v
     <View style={s.helpQuickGrid}>{quickStart.map(([number, title, detail]) => <View key={number} style={s.helpQuickCard}><View style={s.helpQuickNumber}><Text style={s.helpQuickNumberText}>{number}</Text></View><View style={s.helpQuickCopy}><Text style={s.helpQuickTitle}>{title}</Text><Text style={s.helpQuickText}>{detail}</Text></View></View>)}</View>
 
     <View style={s.helpSectionHeading}>
-      <Text accessibilityRole="header" style={s.helpSectionTitle}>How the app works</Text>
-      <Text style={s.helpSectionSubtitle}>Tap a topic to expand it</Text>
+      <Text accessibilityRole="header" style={s.helpSectionTitle}>League rulebook</Text>
+      <Text style={s.helpSectionSubtitle}>Search a rule or tap a topic to expand it</Text>
     </View>
-    <View style={s.helpTopicList}>{helpTopics.map(topic => {
-      const expanded = expandedTopic === topic.id;
+    <View style={s.helpSearchShell}><Text style={s.helpSearchIcon}>⌕</Text><TextInput accessibilityLabel="Search help and league rules" value={ruleSearch} onChangeText={setRuleSearch} placeholder="Search transfers, No Result, 3X…" placeholderTextColor="#89968F" autoCapitalize="none" autoCorrect={false} returnKeyType="search" style={s.helpSearchInput} />{ruleSearch ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Clear rule search" style={s.helpSearchClear} onPress={() => setRuleSearch("")}><Text style={s.helpSearchClearText}>×</Text></TouchableOpacity> : null}</View>
+    <View style={s.helpSearchMeta}><Text style={s.helpSearchMetaText}>{normalizedSearch ? `${matchingTopics.length} rule section${matchingTopics.length === 1 ? "" : "s"} · ${matchingFaqs.length} answer${matchingFaqs.length === 1 ? "" : "s"}` : `${helpTopics.length} rule sections · league values remain configurable`}</Text></View>
+    {hasRuleMatches ? <View style={s.helpTopicList}>{matchingTopics.map(topic => {
+      const expanded = normalizedSearch ? true : expandedTopic === topic.id;
       return <View key={topic.id} style={[s.helpTopicCard, expanded && s.helpTopicCardExpanded]}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${topic.title}. ${expanded ? "Collapse" : "Expand"}`} accessibilityState={{ expanded }} style={s.helpTopicButton} onPress={() => setExpandedTopic(current => current === topic.id ? null : topic.id)}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${topic.title}. ${expanded ? "Collapse" : "Expand"}`} accessibilityState={{ expanded }} style={s.helpTopicButton} onPress={() => { if (normalizedSearch) setRuleSearch(""); setExpandedTopic(current => current === topic.id && !normalizedSearch ? null : topic.id); }}>
           <View style={s.helpTopicIcon}><Text style={s.helpTopicIconText}>{topic.icon}</Text></View>
           <View style={s.helpTopicHeading}><Text style={s.helpTopicTitle}>{topic.title}</Text><Text style={s.helpTopicSummary}>{topic.summary}</Text></View>
           <Text style={s.helpTopicChevron}>{expanded ? "−" : "+"}</Text>
         </TouchableOpacity>
         {expanded ? <View style={s.helpTopicBody}>{topic.bullets.map((bullet, index) => <View key={`${topic.id}:${index}`} style={s.helpBulletRow}><View style={s.helpBulletDot} /><Text style={s.helpBulletText}>{bullet}</Text></View>)}</View> : null}
       </View>;
-    })}</View>
+    })}</View> : <View style={s.helpNoResults}><View style={s.helpNoResultsIcon}><Text style={s.helpNoResultsIconText}>?</Text></View><Text style={s.helpNoResultsTitle}>No rule found</Text><Text style={s.helpNoResultsText}>Try “transfer”, “No Result”, “3X”, “Marquee”, “privacy” or another shorter term.</Text><TouchableOpacity accessibilityRole="button" style={s.helpNoResultsAction} onPress={() => setRuleSearch("")}><Text style={s.helpNoResultsActionText}>Clear search</Text></TouchableOpacity></View>}
 
-    <View style={s.helpSectionHeading}>
+    {matchingFaqs.length ? <><View style={s.helpSectionHeading}>
       <Text accessibilityRole="header" style={s.helpSectionTitle}>Common questions</Text>
       <Text style={s.helpSectionSubtitle}>Answers to the moments that cause the most confusion</Text>
     </View>
-    {faqs.map(([question, answer]) => <View key={question} style={s.helpFaqCard}><View style={s.helpFaqMark}><Text style={s.helpFaqMarkText}>?</Text></View><View style={s.helpFaqCopy}><Text style={s.helpFaqQuestion}>{question}</Text><Text style={s.helpFaqAnswer}>{answer}</Text></View></View>)}
+    {matchingFaqs.map(([question, answer]) => <View key={question} style={s.helpFaqCard}><View style={s.helpFaqMark}><Text style={s.helpFaqMarkText}>?</Text></View><View style={s.helpFaqCopy}><Text style={s.helpFaqQuestion}>{question}</Text><Text style={s.helpFaqAnswer}>{answer}</Text></View></View>)}</> : null}
 
-    <View style={s.helpRuleNote}><Text style={s.helpRuleNoteTitle}>Your live league rules come first</Text><Text style={s.helpRuleNoteText}>Transfer allowances, multipliers, budgets and role limits can vary by league or phase. The values shown in League and Rules are authoritative.</Text></View>
+    <View style={s.helpRuleNote}><Text style={s.helpRuleNoteTitle}>Your live league rules come first</Text><Text style={s.helpRuleNoteText}>Transfer allowances, multipliers, budgets, phase ranges, booster limits and special-player settings can vary. The selected fixture's League sheet and Rules page are authoritative.</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Open live league rules" style={s.helpRuleNoteAction} onPress={openRules}><Text style={s.helpRuleNoteActionText}>Open live rules ›</Text></TouchableOpacity></View>
     <View style={s.helpFooterActions}>
       <TouchableOpacity accessibilityRole="button" style={s.helpFooterPrimary} onPress={openTeam}><Text style={s.helpFooterPrimaryText}>Build my XI</Text></TouchableOpacity>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open Results" style={s.helpFooterSecondary} onPress={openHistory}><Text style={s.helpFooterSecondaryText}>Open Results</Text></TouchableOpacity>
@@ -881,7 +986,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     });
     return () => { mounted = false; };
   }, [leagueId]);
-  const loadScoringFixtures = () => supabase.from("fixtures").select("id,match_number,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueId).in("status", ["live", "completed", "abandoned"]).order("match_number", { ascending: false }).then(({ data, error }) => {
+  const loadScoringFixtures = () => supabase.from("fixtures").select("id,match_number,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueId).in("status", ["live", "completed", "abandoned", "cancelled"]).order("match_number", { ascending: false }).then(({ data, error }) => {
     if (error) setMessage(userActionError(error, "Completed matches"));
     else setScoringFixtures(data ?? []);
   });
@@ -970,12 +1075,38 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     else { const result = data as any; setMessage(`Published Match scores for ${result.member_count} owners.`); await loadScoringFixtures(); }
     setBusy(false);
   };
-  const settleAbandoned = async (fixtureId: string) => {
+  const settleNoResult = async (fixtureId: string) => {
     setBusy(true); setMessage("");
-    const { data, error } = await supabase.rpc("settle_abandoned_match", { p_fixture_id: fixtureId });
-    if (error) setMessage(userActionError(error, "Abandoned-match settlement"));
-    else { const result = data as any; setMessage(`Published zero points for ${result.member_count} owners and returned transfers and boosters.`); await loadScoringFixtures(); }
+    const { data, error } = await supabase.rpc("settle_no_result_match", { p_fixture_id: fixtureId });
+    if (error) setMessage(userActionError(error, "No Result settlement"));
+    else {
+      const result = data as any;
+      const resetMatches = Array.isArray(result.future_match_numbers) && result.future_match_numbers.length
+        ? ` Reset Matches ${result.future_match_numbers.join(", ")} across ${result.future_owners_affected} affected owners (${result.future_lineups_reset} XIs).`
+        : " No later unlocked XIs needed resetting.";
+      const lockedMatches: number[] = Array.isArray(result.locked_recalculation_details)
+        ? Array.from(new Set<number>(result.locked_recalculation_details
+          .map((detail: any) => Number(detail.match_number))
+          .filter((matchNumber: number) => Number.isFinite(matchNumber))))
+          .sort((left, right) => left - right)
+        : [];
+      const lockedRecalculation = Number(result.locked_lineups_recalculated) > 0
+        ? ` Recalculated ${result.locked_lineups_recalculated} locked XI${Number(result.locked_lineups_recalculated) === 1 ? "" : "s"}${lockedMatches.length ? ` for Match${lockedMatches.length === 1 ? "" : "es"} ${lockedMatches.join(", ")}` : ""}: ${result.locked_transfers_before} previous charges replaced by ${result.locked_transfers_after} transfers against the last valid XI.`
+        : "";
+      setMessage(`No Result saved: ${result.member_count} zero-point XIs, ${result.transfers_refunded} transfers and ${result.boosters_refunded} boosters refunded.${resetMatches}${lockedRecalculation}`);
+      await loadScoringFixtures();
+    }
     setBusy(false);
+  };
+  const confirmNoResultSettlement = (fixture: any) => {
+    Alert.alert(
+      `Settle Match ${fixture.match_number} as No Result?`,
+      "This gives zero points, refunds transfers and boosters, cancels this XI, and resets every later submitted XI that has not locked. A later locked XI stays unchanged, but its transfers are recalculated against the last valid XI before this match.",
+      [
+        { text: "Keep match", style: "cancel" },
+        { text: "Settle No Result", style: "destructive", onPress: () => runAction(() => settleNoResult(fixture.id)) },
+      ],
+    );
   };
   const requestPublicationConfirmation = () => {
     const publication = section === "format"
@@ -1151,7 +1282,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <AdminNumberField label="Transfer allowance" detail={transferAllowanceDetail(period)} value={period.limit} onChange={value => updateTransferPeriod(index, "limit", value)} />
 <TouchableOpacity accessibilityRole="switch" accessibilityState={{ checked: period.firstMatchFree, disabled: !canEdit }} accessibilityLabel={`Free first match for ${period.name || `period ${index + 1}`}`} disabled={!canEdit} style={[s.transferFreeToggle, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.map((item, periodIndex) => periodIndex === index ? { ...item, firstMatchFree: !item.firstMatchFree } : item))}><View style={{ flex: 1 }}><Text style={s.transferFreeTitle}>Free first match</Text><Text style={s.transferFreeText}>{period.firstMatchFree ? `Match ${period.start || "—"} resets the carried XI and does not use this allowance.` : "Changes in the first match use this period's allowance."}</Text></View><View style={[s.transferSwitch, period.firstMatchFree && s.transferSwitchActive]}><View style={[s.transferSwitchThumb, period.firstMatchFree && s.transferSwitchThumbActive]} /></View></TouchableOpacity>
 </View>; })}<TouchableOpacity accessibilityRole="button" disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
-</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "The score processor uploads calculated player points first. Only matches in REVIEW can be published to owners and rankings." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && fixture.status === "abandoned" && fixture.scoring_status !== "published" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Settle match ${fixture.match_number} at zero points`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => runAction(() => settleAbandoned(fixture.id))}><Text style={s.resetButtonText}>Settle zero</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Publish scores for match ${fixture.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live or completed fixtures are available.</Text></View>}</View>}{message ? <View accessibilityLiveRegion="polite" style={[s.adminMessage, message.startsWith("Published") && s.adminMessageSuccess]}>
+</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "Publish calculated scores after review. For a fixture marked abandoned or cancelled, settle No Result to refund its usage, reset later unlocked XIs, and recalculate the first later locked XI against the last valid team." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => { const noResult = isNoResultFixture(fixture.status); return <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{noResult ? "NO RESULT" : fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && noResult && fixture.scoring_status !== "published" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Settle Match ${fixture.match_number} as No Result`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => confirmNoResultSettlement(fixture)}><Text style={s.resetButtonText}>Settle No Result</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Publish scores for match ${fixture.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>; }) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live, completed, or No Result fixtures are available.</Text></View>}</View>}{message ? <View accessibilityLiveRegion="polite" style={[s.adminMessage, (message.startsWith("Published") || message.startsWith("No Result saved")) && s.adminMessageSuccess]}>
 <Text style={s.adminMessageText}>{message}</Text>
 </View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={section === "format" ? "Publish league format" : section === "special" ? "Publish Unique and Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.primary, busy && s.disabled]} onPress={requestPublicationConfirmation}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
 <Text style={s.adminFootnote}>{section === "special" ? "Changes apply only from the selected unlocked match. Historical scoring remains pinned to its original version." : section === "phases" ? "Changing phases updates fixture assignments and phase-wise ranking." : section === "transfers" ? "Transfer periods apply immediately to future submissions; recorded usage is regrouped by the published match ranges." : "Milestone, strike-rate and economy tables remain preserved when these headline values are updated."}</Text>
@@ -1306,7 +1437,25 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const [scheduledFixtureCount, setScheduledFixtureCount] = useState<number | null>(null);
   const [specialLabels, setSpecialLabels] = useState<Record<string, string[]>>({});
   const [leaguePlayerPoints, setLeaguePlayerPoints] = useState<Record<string, number>>({});
+  const [submittedFixtureIds, setSubmittedFixtureIds] = useState<Set<string>>(new Set());
   const submittedSnapshots = useRef<Record<string, { players: string[]; captain: string; vice: string; impactPlayer: string; impactType: ImpactType }>>({});
+  const fixtureDatabaseIdKey = fixtures.map(match => match.databaseId).filter(Boolean).join(",");
+  useEffect(() => {
+    let cancelled = false;
+    const fixtureIds = fixtures.map(match => match.databaseId).filter((id): id is string => !!id);
+    if (!fixtureIds.length) { setSubmittedFixtureIds(new Set()); return () => { cancelled = true; }; }
+    supabase.from("lineup_submissions")
+      .select("fixture_id")
+      .eq("league_id", leagueId)
+      .eq("member_id", memberId)
+      .in("fixture_id", fixtureIds)
+      .in("status", ["submitted", "locked"])
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        setSubmittedFixtureIds(new Set((data ?? []).map(row => row.fixture_id)));
+      });
+    return () => { cancelled = true; };
+  }, [leagueId, memberId, fixtureDatabaseIdKey]);
   useEffect(() => {
     if (!requestedFixtureId) return;
     const requestedIndex = fixtures.findIndex(match => match.databaseId === requestedFixtureId);
@@ -1442,9 +1591,9 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     const matchNumber = Number(activeMatchId.replace("M", ""));
     if (hasSavedCurrentLineup && !futureResetConfirmed) {
       setFutureSubmittedMatches([]);
-      const futureResult = await supabase.from("lineup_submissions").select("fixture:fixtures!inner(match_number)").eq("league_id", leagueId).eq("member_id", memberId).eq("status", "submitted").gt("fixture.match_number", matchNumber);
+      const futureResult = await supabase.from("lineup_submissions").select("fixture:fixtures!inner(match_number,status,lineup_lock_at,scheduled_start)").eq("league_id", leagueId).eq("member_id", memberId).eq("status", "submitted").gt("fixture.match_number", matchNumber).eq("fixture.status", "scheduled");
       if (futureResult.error) { setSubmitMessage(userActionError(futureResult.error, "Future lineup check")); setSubmitBusy(false); return; }
-      const futureMatches = Array.from(new Set((futureResult.data ?? []).map((row: any) => Number(row.fixture?.match_number)).filter(Number.isFinite))).sort((left, right) => left - right);
+      const futureMatches = Array.from(new Set((futureResult.data ?? []).filter((row: any) => new Date(row.fixture?.lineup_lock_at ?? row.fixture?.scheduled_start ?? "").getTime() > Date.now()).map((row: any) => Number(row.fixture?.match_number)).filter(Number.isFinite))).sort((left, right) => left - right);
       if (futureMatches.length) { setFutureSubmittedMatches(futureMatches); setShowFutureResetWarning(true); setSubmitBusy(false); return; }
     }
     const fixtureResult = await supabase.from("fixtures").select("id").eq("league_id", leagueId).eq("match_number", matchNumber).single();
@@ -1477,7 +1626,18 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       if (verification.error) { const message = "Your lineup was submitted, but confirmation could not be loaded. Refresh the match before submitting again."; if (__DEV__) console.warn("Lineup verification failed:", verification.error.message); setSubmitMessage(message); Alert.alert("Confirmation unavailable", message); }
       else if ((verification.count ?? verification.data?.length ?? 0) !== selected.length) { const message = `Team verification found ${verification.count ?? verification.data?.length ?? 0}/${selected.length} saved players. Please submit again.`; setSubmitMessage(message); Alert.alert("Verification failed", message); }
       else if (!Number.isInteger(savedTransferCount) || savedTransferCount < 0) { const message = "Your lineup was submitted, but its transfer count could not be confirmed. Refresh the match before submitting again."; setSubmitMessage(message); Alert.alert("Confirmation unavailable", message); }
-      else { submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType }; setHasSavedCurrentLineup(true); setSubmitted(true); setConfirmedTransferCount(savedTransferCount); setShowFutureResetWarning(false); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true); }
+      else {
+        submittedSnapshots.current[activeMatchId] = { players: [...selected], captain, vice, impactPlayer, impactType };
+        setSubmittedFixtureIds(current => {
+          const next = new Set(current);
+          for (const match of fixtures) {
+            if (match.databaseId && futureSubmittedMatches.includes(Number(match.id.replace("M", "")))) next.delete(match.databaseId);
+          }
+          if (fixture.databaseId) next.add(fixture.databaseId);
+          return next;
+        });
+        setHasSavedCurrentLineup(true); setSubmitted(true); setConfirmedTransferCount(savedTransferCount); setShowFutureResetWarning(false); setSubmitMessage("Your lineup has been saved."); setShowSubmitConfirmation(true);
+      }
     }
     setSubmitBusy(false);
   };
@@ -1535,7 +1695,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       if (!cancelled) { setFirstMissingPriorMatch(missingPriorMatch); setHasPriorPeriodLineup(priorPeriodLineup); }
       if (currentResult.error) { if (!cancelled) { setSubmitMessage(userActionError(currentResult.error, "Saved lineup refresh")); setLineupLoadBusy(false); } return; }
       const previousSource = [...earlierFixtureIds].reverse().map(id => (earlierLineupsResult.data ?? []).find(lineup => lineup.fixture_id === id)).find(Boolean) ?? null;
-      let source = currentResult.data;
+      let source = currentResult.data?.status === "cancelled" ? null : currentResult.data;
       let isCurrentSubmission = source?.status === "submitted" || source?.status === "locked";
       if (!source) source = previousSource;
       if (!source) { if (!cancelled) { setSelected([]); setCaptain(""); setVice(""); setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setSubmitted(false); setCarriedForwardNames(new Set()); setLineupLoadBusy(false); } return; }
@@ -1571,6 +1731,11 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
   const selectFixture = (match: UpcomingMatch) => { setActiveMatchId(match.id); setExpandedTeams([match.home, match.away]); setBoosterCode(""); setBoosterPlayer(""); setHasSavedCurrentLineup(false); setConfirmedTransferCount(0); setSubmitted(false); setShowIssues(false); setShowWarnings(false); setShowFutureResetWarning(false); setFutureSubmittedMatches([]); };
   const focusPlayerInTeamList = (name: string, team: string) => {
     setFocusedPlayer(name);
+    // Editing from Selected XI must reveal the row even when a previous
+    // search or filter would otherwise hide it.
+    setPlayerSearch("");
+    setRoleFilter("ALL");
+    setOwnershipFilter("ALL");
     setExpandedTeams(current => current.includes(team) ? current : [...current, team]);
     setTimeout(() => {
       const y = (teamPositions.current[team] ?? 0) + (playerPositions.current[`${team}:${name}`] ?? 0);
@@ -1654,7 +1819,7 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
     {immediateNextFixture ? <View style={s.lockCountdown}><View style={s.lockCountdownDetails}><Text numberOfLines={1} style={s.lockCountdownLabel}>{nextLockIsFarAway ? "NEXT XI LOCKS ON" : "NEXT XI LOCKS IN"}</Text><Text style={s.lockCountdownMatch}>Match {immediateNextFixture.id.replace("M", "")} · {immediateNextFixture.home} vs {immediateNextFixture.away}</Text></View><Text numberOfLines={1} style={[s.lockCountdownTime, teamWidth < 360 && s.lockCountdownTimeCompact, nextLockIsFarAway && s.lockCountdownDate]}>{nextLockDisplay}</Text></View> : null}
     <View style={s.activeFixtureBanner}><View style={s.activeFixtureBadge}><Text style={s.activeFixtureBadgeText}>ACTIVE XI</Text></View><View style={s.activeFixtureDetails}><Text style={s.activeFixtureTitle}>Editing Match {activeMatchNumber}</Text><View style={s.activeFixtureTeams}><IplTeamBadge code={fixture.home} /><Text style={s.activeFixtureVs}>VS</Text><IplTeamBadge code={fixture.away} /></View></View><Text style={s.activeFixtureHint}>{hasSavedCurrentLineup ? "EDIT XI" : "NEW XI"}</Text></View>
     {teamWidth < 900 ? <View style={s.horizontalSectionCue}><Text style={s.horizontalSectionLabel}>UPCOMING MATCHES</Text><Text style={s.horizontalSectionHint}>SWIPE →</Text></View> : null}
-    <ScrollView ref={fixtureStripRef} horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; return <TouchableOpacity key={match.id} accessibilityRole="button" accessibilityLabel={`Match ${match.id.replace("M", "")}, ${match.home} versus ${match.away}, ${match.day} at ${match.time}`} accessibilityState={{ selected: active }} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, active && submitted ? s.statusSubmitted : null]}>{active && submitted ? "Submitted" : "XI carried · booster empty"}</Text></TouchableOpacity>; })}</ScrollView>
+    <ScrollView ref={fixtureStripRef} horizontal showsHorizontalScrollIndicator={false} style={s.fixtureStrip} contentContainerStyle={s.fixtureStripContent}>{fixtures.map(match => { const active = match.id === activeMatchId; const hasSubmission = !!match.databaseId && submittedFixtureIds.has(match.databaseId); const statusLabel = fixtureStripStatusLabel({ hasSubmission }); return <TouchableOpacity key={match.id} accessibilityRole="button" accessibilityLabel={`Match ${match.id.replace("M", "")}, ${match.home} versus ${match.away}, ${match.day} at ${match.time}, ${statusLabel}`} accessibilityState={{ selected: active }} style={[s.fixtureCard, active && s.fixtureCardActive]} onPress={() => selectFixture(match)}><Text style={[s.fixtureNumber, active && s.fixtureTextActive]}>MATCH {match.id.replace("M", "")}</Text><View style={s.fixtureTeamRow}><IplTeamBadge code={match.home} /><Text style={[s.fixtureVs, active && s.fixtureTextActive]}>vs</Text><IplTeamBadge code={match.away} /></View><Text style={[s.fixtureTime, active && s.fixtureTextActive]}>{match.day} · {match.time}</Text><Text style={[s.fixtureStatus, hasSubmission && s.statusSubmitted]}>{statusLabel}</Text></TouchableOpacity>; })}</ScrollView>
     <View style={s.boosterSection}><View style={s.boosterSectionHeading}><Text style={s.boosterSectionTitle}>Match booster</Text><Text style={s.boosterSectionHint}>Optional · choose one</Text></View><View style={s.boosterGrid}>
       <BoosterCard code="3X" name="Triple Impact" detail={tripleImpactAvailable ? "1 remaining · all phases" : `Used in Match ${used3X?.matchNumber} · unavailable`} active={boosterCode === "3X"} disabled={!tripleImpactAvailable} onPress={() => chooseBooster("3X")} />
       <BoosterCard code="2UP" name="Double Up" detail={doubleUpAvailable ? `${currentPhase?.name}: ${doubleUpPhaseLimit - doubleUpUsesInPhase.length} remaining` : doubleUpPhaseLimit <= 0 ? `Unavailable in ${currentPhase?.name ?? "this phase"}` : `${currentPhase?.name}: usage reached`} active={boosterCode === "2UP"} disabled={!doubleUpAvailable} onPress={() => chooseBooster("2UP")} />
@@ -1739,10 +1904,11 @@ function TeamSelection({ requestedFixtureId, leagueId, memberId, ownershipEnable
       </>}
       {compactPlayerFilters && visibleTeamNames.length ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={allVisibleTeamsExpanded ? "Collapse all shown teams" : "Expand all shown teams"} accessibilityState={{ expanded: allVisibleTeamsExpanded }} style={s.playerFiltersExpandButton} onPress={() => setExpandedTeams(current => allVisibleTeamsExpanded ? current.filter(team => !visibleTeamNames.includes(team)) : Array.from(new Set([...current, ...visibleTeamNames])))}><Text style={s.playerFiltersExpandButtonText}>{allVisibleTeamsExpanded ? "Collapse all shown teams" : `Expand ${visibleTeamNames.length} shown team${visibleTeamNames.length === 1 ? "" : "s"}`}</Text></TouchableOpacity> : null}
     </View>
-    <Text style={s.sectionTitle}>Playing teams</Text><View style={s.playingTeamHelp}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>and</Text><IplTeamBadge code={fixture.away} /><Text style={[s.helperInline, s.textMutedAccessible]}>players are shown first.</Text></View>
-    {matchTeams.map(renderTeam)}
-    <Text style={s.otherTeamsTitle}>Other teams in squad</Text><Text style={[s.helper, s.textMutedAccessible]}>Tap to add or remove. Other-owner players use a transfer.</Text>
-    {otherTeams.map(renderTeam)}
+    {filteredPlayerCount ? <>
+      <Text style={s.sectionTitle}>Playing teams</Text><View style={s.playingTeamHelp}><IplTeamBadge code={fixture.home} /><Text style={s.fixtureVs}>and</Text><IplTeamBadge code={fixture.away} /><Text style={[s.helperInline, s.textMutedAccessible]}>players are shown first.</Text></View>
+      {matchTeams.map(renderTeam)}
+      {otherTeams.some(team => roster.some(player => player.team === team && playerMatchesFilters(player))) ? <><Text style={s.otherTeamsTitle}>Other teams in squad</Text><Text style={[s.helper, s.textMutedAccessible]}>Tap to add or remove. Other-owner players use a transfer.</Text>{otherTeams.map(renderTeam)}</> : null}
+    </> : <View accessibilityRole="alert" style={s.playerSearchEmpty}><View style={s.playerSearchEmptyIcon}><Text style={s.playerSearchEmptyIconText}>?</Text></View><Text style={s.playerSearchEmptyTitle}>No players found</Text><Text style={s.playerSearchEmptyText}>Try another name or reset the role and ownership filters.</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Reset player search and filters" style={s.playerSearchEmptyAction} onPress={resetPlayerFilters}><Text style={s.playerSearchEmptyActionText}>Reset search & filters</Text></TouchableOpacity></View>}
     <View style={[s.validation, errors.length ? s.invalid : s.valid]}><Text style={s.validationTitle}>{errors.length ? `${errors.length} issue${errors.length > 1 ? "s" : ""} to fix` : "Team is valid"}</Text>{errors.map(e => <Text key={e} style={s.validationText}>• {e}</Text>)}{!errors.length && <Text style={s.validationText}>Roles, cost, transfers and optional marker combinations are valid.</Text>}</View>
   </ScrollView>{showScrollTop && !showIssues && !submitMessage ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Scroll to top" style={s.scrollTopButton} onPress={() => teamScrollRef.current?.scrollTo({ y: 0, animated: true })}><Text style={s.scrollTopArrow}>↑</Text><Text style={s.scrollTopText}>Top</Text></TouchableOpacity> : null}<Modal visible={showFutureResetWarning} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { setShowFutureResetWarning(false); setFutureSubmittedMatches([]); }}>
 <View style={s.submitModalOverlay}><View nativeID="future-reset-dialog" accessibilityViewIsModal accessibilityRole="alert" accessibilityLabel={`Resubmission warning for Match ${activeMatchNumber}`} style={s.submitModalCard}>
@@ -1874,6 +2040,20 @@ const s = StyleSheet.create(normalizeUiStyles({
   helpSectionHeading: { marginTop: 23, marginBottom: 10 },
   helpSectionTitle: { color: "#17352C", fontSize: 18, lineHeight: 22, fontWeight: "900" },
   helpSectionSubtitle: { color: UI_TOKENS.colors.muted, fontSize: 10, lineHeight: 14, marginTop: 3 },
+  helpSearchShell: { minHeight: 48, flexDirection: "row", alignItems: "center", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#C7D3CE", borderRadius: 14, paddingHorizontal: 12, marginBottom: 6 },
+  helpSearchIcon: { width: 25, color: "#174D3D", fontSize: 20, lineHeight: 24, fontWeight: "900" },
+  helpSearchInput: { flex: 1, minWidth: 0, color: "#17352C", fontSize: 12, lineHeight: 17, paddingVertical: 12, paddingHorizontal: 4 },
+  helpSearchClear: { width: 34, height: 34, borderRadius: 11, backgroundColor: "#EDF3F0", alignItems: "center", justifyContent: "center", marginLeft: 6 },
+  helpSearchClearText: { color: "#174D3D", fontSize: 21, lineHeight: 24, fontWeight: "700" },
+  helpSearchMeta: { minHeight: 22, justifyContent: "center", marginBottom: 9, paddingHorizontal: 2 },
+  helpSearchMetaText: { color: "#6B7A74", fontSize: 9.5, lineHeight: 14, fontWeight: "700" },
+  helpNoResults: { alignItems: "center", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: UI.border, borderRadius: 16, paddingHorizontal: 20, paddingVertical: 22 },
+  helpNoResultsIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: "#F0EDFA", alignItems: "center", justifyContent: "center", marginBottom: 10 },
+  helpNoResultsIconText: { color: "#6542A0", fontSize: 18, lineHeight: 22, fontWeight: "900" },
+  helpNoResultsTitle: { color: "#17352C", fontSize: 13, lineHeight: 17, fontWeight: "900" },
+  helpNoResultsText: { maxWidth: 440, color: "#61716B", fontSize: 10, lineHeight: 16, textAlign: "center", marginTop: 5 },
+  helpNoResultsAction: { minHeight: 40, borderRadius: 12, backgroundColor: "#174D3D", paddingHorizontal: 16, alignItems: "center", justifyContent: "center", marginTop: 12 },
+  helpNoResultsActionText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
   helpQuickGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   helpQuickCard: { flexGrow: 1, flexBasis: 220, minHeight: 86, flexDirection: "row", alignItems: "flex-start", backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: UI.border, borderRadius: 15, padding: 12 },
   helpQuickNumber: { width: 30, height: 30, borderRadius: 10, backgroundColor: "#E9F5BE", alignItems: "center", justifyContent: "center", marginRight: 10 },
@@ -1904,6 +2084,8 @@ const s = StyleSheet.create(normalizeUiStyles({
   helpRuleNote: { backgroundColor: "#FFF8E7", borderWidth: 1, borderColor: "#E8D390", borderRadius: 15, padding: 13, marginTop: 16 },
   helpRuleNoteTitle: { color: "#69520B", fontSize: 11, lineHeight: 15, fontWeight: "900" },
   helpRuleNoteText: { color: "#735F25", fontSize: 10, lineHeight: 16, marginTop: 4 },
+  helpRuleNoteAction: { alignSelf: "flex-start", minHeight: 36, borderRadius: 10, backgroundColor: "#69520B", paddingHorizontal: 12, alignItems: "center", justifyContent: "center", marginTop: 10 },
+  helpRuleNoteActionText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
   helpFooterActions: { flexDirection: "row", gap: 8, marginTop: 12 },
   helpFooterPrimary: { flex: 1, minHeight: 46, borderRadius: 13, backgroundColor: "#174D3D", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
   helpFooterPrimaryText: { color: "#FFFFFF", fontSize: 11, fontWeight: "900" },
@@ -2098,6 +2280,13 @@ const s = StyleSheet.create(normalizeUiStyles({
   playerFiltersToggleIcon: { color: UI_TOKENS.colors.primary, fontSize: 8, fontWeight: "900", marginLeft: 6 },
   playerFiltersExpandButton: { minHeight: 44, borderRadius: 11, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, backgroundColor: UI_TOKENS.colors.surface, alignItems: "center", justifyContent: "center", marginTop: 10 },
   playerFiltersExpandButtonText: { color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900" },
+  playerSearchEmpty: { minHeight: 170, backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 22, paddingVertical: 20, marginTop: 18 },
+  playerSearchEmptyIcon: { width: 38, height: 38, borderRadius: 19, backgroundColor: UI_TOKENS.colors.primarySoft, alignItems: "center", justifyContent: "center" },
+  playerSearchEmptyIconText: { color: UI_TOKENS.colors.primary, fontSize: 20, lineHeight: 22, fontWeight: "900" },
+  playerSearchEmptyTitle: { color: UI_TOKENS.colors.ink, fontSize: 15, fontWeight: "900", marginTop: 10 },
+  playerSearchEmptyText: { maxWidth: 330, color: UI_TOKENS.colors.muted, fontSize: 10, lineHeight: 15, textAlign: "center", marginTop: 5 },
+  playerSearchEmptyAction: { minHeight: 44, borderRadius: 12, backgroundColor: UI_TOKENS.colors.primary, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, marginTop: 13 },
+  playerSearchEmptyActionText: { color: UI_TOKENS.colors.accent, fontSize: 10, fontWeight: "900" },
   resetFiltersButton: { minHeight: 36, borderRadius: 10, borderWidth: 1, borderColor: "#E0B7AA", backgroundColor: "#FFF4F0", paddingHorizontal: 11, alignItems: "center", justifyContent: "center", marginLeft: 8 },
   clearFiltersText: { color: "#A84528", fontSize: 10, lineHeight: 13, fontWeight: "900" },
   playerFilterLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },

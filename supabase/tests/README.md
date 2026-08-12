@@ -21,6 +21,8 @@ For the existing IPL 2027 test, run `verify_template_clone_ipl2027.sql`. It expe
 
 Record the Supabase project, migration commit SHA, tester, timestamp and result for release evidence. Delete disposable cloned leagues after verification.
 
+Migration 059 adds atomic No Result settlement. After applying it to staging or a disposable database, run `../verify_migration_059.sql`; its first row must be all `true` and the remaining queries must return no rows. Then stage Match 4 as abandoned with at least one charged transfer and one booster, submit and lock a different Match 5 XI, and leave a later Match 6 XI submitted but unlocked. Settle No Result as a league admin and confirm Match 4 usage is refunded, Match 6 is removed/refunded, and Match 5's players and booster are unchanged while its active transfer events equal the charge for the Match 3-to-Match 5 difference. Also include an owner who skipped Match 4 and confirm that owner's later submission and transfer records are untouched. An owner and an anonymous session must both be unable to settle the fixture.
+
 Run `verify_lineup_integrity.sql` after lineup-related migrations and before a release. It is read-only; every row must report `PASS`. It checks duplicate authenticated owner mappings, duplicate active player names within a league, saved XI size, active-player membership, power-marker membership and 3X target membership.
 
 Migration 045 adds a deferred invariant for future 3X submissions. Run `verify_migration_045.sql` after applying it. Historical published score records are intentionally immutable and are excluded from the release-blocking 3X integrity check.

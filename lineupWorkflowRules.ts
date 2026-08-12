@@ -28,6 +28,9 @@ export const firstMissingOpenPriorMatch = (
   return Number.isFinite(lockTime) && lockTime > now;
 })?.match_number ?? null;
 
+export const isNoResultFixture = (status?: string | null) =>
+  status === "abandoned" || status === "cancelled";
+
 export const hasSubmittedInTransferPeriod = (
   fixtures: PriorFixtureForSubmission[],
   submittedFixtureIds: ReadonlySet<string>,
@@ -93,6 +96,12 @@ export const lineupSubmitActionLabel = ({
   hasSavedLineup: boolean;
   unchanged: boolean;
 }) => !hasSavedLineup ? "Submit XI" : unchanged ? "Submitted ✓" : "Resubmit XI";
+
+export const fixtureStripStatusLabel = ({
+  hasSubmission,
+}: {
+  hasSubmission: boolean;
+}) => hasSubmission ? "Submitted" : "XI carried · booster empty";
 
 export type FixtureOwnerAction = "submit" | "edit" | "history" | "later";
 
