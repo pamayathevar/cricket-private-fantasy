@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import type { Player } from "./squadData";
 import { supabase } from "./supabase";
 import { userActionError } from "./errorMessages";
@@ -38,9 +38,26 @@ export function OwnerAvatar({ owner, current = false }: { owner?: string | null;
   const theme = ownerTheme(owner);
   return <View style={[x.avatar, { backgroundColor: theme.soft, borderColor: theme.border }, current && { borderColor: theme.accent }]}><Text style={[x.avatarText, { color: theme.strong }]}>{String(owner ?? "?").charAt(0).toUpperCase()}</Text></View>;
 }
-function OwnerChoice({ owner, active, onPress }: { owner: string; active: boolean; onPress: () => void }) {
-  const theme = ownerTheme(owner);
-  return <TouchableOpacity accessibilityRole="button" accessibilityLabel={owner} accessibilityState={{ selected: active }} style={[x.squadOwnerChoice, { backgroundColor: active ? theme.accent : theme.soft, borderColor: active ? theme.accent : theme.border }]} onPress={onPress}><View style={[x.ownerBadgeDot, { backgroundColor: active ? theme.onAccent : theme.accent }]} /><Text style={[x.squadOwnerChoiceText, { color: active ? theme.onAccent : theme.strong }]}>{owner}</Text></TouchableOpacity>;
+function OwnerPickerModal({ visible, compact, playerName, owners, selectedOwnerId, onSelect, onClose }: { visible: boolean; compact: boolean; playerName: string; owners: Array<{ id: string; display_name: string }>; selectedOwnerId: string; onSelect: (ownerId: string) => void; onClose: () => void }) {
+  return <Modal visible={visible} transparent animationType={compact ? "slide" : "fade"} statusBarTranslucent onRequestClose={onClose}>
+    <View style={[x.playerEditOwnerPickerOverlay, !compact && x.playerEditOwnerPickerOverlayWide]}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close owner picker" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View accessibilityViewIsModal accessibilityLabel="Choose assigned owner" style={[x.playerEditOwnerPickerSheet, !compact && x.playerEditOwnerPickerSheetWide]} onStartShouldSetResponder={() => true}>
+        <View style={x.playerEditOwnerPickerHeader}><View style={x.grow}><Text style={x.playerEditOwnerPickerEyebrow}>ASSIGNED OWNER</Text><Text accessibilityRole="header" style={x.playerEditOwnerPickerTitle}>Choose owner</Text><Text style={x.playerEditOwnerPickerSubtitle}>Select one owner for {playerName}. You can review this before saving.</Text></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close owner picker" style={x.playerEditOwnerPickerClose} onPress={onClose}><Text style={x.playerEditOwnerPickerCloseText}>×</Text></TouchableOpacity></View>
+        <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator contentContainerStyle={x.playerEditOwnerPickerList}>
+          {[{ id: "", display_name: "Open player", description: "Available to all league owners" }, ...owners.map(owner => ({ ...owner, description: "League owner" }))].map(owner => {
+            const selected = selectedOwnerId === owner.id;
+            const theme = ownerTheme(owner.id ? owner.display_name : "Available");
+            return <TouchableOpacity key={owner.id || "open"} accessibilityRole="radio" accessibilityLabel={`Assign to ${owner.display_name}`} accessibilityState={{ selected, checked: selected }} style={[x.playerEditOwnerPickerOption, selected && x.playerEditOwnerPickerOptionSelected]} onPress={() => onSelect(owner.id)}>
+              <View style={[x.playerEditOwnerPickerAvatar, { backgroundColor: theme.soft, borderColor: theme.border }]}><Text style={[x.playerEditOwnerPickerAvatarText, { color: theme.strong }]}>{owner.id ? owner.display_name.charAt(0).toUpperCase() : "○"}</Text></View>
+              <View style={x.grow}><Text numberOfLines={1} style={x.playerEditOwnerPickerName}>{owner.display_name}</Text><Text style={x.playerEditOwnerPickerDescription}>{owner.description}</Text></View>
+              <View style={[x.playerEditOwnerPickerRadio, selected && x.playerEditOwnerPickerRadioSelected]}>{selected ? <View style={x.playerEditOwnerPickerRadioDot} /> : null}</View>
+            </TouchableOpacity>;
+          })}
+        </ScrollView>
+      </View>
+    </View>
+  </Modal>;
 }
 const FIXTURE_LABEL_CACHE_MS = 30_000;
 const fixtureSpecialLabelCache = new Map<string, { loadedAt: number; labels: Record<string, string[]> }>();
@@ -668,11 +685,31 @@ type OwnerPlayerMatchScore = {
   royalty: number;
   total: number;
 };
+type PlayerPerformanceInsights = { average: number; bestMatch: OwnerPlayerMatchScore | null };
 
-function OwnerPlayerMatchBreakdown({ matches, compact, royaltyMode, career }: { matches: OwnerPlayerMatchScore[]; compact: boolean; royaltyMode: boolean; career: { matches: number; batting: number; bowling: number; fielding: number; bonus: number; royalty: number; total: number } }) {
+function PlayerFormTrend({ matches, compact }: { matches: OwnerPlayerMatchScore[]; compact: boolean }) {
+  const recent = [...matches].sort((left, right) => left.matchNumber - right.matchNumber).slice(-6);
+  if (!recent.length) return null;
+  const maxMagnitude = Math.max(1, ...recent.map(match => Math.abs(match.total)));
+  const accessibilitySummary = recent.map(match => `Match ${match.matchNumber}, ${fmt(match.total)} points`).join("; ");
+  return <View accessible accessibilityLabel={`Recent fantasy form. ${accessibilitySummary}`} style={[x.playerPoolFormCard, compact && x.playerPoolFormCardCompact]}>
+    <View style={x.playerPoolFormHeader}><View><Text style={x.playerPoolFormEyebrow}>RECENT FORM</Text><Text style={x.playerPoolFormTitle}>Fantasy points trend</Text></View></View>
+    <View style={x.playerPoolFormPlot}>{recent.map(match => {
+      const barHeight = Math.max(5, Math.round((Math.abs(match.total) / maxMagnitude) * (compact ? 34 : 40)));
+      const negative = match.total < 0;
+      const zero = match.total === 0;
+      return <View key={match.fixtureId} style={x.playerPoolFormPoint}><Text style={[x.playerPoolFormValue, negative && x.playerPoolFormValueNegative]}>{fmt(match.total)}</Text><View style={[x.playerPoolFormTrack, compact && x.playerPoolFormTrackCompact]}><View style={[x.playerPoolFormBar, { height: barHeight }, negative ? x.playerPoolFormBarNegative : zero ? x.playerPoolFormBarZero : x.playerPoolFormBarPositive]} /></View><Text style={x.playerPoolFormMatch}>M{match.matchNumber}</Text></View>;
+    })}</View>
+    <Text style={x.playerPoolFormCaption}>Last {recent.length} published match{recent.length === 1 ? "" : "es"} · Fantasy points only</Text>
+  </View>;
+}
+
+function OwnerPlayerMatchBreakdown({ matches, compact, royaltyMode, career, fantasyOnly = false, insights, onOpenScorecard }: { matches: OwnerPlayerMatchScore[]; compact: boolean; royaltyMode: boolean; career: { matches: number; batting: number; bowling: number; fielding: number; bonus: number; royalty: number; total: number }; fantasyOnly?: boolean; insights?: PlayerPerformanceInsights; onOpenScorecard?: (fixtureId: string) => void }) {
   if (!matches.length) return <View style={x.ownerMatchLedgerEmpty}><Text style={x.ownerMatchLedgerEmptyTitle}>No published match points yet</Text><Text style={x.ownerMatchLedgerEmptyText}>Match-by-match scores will appear here after points are published.</Text></View>;
   return <View style={[x.ownerMatchLedger, compact && x.ownerMatchLedgerCompact]}><View style={x.ownerMatchLedgerHeading}><View><Text style={x.ownerMatchLedgerEyebrow}>MATCH HISTORY</Text><Text style={x.ownerMatchLedgerTitle}>Points by match</Text></View><Text style={x.ownerMatchLedgerCount}>{matches.length} scored</Text></View>
-  {compact ? <>{matches.map(match => <View key={match.fixtureId} style={x.ownerMatchCard}><View style={x.ownerMatchCardTop}><View><Text style={x.ownerMatchCardNumber}>MATCH {match.matchNumber}</Text><Text style={x.ownerMatchCardTeams}>{match.home} vs {match.away}</Text></View><View style={x.ownerMatchCardTotal}><Text style={x.ownerMatchCardTotalValue}>{fmt(match.total)}</Text><Text style={x.ownerMatchCardTotalLabel}>TOTAL PTS</Text></View></View><View style={x.ownerSquadPlayerMetrics}><FixtureScoreMetric label="BAT" value={match.batting} /><FixtureScoreMetric label="BOWL" value={match.bowling} /><FixtureScoreMetric label="FIELD" value={match.fielding} /><FixtureScoreMetric label="BONUS" value={match.bonus} />{royaltyMode ? <FixtureScoreMetric label="ROY" value={match.royalty} accent={match.royalty > 0} /> : null}</View></View>)}<View style={x.ownerMatchCareerCompact}><Text style={x.ownerMatchCareerCompactLabel}>CAREER TOTAL · {career.matches} MATCH{career.matches === 1 ? "" : "ES"}</Text><Text style={x.ownerMatchCareerCompactValue}>{fmt(career.total)} PTS</Text></View></> : <><View style={x.ownerMatchTableHead}><Text style={x.ownerMatchTableMatchHead}>MATCH</Text><Text style={x.ownerSquadTableMetricHead}>BAT</Text><Text style={x.ownerSquadTableMetricHead}>BOWL</Text><Text style={x.ownerSquadTableMetricHead}>FIELD</Text><Text style={x.ownerSquadTableMetricHead}>BONUS</Text>{royaltyMode ? <Text style={x.ownerSquadTableMetricHead}>ROY</Text> : null}<Text style={x.ownerSquadTableTotalHead}>TOTAL</Text></View>{matches.map(match => <View key={match.fixtureId} style={x.ownerMatchTableRow}><View style={x.ownerMatchTableMatch}><Text style={x.ownerMatchTableNumber}>MATCH {match.matchNumber}</Text><Text style={x.ownerMatchTableTeams}>{match.home} vs {match.away}</Text></View><Text style={x.ownerSquadTableMetric}>{fmt(match.batting)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.bowling)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.fielding)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.bonus)}</Text>{royaltyMode ? <Text style={[x.ownerSquadTableMetric, match.royalty > 0 && x.royaltyColumn]}>{fmt(match.royalty)}</Text> : null}<Text style={x.ownerSquadTableTotal}>{fmt(match.total)}</Text></View>)}<View style={x.ownerMatchCareerRow}><View style={x.ownerMatchTableMatch}><Text style={x.ownerMatchCareerLabel}>CAREER TOTAL</Text><Text style={x.ownerMatchTableTeams}>{career.matches} scored match{career.matches === 1 ? "" : "es"}</Text></View><Text style={x.ownerMatchCareerMetric}>{fmt(career.batting)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.bowling)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.fielding)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.bonus)}</Text>{royaltyMode ? <Text style={[x.ownerMatchCareerMetric, career.royalty > 0 && x.royaltyColumn]}>{fmt(career.royalty)}</Text> : null}<Text style={x.ownerMatchCareerTotal}>{fmt(career.total)}</Text></View></>}
+  {insights ? <View style={[x.playerPoolInsights, compact && x.playerPoolInsightsCompact]}><View style={x.playerPoolInsight}><Text style={x.playerPoolInsightLabel}>MATCHES</Text><Text style={x.playerPoolInsightValue}>{career.matches}</Text><Text style={x.playerPoolInsightMeta}>scored</Text></View><View style={x.playerPoolInsight}><Text style={x.playerPoolInsightLabel}>AVERAGE</Text><Text style={x.playerPoolInsightValue}>{fmt(insights.average)}</Text><Text style={x.playerPoolInsightMeta}>fantasy pts</Text></View><View style={x.playerPoolInsight}><Text style={x.playerPoolInsightLabel}>BEST MATCH</Text><Text style={x.playerPoolInsightValue}>{insights.bestMatch ? fmt(insights.bestMatch.total) : "—"}</Text><Text numberOfLines={1} style={x.playerPoolInsightMeta}>{insights.bestMatch ? `M${insights.bestMatch.matchNumber} · ${insights.bestMatch.home} vs ${insights.bestMatch.away}` : "No score"}</Text></View>{royaltyMode ? <View style={[x.playerPoolInsight, x.playerPoolRoyaltyInsight]}><Text style={[x.playerPoolInsightLabel, x.royaltyColumn]}>ROY GENERATED</Text><Text style={[x.playerPoolInsightValue, x.royaltyColumn]}>{fmt(career.royalty)}</Text><Text style={x.playerPoolInsightMeta}>owner credit</Text></View> : null}</View> : null}
+  {insights ? <PlayerFormTrend matches={matches} compact={compact} /> : null}
+  {compact ? <>{matches.map(match => <View key={match.fixtureId} style={x.ownerMatchCard}><View style={x.ownerMatchCardTop}><View><Text style={x.ownerMatchCardNumber}>MATCH {match.matchNumber}</Text><Text style={x.ownerMatchCardTeams}>{match.home} vs {match.away}</Text></View><View style={x.ownerMatchCardTotal}><Text style={x.ownerMatchCardTotalValue}>{fmt(match.total)}</Text><Text style={x.ownerMatchCardTotalLabel}>{fantasyOnly ? "FANTASY PTS" : "TOTAL PTS"}</Text></View></View><View style={x.ownerSquadPlayerMetrics}><FixtureScoreMetric label="BAT" value={match.batting} /><FixtureScoreMetric label="BOWL" value={match.bowling} /><FixtureScoreMetric label="FIELD" value={match.fielding} /><FixtureScoreMetric label="BONUS" value={match.bonus} />{royaltyMode ? <FixtureScoreMetric label="ROY" value={match.royalty} accent={match.royalty > 0} /> : null}</View>{onOpenScorecard ? <TouchableOpacity accessibilityRole="link" accessibilityLabel={`Open scorecard for Match ${match.matchNumber}, ${match.home} versus ${match.away}`} style={x.playerPoolScorecardButton} onPress={() => onOpenScorecard(match.fixtureId)}><Text style={x.playerPoolScorecardIcon}>▤</Text><Text style={x.playerPoolScorecardText}>View scorecard</Text><Text style={x.playerPoolScorecardArrow}>›</Text></TouchableOpacity> : null}</View>)}<View style={x.ownerMatchCareerCompact}><Text style={x.ownerMatchCareerCompactLabel}>{fantasyOnly ? "FANTASY TOTAL" : "CAREER TOTAL"} · {career.matches} MATCH{career.matches === 1 ? "" : "ES"}</Text><Text style={x.ownerMatchCareerCompactValue}>{fmt(career.total)} PTS</Text></View></> : <><View style={x.ownerMatchTableHead}><Text style={x.ownerMatchTableMatchHead}>MATCH</Text><Text style={x.ownerSquadTableMetricHead}>BAT</Text><Text style={x.ownerSquadTableMetricHead}>BOWL</Text><Text style={x.ownerSquadTableMetricHead}>FIELD</Text><Text style={x.ownerSquadTableMetricHead}>BONUS</Text>{royaltyMode ? <Text style={x.ownerSquadTableMetricHead}>ROY</Text> : null}<Text style={x.ownerSquadTableTotalHead}>{fantasyOnly ? "FANTASY" : "TOTAL"}</Text></View>{matches.map(match => <View key={match.fixtureId} style={x.ownerMatchTableRow}><View style={x.ownerMatchTableMatch}><Text style={x.ownerMatchTableNumber}>MATCH {match.matchNumber}</Text><Text style={x.ownerMatchTableTeams}>{match.home} vs {match.away}</Text>{onOpenScorecard ? <TouchableOpacity accessibilityRole="link" accessibilityLabel={`Open scorecard for Match ${match.matchNumber}, ${match.home} versus ${match.away}`} style={x.playerPoolScorecardInline} onPress={() => onOpenScorecard(match.fixtureId)}><Text style={x.playerPoolScorecardInlineText}>▤ Scorecard ›</Text></TouchableOpacity> : null}</View><Text style={x.ownerSquadTableMetric}>{fmt(match.batting)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.bowling)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.fielding)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.bonus)}</Text>{royaltyMode ? <Text style={[x.ownerSquadTableMetric, match.royalty > 0 && x.royaltyColumn]}>{fmt(match.royalty)}</Text> : null}<Text style={x.ownerSquadTableTotal}>{fmt(match.total)}</Text></View>)}<View style={x.ownerMatchCareerRow}><View style={x.ownerMatchTableMatch}><Text style={x.ownerMatchCareerLabel}>{fantasyOnly ? "FANTASY TOTAL" : "CAREER TOTAL"}</Text><Text style={x.ownerMatchTableTeams}>{career.matches} scored match{career.matches === 1 ? "" : "es"}</Text></View><Text style={x.ownerMatchCareerMetric}>{fmt(career.batting)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.bowling)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.fielding)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.bonus)}</Text>{royaltyMode ? <Text style={[x.ownerMatchCareerMetric, career.royalty > 0 && x.royaltyColumn]}>{fmt(career.royalty)}</Text> : null}<Text style={x.ownerMatchCareerTotal}>{fmt(career.total)}</Text></View></>}
   </View>;
 }
 
@@ -872,7 +909,7 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
 
 type LeagueSquadPlayer = Player & { leaguePlayerId: string; playerId: string; active: boolean; bidPrice: number | null; ownerId: string };
 type LeagueSquadOwner = { id: string; display_name: string };
-export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged }: { leagueId: string; canEdit: boolean; onAvailabilityChanged: () => void }) {
+export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged, openScorecard }: { leagueId: string; canEdit: boolean; onAvailabilityChanged: () => void; openScorecard?: (fixtureId: string) => void }) {
   const { width: playerPoolWidth } = useWindowDimensions();
   const compact = playerPoolWidth < 620;
   const playerActionLock = useRef(false);
@@ -889,9 +926,11 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const [addingTeam, setAddingTeam] = useState("");
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerRole, setNewPlayerRole] = useState<Player["role"]>("BA");
-  const [newPlayerCost, setNewPlayerCost] = useState("0");
+  const [newPlayerCost, setNewPlayerCost] = useState("");
   const [newPlayerOwnerId, setNewPlayerOwnerId] = useState("");
+  const [newPlayerOwnerPickerOpen, setNewPlayerOwnerPickerOpen] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
+  const [addMessage, setAddMessage] = useState("");
   const [editingPlayerId, setEditingPlayerId] = useState("");
   const [editName, setEditName] = useState("");
   const [editRole, setEditRole] = useState<Player["role"]>("BA");
@@ -899,6 +938,8 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const [editOwnerId, setEditOwnerId] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editBusy, setEditBusy] = useState(false);
+  const [editMessage, setEditMessage] = useState("");
+  const [editOwnerDropdownOpen, setEditOwnerDropdownOpen] = useState(false);
   const [loadVersion, setLoadVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [squadRoleFilter, setSquadRoleFilter] = useState<"ALL" | Player["role"]>("ALL");
@@ -920,6 +961,11 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setPointsError("");
     setAvailabilityMessage("");
     setExpandedPlayer("");
+    setEditingPlayerId("");
+    setEditMessage("");
+    setEditOwnerDropdownOpen(false);
+    setNewPlayerOwnerPickerOpen(false);
+    setAddMessage("");
     setSquadRoleFilter("ALL");
     setSquadAvailabilityFilter("ALL");
     setSquadOwnerFilter("ALL");
@@ -928,10 +974,10 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setFiltersExpanded(false);
     setLoading(true);
     Promise.all([
-      supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name,team:cricket_teams(code)),fixture:fixtures!inner(league_id)").eq("fixture.league_id", leagueId).not("published_at", "is", null),
+      supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name,team:cricket_teams(code)),fixture:fixtures!inner(league_id,match_number,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code))").eq("fixture.league_id", leagueId).not("published_at", "is", null),
       supabase.from("league_players").select("id,player_id,active,acquisition_price,bid_price,owner:league_members(id,display_name),player:players(full_name,role,team:cricket_teams(code))").eq("league_id", leagueId),
       supabase.from("league_members").select("id,display_name").eq("league_id", leagueId).eq("status", "active").in("role", ["owner", "league_admin"]).order("display_name"),
-      supabase.from("special_player_score_adjustments").select("player_id,adjustment_points,adjustment_type").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
+      supabase.from("special_player_score_adjustments").select("fixture_id,player_id,adjustment_points,adjustment_type").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
       supabase.from("special_player_rule_sets").select("marquee_mode_enabled").eq("league_id", leagueId).eq("active", true).maybeSingle(),
       supabase.from("league_format_configs").select("ownership_enabled").eq("league_id", leagueId).maybeSingle(),
     ]).then(([pointsResult, squadResult, ownerResult, royaltyResult, ruleResult, formatResult]) => {
@@ -953,15 +999,18 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
       });
     return () => { cancelled = true; };
   }, [leagueId, loadVersion]);
-  const playerTotals = useMemo(() => {
+  const latestPlayerPointRows = useMemo(() => {
     const latest = new Map<string, any>();
     for (const row of pointRows) {
       const playerKey = `${row.player?.team?.code ?? ""}:${row.player?.full_name ?? ""}`;
       const matchKey = `${row.fixture_id}:${playerKey}`;
       if (!latest.has(matchKey) || Number(latest.get(matchKey).calculation_version) < Number(row.calculation_version)) latest.set(matchKey, row);
     }
+    return [...latest.values()];
+  }, [pointRows]);
+  const playerTotals = useMemo(() => {
     const totals = new Map<string, { matches: number; batting: number; bowling: number; fielding: number; bonus: number; total: number }>();
-    for (const row of latest.values()) {
+    for (const row of latestPlayerPointRows) {
       const key = `${row.player?.team?.code ?? ""}:${row.player?.full_name ?? ""}`;
       const current = totals.get(key) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 };
       totals.set(key, {
@@ -974,12 +1023,32 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
       });
     }
     return totals;
-  }, [pointRows]);
+  }, [latestPlayerPointRows]);
+  const playerMatchPoints = useMemo(() => {
+    const matches = new Map<string, any[]>();
+    for (const row of latestPlayerPointRows) {
+      const key = `${row.player?.team?.code ?? ""}:${row.player?.full_name ?? ""}`;
+      if (!row.player?.full_name) continue;
+      matches.set(key, [...(matches.get(key) ?? []), row]);
+    }
+    for (const rows of matches.values()) rows.sort((left, right) => Number(right.fixture?.match_number ?? 0) - Number(left.fixture?.match_number ?? 0));
+    return matches;
+  }, [latestPlayerPointRows]);
   const playerRoyaltyTotals = useMemo(() => {
     const totals = new Map<string, number>();
     if (!royaltyMode) return totals;
     for (const row of royaltyRows) totals.set(row.player_id, (totals.get(row.player_id) ?? 0) + Number(row.adjustment_points ?? 0));
     return totals;
+  }, [royaltyRows, royaltyMode]);
+  const playerRoyaltyByFixture = useMemo(() => {
+    const royalties = new Map<string, Map<string, number>>();
+    if (!royaltyMode) return royalties;
+    for (const row of royaltyRows) {
+      const byFixture = royalties.get(row.player_id) ?? new Map<string, number>();
+      byFixture.set(row.fixture_id, (byFixture.get(row.fixture_id) ?? 0) + Number(row.adjustment_points ?? 0));
+      royalties.set(row.player_id, byFixture);
+    }
+    return royalties;
   }, [royaltyRows, royaltyMode]);
   const filteredSquadPlayers = useMemo(() => squadPlayers.filter(player => {
     if (playerSearch.trim() && !player.name.toLocaleLowerCase().includes(playerSearch.trim().toLocaleLowerCase())) return false;
@@ -990,8 +1059,8 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     if (ownershipEnabled && squadOwnerFilter !== "ALL" && squadOwnerFilter !== "OPEN" && player.ownerId !== squadOwnerFilter) return false;
     return true;
   }).sort((a, b) => {
-    const aPoints = (playerTotals.get(`${a.team}:${a.name}`)?.total ?? 0) + (playerRoyaltyTotals.get(a.playerId) ?? 0);
-    const bPoints = (playerTotals.get(`${b.team}:${b.name}`)?.total ?? 0) + (playerRoyaltyTotals.get(b.playerId) ?? 0);
+    const aPoints = playerTotals.get(`${a.team}:${a.name}`)?.total ?? 0;
+    const bPoints = playerTotals.get(`${b.team}:${b.name}`)?.total ?? 0;
     if (squadSortMode === "POINTS") return bPoints - aPoints || a.name.localeCompare(b.name);
     if (squadSortMode === "COST_DESC") return b.price - a.price || a.name.localeCompare(b.name);
     if (squadSortMode === "COST_ASC") return a.price - b.price || a.name.localeCompare(b.name);
@@ -1000,20 +1069,30 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const displayedTeams = useMemo(() => teams.filter(team => filteredSquadPlayers.some(player => player.team === team)), [teams, filteredSquadPlayers]);
   const squadFiltersApplied = !!playerSearch.trim() || squadRoleFilter !== "ALL" || squadAvailabilityFilter !== "ALL" || (ownershipEnabled && squadOwnerFilter !== "ALL") || squadSortMode !== "NAME";
   const activeFilterCount = Number(squadRoleFilter !== "ALL") + Number(squadAvailabilityFilter !== "ALL") + Number(ownershipEnabled && squadOwnerFilter !== "ALL") + Number(squadSortMode !== "NAME");
+  const minimumSelectionCost = useMemo(() => {
+    const activePositiveCosts = squadPlayers
+      .filter(player => player.active && Number.isFinite(player.price) && player.price > 0)
+      .map(player => player.price);
+    return activePositiveCosts.length ? Math.min(...activePositiveCosts) : 0;
+  }, [squadPlayers]);
+  const minimumSelectionCostInput = minimumSelectionCost > 0 ? String(minimumSelectionCost) : "";
+  const minimumSelectionCostLabel = minimumSelectionCost > 0 ? `₹${minimumSelectionCost.toFixed(1)}m` : "unavailable";
   const toggleTeam = (team: string) => setExpandedTeams(current => current.includes(team) ? current.filter(code => code !== team) : [...current, team]);
   const allExpanded = displayedTeams.length > 0 && displayedTeams.every(team => expandedTeams.includes(team));
   const openEditPlayer = (player: LeagueSquadPlayer) => {
-    if (editingPlayerId === player.leaguePlayerId) { setEditingPlayerId(""); return; }
     setEditingPlayerId(player.leaguePlayerId);
-    setEditName(player.name); setEditRole(player.role); setEditCost(String(player.price)); setEditOwnerId(player.ownerId); setEditActive(player.active); setAvailabilityMessage("");
+    setEditName(player.name); setEditRole(player.role); setEditCost(String(player.price)); setEditOwnerId(player.ownerId || ""); setEditActive(player.active); setEditMessage(""); setEditOwnerDropdownOpen(false); setAvailabilityMessage("");
   };
+  const closeEditPlayer = () => { if (editBusy) return; setEditingPlayerId(""); setEditMessage(""); setEditOwnerDropdownOpen(false); };
   const savePlayer = async (player: LeagueSquadPlayer) => {
     const cost = Number(editCost);
-    if (!editName.trim()) { setAvailabilityMessage("Player name is required."); return; }
-    if (!Number.isFinite(cost) || cost < 0) { setAvailabilityMessage("Selection cost must be zero or greater."); return; }
+    if (!editName.trim()) { setEditMessage("Player name is required."); return; }
+    if (!editCost.trim() || !Number.isFinite(cost) || minimumSelectionCost <= 0 || cost < minimumSelectionCost) { setEditMessage(`Selection cost cannot be below the current IPL minimum of ${minimumSelectionCostLabel}.`); return; }
+    const hasChanges = editName.trim() !== player.name || editRole !== player.role || cost !== player.price || editActive !== player.active || (ownershipEnabled && editOwnerId !== (player.ownerId || ""));
+    if (!hasChanges) return;
     if (playerActionLock.current) return;
     playerActionLock.current = true;
-    setEditBusy(true); setAvailabilityMessage("");
+    setEditBusy(true); setEditMessage(""); setAvailabilityMessage("");
     let error: any = null;
     try {
       ({ error } = await supabase.rpc("edit_league_player", { p_league_player_id: player.leaguePlayerId, p_full_name: editName.trim(), p_role: editRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? editOwnerId || null : null, p_active: editActive }));
@@ -1021,24 +1100,26 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
       playerActionLock.current = false;
       setEditBusy(false);
     }
-    if (error) { const detail = userActionError(error, "Player update"); setAvailabilityMessage(detail); Alert.alert("Player not updated", detail); return; }
+    if (error) { const detail = userActionError(error, "Player update"); setEditMessage(detail); Alert.alert("Player not updated", detail); return; }
     setEditingPlayerId("");
+    setEditMessage("");
+    setEditOwnerDropdownOpen(false);
     setAvailabilityMessage(`${editName.trim()} updated. Auction bid price was preserved.`);
     setLoadVersion(version => version + 1);
     onAvailabilityChanged();
   };
   const openAddPlayer = (team: string) => {
     setAddingTeam(team);
-    setExpandedTeams(current => current.includes(team) ? current : [...current, team]);
-    setNewPlayerName(""); setNewPlayerRole("BA"); setNewPlayerCost("0"); setNewPlayerOwnerId(""); setAvailabilityMessage("");
+    setNewPlayerName(""); setNewPlayerRole("BA"); setNewPlayerCost(minimumSelectionCostInput); setNewPlayerOwnerId(""); setNewPlayerOwnerPickerOpen(false); setAddMessage(""); setAvailabilityMessage("");
   };
+  const closeAddPlayer = () => { if (addBusy) return; setAddingTeam(""); setNewPlayerOwnerPickerOpen(false); setAddMessage(""); };
   const addReplacementPlayer = async () => {
     const cost = Number(newPlayerCost);
-    if (!newPlayerName.trim()) { setAvailabilityMessage("Player name is required."); return; }
-    if (!Number.isFinite(cost) || cost < 0) { setAvailabilityMessage("Selection cost must be zero or greater."); return; }
+    if (!newPlayerName.trim()) { setAddMessage("Player name is required."); return; }
+    if (!newPlayerCost.trim() || !Number.isFinite(cost) || minimumSelectionCost <= 0 || cost < minimumSelectionCost) { setAddMessage(`Selection cost cannot be below the current IPL minimum of ${minimumSelectionCostLabel}.`); return; }
     if (playerActionLock.current) return;
     playerActionLock.current = true;
-    setAddBusy(true); setAvailabilityMessage("");
+    setAddBusy(true); setAddMessage(""); setAvailabilityMessage("");
     let error: any = null;
     try {
       ({ error } = await supabase.rpc("add_league_replacement_player", { p_league_id: leagueId, p_team_code: addingTeam, p_full_name: newPlayerName.trim(), p_role: newPlayerRole, p_selection_cost: cost, p_owner_member_id: ownershipEnabled ? newPlayerOwnerId || null : null }));
@@ -1046,9 +1127,9 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
       playerActionLock.current = false;
       setAddBusy(false);
     }
-    if (error) { const detail = userActionError(error, "Player addition"); setAvailabilityMessage(detail); Alert.alert("Player not added", detail); return; }
+    if (error) { const detail = userActionError(error, "Player addition"); setAddMessage(detail); Alert.alert("Player not added", detail); return; }
     const addedName = newPlayerName.trim();
-    setAddingTeam(""); setNewPlayerName(""); setNewPlayerOwnerId("");
+    setAddingTeam(""); setNewPlayerName(""); setNewPlayerOwnerId(""); setNewPlayerOwnerPickerOpen(false); setAddMessage("");
     setAvailabilityMessage(`${addedName} added to ${addingTeam}.`);
     setLoadVersion(version => version + 1);
     onAvailabilityChanged();
@@ -1057,6 +1138,18 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   if (pointsError) return <LoadError message={pointsError} onRetry={() => setLoadVersion(version => version + 1)} />;
   const activePlayerCount = squadPlayers.filter(player => player.active).length;
   const inactivePlayerCount = squadPlayers.length - activePlayerCount;
+  const editingPlayer = squadPlayers.find(player => player.leaguePlayerId === editingPlayerId) ?? null;
+  const selectedEditOwner = owners.find(owner => owner.id === editOwnerId);
+  const selectedEditOwnerName = selectedEditOwner?.display_name ?? "Open player";
+  const selectedNewPlayerOwner = owners.find(owner => owner.id === newPlayerOwnerId);
+  const selectedNewPlayerOwnerName = selectedNewPlayerOwner?.display_name ?? "Open player";
+  const addCostValid = minimumSelectionCost > 0 && !!newPlayerCost.trim() && Number.isFinite(Number(newPlayerCost)) && Number(newPlayerCost) >= minimumSelectionCost;
+  const addFormValid = !!addingTeam && !!newPlayerName.trim() && addCostValid;
+  const addSubmitDisabled = addBusy || !addFormValid;
+  const editCostValid = minimumSelectionCost > 0 && !!editCost.trim() && Number.isFinite(Number(editCost)) && Number(editCost) >= minimumSelectionCost;
+  const editFormValid = !!editingPlayer && !!editName.trim() && editCostValid;
+  const editFormDirty = !!editingPlayer && (editName.trim() !== editingPlayer.name || editRole !== editingPlayer.role || Number(editCost) !== editingPlayer.price || editActive !== editingPlayer.active || (ownershipEnabled && editOwnerId !== (editingPlayer.ownerId || "")));
+  const editSubmitDisabled = editBusy || !editFormValid || !editFormDirty;
   return <View>
     <View style={x.directoryHero}>
       <View style={x.directoryHeroGlow} />
@@ -1114,64 +1207,96 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
             </View>
             <View style={x.squadTeamChevronBubble}><Text style={x.squadTeamChevron}>{collapsed ? "▼" : "▲"}</Text></View>
           </TouchableOpacity>
-          {canEdit ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={addingTeam === team ? `Cancel adding a ${team} player` : `Add a ${team} player`} accessibilityState={{ expanded: addingTeam === team }} style={[x.squadAddPlayerButton, addingTeam === team && x.squadAddPlayerButtonActive]} onPress={() => addingTeam === team ? setAddingTeam("") : openAddPlayer(team)}><Text style={[x.squadAddPlayerButtonText, addingTeam === team && x.squadAddPlayerButtonTextActive]}>{addingTeam === team ? "Cancel" : "+ Add"}</Text></TouchableOpacity> : null}
+          {canEdit ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Add a ${team} player`} accessibilityHint="Opens the replacement player form" style={x.squadAddPlayerButton} onPress={() => openAddPlayer(team)}><Text style={x.squadAddPlayerButtonText}>+ Add</Text></TouchableOpacity> : null}
         </View>
-        {addingTeam === team ? <View style={x.squadAddForm}>
-          <Text style={x.squadAddFormTitle}>Add replacement to {team}</Text>
-          <TextInput accessibilityLabel={`New ${team} player name`} style={x.squadAddInput} value={newPlayerName} onChangeText={setNewPlayerName} placeholder="Player name" placeholderTextColor="#8B9893" />
-          <View style={x.squadAddRoles}>{(["BA", "WK", "AL", "BO"] as Player["role"][]).map(role => <TouchableOpacity key={role} accessibilityRole="button" accessibilityLabel={`Set role to ${roleLabel[role]}`} accessibilityState={{ selected: newPlayerRole === role }} style={[x.squadAddRole, newPlayerRole === role && x.squadAddRoleActive]} onPress={() => setNewPlayerRole(role)}><Text style={[x.squadAddRoleText, newPlayerRole === role && x.squadAddRoleTextActive]}>{roleLabel[role]}</Text></TouchableOpacity>)}</View>
-          <Text style={x.squadAddLabel}>Selection cost (₹m)</Text>
-          <TextInput accessibilityLabel="New player selection cost in millions" style={x.squadAddInput} value={newPlayerCost} onChangeText={setNewPlayerCost} keyboardType="decimal-pad" placeholder="Selection cost (₹m)" placeholderTextColor="#8B9893" />
-          {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assign to</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><OwnerChoice owner="Open player" active={!newPlayerOwnerId} onPress={() => setNewPlayerOwnerId("")} />{owners.map(owner => <OwnerChoice key={owner.id} owner={owner.display_name} active={newPlayerOwnerId === owner.id} onPress={() => setNewPlayerOwnerId(owner.id)} />)}</ScrollView></> : <Text style={x.squadEditBidNote}>All-open-player league · this player remains open</Text>}
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Add player to ${team}`} accessibilityState={{ disabled: addBusy, busy: addBusy }} disabled={addBusy} style={[x.squadAddSubmit, addBusy && { opacity: 0.6 }]} onPress={addReplacementPlayer}>{addBusy ? <ActivityIndicator color="#10251F" /> : <Text style={x.squadAddSubmitText}>Add player</Text>}</TouchableOpacity>
-        </View> : null}
         {!collapsed ? teamPlayers.map(player => {
           const playerKey = `${team}:${player.name}`;
-          const points = playerTotals.get(playerKey);
+          const points = playerTotals.get(playerKey) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 };
           const royalty = playerRoyaltyTotals.get(player.playerId) ?? 0;
+          const royaltyByFixture = playerRoyaltyByFixture.get(player.playerId) ?? new Map<string, number>();
+          const playerMatchRows: OwnerPlayerMatchScore[] = (playerMatchPoints.get(playerKey) ?? []).map(row => {
+            const matchRoyalty = royaltyMode ? (royaltyByFixture.get(row.fixture_id) ?? 0) : 0;
+            return {
+              fixtureId: row.fixture_id,
+              matchNumber: Number(row.fixture?.match_number ?? 0),
+              home: row.fixture?.home?.code ?? "—",
+              away: row.fixture?.away?.code ?? "—",
+              batting: Number(row.batting_points ?? 0),
+              bowling: Number(row.bowling_points ?? 0),
+              fielding: Number(row.fielding_points ?? 0),
+              bonus: Number(row.bonus_points ?? 0),
+              royalty: matchRoyalty,
+              total: Number(row.total_points ?? 0),
+            };
+          });
+          const bestMatch = playerMatchRows.reduce<OwnerPlayerMatchScore | null>((best, match) => !best || match.total > best.total ? match : best, null);
+          const insights: PlayerPerformanceInsights = { average: points.matches ? points.total / points.matches : 0, bestMatch };
+          const career = { matches: points.matches, batting: points.batting, bowling: points.bowling, fielding: points.fielding, bonus: points.bonus, royalty: royaltyMode ? royalty : 0, total: points.total };
           const playerOpen = expandedPlayer === playerKey;
           return <View key={playerKey}>
-            <View style={[x.squadPlayerRow, !player.active && x.squadPlayerRowInactive]}>
-              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${player.name}, ${roleLabel[player.role]}, ${points ? `${fmt(points.total + royalty)} points` : "points pending"}`} accessibilityState={{ expanded: playerOpen, disabled: !points }} disabled={!points} style={x.squadPlayerMain} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}>
-                <View style={x.grow}><View style={x.squadPlayerNameRow}><Text style={[x.squadPlayerName, !player.active && x.squadPlayerNameInactive]}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.squadSelectionCost}>₹{player.price.toFixed(1)}m</Text></View><View style={x.squadPlayerOwnerRow}>{!player.active ? <Text style={x.squadInactiveLabel}>Inactive</Text> : null}<OwnerBadge owner={player.owner} label={player.owner === "Available" ? "Open player" : player.owner} compact />{player.owner !== "Available" ? <Text style={x.squadPlayerOwner}>Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`}</Text> : null}</View></View>
-                <Text style={x.roleText}>{roleLabel[player.role]}</Text>
-                {points ? <><View style={x.squadScoreBlock}>{royaltyMode && royalty > 0 ? <Text style={x.squadRoyaltyPoints}>ROY {fmt(royalty)}</Text> : null}<Text style={x.squadPlayerPoints}>{fmt(points.total + royalty)} pts</Text></View><Text style={x.squadPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></> : <Text style={[x.squadPointsPending, royaltyMode && royalty > 0 && x.royaltyColumn]}>{royaltyMode && royalty > 0 ? `ROY ${fmt(royalty)}` : "0 pts"}</Text>}
+            <View style={[x.squadPlayerRow, compact && x.playerPoolMobileRow, !player.active && x.squadPlayerRowInactive]}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${player.name}, ${roleLabel[player.role]}, ${fmt(points.total)} fantasy points${royaltyMode ? `, ${fmt(royalty)} royalty generated` : ""}; ${playerOpen ? "hide" : "show"} match history`} accessibilityHint="Shows this player's points for each scored match" accessibilityState={{ expanded: playerOpen }} style={[x.squadPlayerMain, compact && x.playerPoolMobileMain]} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}>
+                {compact ? <><View style={x.playerPoolMobileIdentity}>
+                  <View style={x.playerPoolMobileNameRow}><Text numberOfLines={2} style={[x.squadPlayerName, x.playerPoolMobileName, !player.active && x.squadPlayerNameInactive]}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View>
+                  <View style={x.playerPoolMobileMetaRow}>{!player.active ? <Text style={x.squadInactiveLabel}>Inactive</Text> : null}<Text style={[x.roleText, x.playerPoolMobileRole]}>{roleLabel[player.role]}</Text><Text style={x.squadSelectionCost}>₹{player.price.toFixed(1)}m</Text><OwnerBadge owner={player.owner} label={player.owner === "Available" ? "Open player" : player.owner} compact /></View>
+                  {player.owner !== "Available" ? <Text numberOfLines={1} style={x.playerPoolMobileBid}>Auction bid {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`}</Text> : null}
+                </View><View style={[x.squadScoreBlock, x.playerPoolMobileScoreBlock]}>{royaltyMode && royalty > 0 ? <View style={x.playerPoolRoyaltyBlock}><Text style={x.playerPoolRoyaltyValue}>{fmt(royalty)}</Text><Text style={x.playerPoolRoyaltyLabel}>ROY</Text></View> : null}<View style={x.playerPoolFantasyBlock}><Text style={x.squadPlayerPoints}>{fmt(points.total)}</Text><Text style={x.playerPoolFantasyLabel}>FANTASY PTS</Text></View></View><View style={x.playerPoolMobileChevron}><Text style={x.squadPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></View></> : <><View style={x.grow}><View style={x.squadPlayerNameRow}><Text style={[x.squadPlayerName, !player.active && x.squadPlayerNameInactive]}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.squadSelectionCost}>₹{player.price.toFixed(1)}m</Text></View><View style={x.squadPlayerOwnerRow}>{!player.active ? <Text style={x.squadInactiveLabel}>Inactive</Text> : null}<OwnerBadge owner={player.owner} label={player.owner === "Available" ? "Open player" : player.owner} compact />{player.owner !== "Available" ? <Text style={x.squadPlayerOwner}>Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`}</Text> : null}</View></View><Text style={x.roleText}>{roleLabel[player.role]}</Text><View style={x.squadScoreBlock}>{royaltyMode && royalty > 0 ? <View style={x.playerPoolRoyaltyBlock}><Text style={x.playerPoolRoyaltyValue}>{fmt(royalty)}</Text><Text style={x.playerPoolRoyaltyLabel}>ROY</Text></View> : null}<View style={x.playerPoolFantasyBlock}><Text style={x.squadPlayerPoints}>{fmt(points.total)}</Text><Text style={x.playerPoolFantasyLabel}>FANTASY PTS</Text></View></View><Text style={x.squadPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></>}
               </TouchableOpacity>
-              {canEdit ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={editingPlayerId === player.leaguePlayerId ? `Cancel editing ${player.name}` : `Edit ${player.name}`} accessibilityState={{ expanded: editingPlayerId === player.leaguePlayerId }} style={x.squadEditButton} onPress={() => openEditPlayer(player)}><Text style={x.squadEditButtonText}>{editingPlayerId === player.leaguePlayerId ? "Cancel" : "Edit"}</Text></TouchableOpacity> : null}
+              {canEdit ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit ${player.name}`} accessibilityHint="Opens the player editor" style={[x.squadEditButton, compact && x.playerPoolMobileEditButton]} onPress={() => openEditPlayer(player)}><Text style={x.squadEditButtonText}>{compact ? "Edit player details" : "Edit"}</Text></TouchableOpacity> : null}
             </View>
-            {editingPlayerId === player.leaguePlayerId ? <View style={x.squadEditForm}>
-              <Text style={x.squadAddFormTitle}>Edit {player.name}</Text>
-              <Text style={x.squadAddLabel}>Player name</Text>
-              <TextInput accessibilityLabel={`Player name for ${player.name}`} style={x.squadAddInput} value={editName} onChangeText={setEditName} placeholder="Player name" placeholderTextColor="#8B9893" />
-              <Text style={x.squadAddLabel}>Role</Text>
-              <View style={x.squadAddRoles}>{(["BA", "WK", "AL", "BO"] as Player["role"][]).map(role => <TouchableOpacity key={role} accessibilityRole="button" accessibilityLabel={`Set role to ${roleLabel[role]}`} accessibilityState={{ selected: editRole === role }} style={[x.squadAddRole, editRole === role && x.squadAddRoleActive]} onPress={() => setEditRole(role)}><Text style={[x.squadAddRoleText, editRole === role && x.squadAddRoleTextActive]}>{roleLabel[role]}</Text></TouchableOpacity>)}</View>
-              <Text style={x.squadAddLabel}>Selection cost (₹m)</Text>
-              <TextInput accessibilityLabel={`Selection cost for ${player.name} in millions`} style={x.squadAddInput} value={editCost} onChangeText={setEditCost} keyboardType="decimal-pad" placeholder="Selection cost (₹m)" placeholderTextColor="#8B9893" />
-              {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assigned owner</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.squadOwnerChoices}><OwnerChoice owner="Open player" active={!editOwnerId} onPress={() => setEditOwnerId("")} />{owners.map(owner => <OwnerChoice key={owner.id} owner={owner.display_name} active={editOwnerId === owner.id} onPress={() => setEditOwnerId(owner.id)} />)}</ScrollView></> : <Text style={x.squadEditBidNote}>All-open-player league · owner assignment is disabled</Text>}
-              <Text style={x.squadAddLabel}>Availability</Text>
-              <View style={x.squadEditAvailability}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Set player active" accessibilityState={{ selected: editActive }} style={[x.squadEditStatus, editActive && x.squadEditStatusActive]} onPress={() => setEditActive(true)}><Text style={[x.squadEditStatusText, editActive && x.squadEditStatusTextActive]}>Active</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Deactivate player" accessibilityState={{ selected: !editActive }} style={[x.squadEditStatus, !editActive && x.squadEditStatusInactive]} onPress={() => setEditActive(false)}><Text style={[x.squadEditStatusText, !editActive && x.squadEditStatusTextInactive]}>Deactivate</Text></TouchableOpacity></View>
-              {ownershipEnabled ? <Text style={x.squadEditBidNote}>Completed bid: {player.bidPrice == null ? "—" : `₹${player.bidPrice.toFixed(1)}m`} · read-only</Text> : null}
-              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Save changes to ${player.name}`} accessibilityState={{ disabled: editBusy, busy: editBusy }} disabled={editBusy} style={[x.squadAddSubmit, editBusy && { opacity: 0.6 }]} onPress={() => savePlayer(player)}>{editBusy ? <ActivityIndicator color="#10251F" /> : <Text style={x.squadAddSubmitText}>Save changes</Text>}</TouchableOpacity>
-            </View> : null}
-            {playerOpen && points ? <View style={x.squadPointsBreakdown}>
-              <BreakdownLine label="Scored matches" value={points.matches} />
-              <BreakdownLine label="Batting" value={points.batting} />
-              <BreakdownLine label="Bowling" value={points.bowling} />
-              <BreakdownLine label="Fielding" value={points.fielding} />
-              <BreakdownLine label="Bonus" value={points.bonus} />
-              {royaltyMode ? <BreakdownLine label="Royalty earned" value={royalty} /> : null}
-              <BreakdownLine label="Total points" value={points.total + royalty} strong />
-            </View> : null}
+            {playerOpen ? <OwnerPlayerMatchBreakdown matches={playerMatchRows} compact={compact} royaltyMode={royaltyMode} career={career} fantasyOnly insights={insights} onOpenScorecard={openScorecard} /> : null}
           </View>;
         }) : null}
       </View>;
     })}
+    <Modal visible={!!addingTeam} transparent animationType="fade" statusBarTranslucent onRequestClose={closeAddPlayer}>
+      <KeyboardAvoidingView style={x.playerEditModalOverlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close replacement player form" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={closeAddPlayer} />
+        {addingTeam ? <View nativeID="player-pool-add-dialog" accessibilityViewIsModal accessibilityLabel={`Add replacement player to ${addingTeam}`} style={[x.playerEditModalCard, compact && x.playerEditModalCardCompact]} onStartShouldSetResponder={() => true}>
+          <View style={x.playerEditModalHeader}><View style={x.playerEditModalHeaderIdentity}><IplTeamBadge code={addingTeam} /><View style={x.grow}><Text style={x.playerEditModalEyebrow}>PLAYER POOL ADMIN</Text><Text numberOfLines={2} style={x.playerEditModalTitle}>Add replacement player</Text><Text style={x.playerAddModalTeam}>Assigning to {addingTeam} squad</Text></View></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close replacement player form" disabled={addBusy} style={x.playerEditModalClose} onPress={closeAddPlayer}><Text style={x.playerEditModalCloseText}>×</Text></TouchableOpacity></View>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={x.playerEditModalBody}>
+            <View style={x.playerAddNotice}><Text style={x.playerAddNoticeIcon}>＋</Text><View style={x.grow}><Text style={x.playerAddNoticeTitle}>New squad entry</Text><Text style={x.playerAddNoticeText}>Use this only when a replacement or newly registered IPL player must be added.</Text></View></View>
+            <Text style={x.squadAddLabel}>Player name</Text>
+            <TextInput autoFocus accessibilityLabel={`New ${addingTeam} player name`} style={x.squadAddInput} value={newPlayerName} onChangeText={value => { setNewPlayerName(value); if (addMessage) setAddMessage(""); }} placeholder="Enter full player name" placeholderTextColor="#8B9893" />
+            <Text style={x.squadAddLabel}>Role</Text>
+            <View style={x.squadAddRoles}>{(["BA", "WK", "AL", "BO"] as Player["role"][]).map(role => <TouchableOpacity key={role} accessibilityRole="button" accessibilityLabel={`Set role to ${roleLabel[role]}`} accessibilityState={{ selected: newPlayerRole === role }} style={[x.squadAddRole, newPlayerRole === role && x.squadAddRoleActive]} onPress={() => { setNewPlayerRole(role); if (addMessage) setAddMessage(""); }}><Text style={[x.squadAddRoleText, newPlayerRole === role && x.squadAddRoleTextActive]}>{roleLabel[role]}</Text></TouchableOpacity>)}</View>
+            <Text style={x.squadAddLabel}>Selection cost (₹m) · Minimum {minimumSelectionCostLabel}</Text>
+            <TextInput accessibilityLabel={`New player selection cost in millions, minimum ${minimumSelectionCostLabel}`} style={x.squadAddInput} value={newPlayerCost} onChangeText={value => { setNewPlayerCost(value); if (addMessage) setAddMessage(""); }} keyboardType="decimal-pad" placeholder={minimumSelectionCostInput || "Selection cost"} placeholderTextColor="#8B9893" />
+            {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assigned owner</Text><View style={x.playerEditOwnerSelect}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Assigned owner, ${selectedNewPlayerOwnerName}`} accessibilityHint="Opens the owner picker" accessibilityState={{ expanded: newPlayerOwnerPickerOpen }} style={[x.playerEditOwnerTrigger, newPlayerOwnerPickerOpen && x.playerEditOwnerTriggerOpen]} onPress={() => setNewPlayerOwnerPickerOpen(true)}><View style={x.playerEditOwnerTriggerIdentity}><OwnerBadge owner={selectedNewPlayerOwner?.display_name ?? "Available"} label={selectedNewPlayerOwnerName} /><Text style={x.playerEditOwnerTriggerHint}>Tap to change</Text></View><Text style={x.playerEditOwnerChevron}>⌄</Text></TouchableOpacity></View></> : <Text style={x.squadEditBidNote}>All-open-player league · this player remains open</Text>}
+            {addMessage ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={x.playerEditModalError}><Text style={x.playerEditModalErrorText}>{addMessage}</Text></View> : null}
+          </ScrollView>
+          <View style={x.playerEditModalFooter}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel adding replacement player" disabled={addBusy} style={x.playerEditModalCancel} onPress={closeAddPlayer}><Text style={x.playerEditModalCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Add player to ${addingTeam}`} accessibilityHint={!addFormValid ? "Enter a player name and valid selection cost first" : "Adds this player to the selected IPL squad"} accessibilityState={{ disabled: addSubmitDisabled, busy: addBusy }} disabled={addSubmitDisabled} style={[x.playerEditModalSave, addSubmitDisabled && x.playerEditModalSaveDisabled]} onPress={addReplacementPlayer}>{addBusy ? <ActivityIndicator color="#10251F" /> : <Text style={[x.playerEditModalSaveText, addSubmitDisabled && x.playerEditModalSaveTextDisabled]}>Add to {addingTeam}</Text>}</TouchableOpacity></View>
+        </View> : null}
+      </KeyboardAvoidingView>
+    </Modal>
+    <Modal visible={!!editingPlayer} transparent animationType="fade" statusBarTranslucent onRequestClose={closeEditPlayer}>
+      <KeyboardAvoidingView style={x.playerEditModalOverlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close player editor" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={closeEditPlayer} />
+        {editingPlayer ? <View nativeID="player-pool-edit-dialog" accessibilityViewIsModal accessibilityLabel={`Edit ${editingPlayer.name}`} style={[x.playerEditModalCard, compact && x.playerEditModalCardCompact]} onStartShouldSetResponder={() => true}>
+          <View style={x.playerEditModalHeader}><View style={x.playerEditModalHeaderIdentity}><IplTeamBadge code={editingPlayer.team} /><View style={x.grow}><Text style={x.playerEditModalEyebrow}>PLAYER POOL ADMIN</Text><Text numberOfLines={2} style={x.playerEditModalTitle}>Edit {editingPlayer.name}</Text></View></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close player editor" disabled={editBusy} style={x.playerEditModalClose} onPress={closeEditPlayer}><Text style={x.playerEditModalCloseText}>×</Text></TouchableOpacity></View>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={x.playerEditModalBody}>
+            <Text style={x.squadAddLabel}>Player name</Text>
+            <TextInput accessibilityLabel={`Player name for ${editingPlayer.name}`} style={x.squadAddInput} value={editName} onChangeText={value => { setEditName(value); if (editMessage) setEditMessage(""); }} placeholder="Player name" placeholderTextColor="#8B9893" />
+            <Text style={x.squadAddLabel}>Role</Text>
+            <View style={x.squadAddRoles}>{(["BA", "WK", "AL", "BO"] as Player["role"][]).map(role => <TouchableOpacity key={role} accessibilityRole="button" accessibilityLabel={`Set role to ${roleLabel[role]}`} accessibilityState={{ selected: editRole === role }} style={[x.squadAddRole, editRole === role && x.squadAddRoleActive]} onPress={() => { setEditRole(role); if (editMessage) setEditMessage(""); }}><Text style={[x.squadAddRoleText, editRole === role && x.squadAddRoleTextActive]}>{roleLabel[role]}</Text></TouchableOpacity>)}</View>
+            <Text style={x.squadAddLabel}>Selection cost (₹m) · Minimum {minimumSelectionCostLabel}</Text>
+            <TextInput accessibilityLabel={`Selection cost for ${editingPlayer.name} in millions, minimum ${minimumSelectionCostLabel}`} style={x.squadAddInput} value={editCost} onChangeText={value => { setEditCost(value); if (editMessage) setEditMessage(""); }} keyboardType="decimal-pad" placeholder={minimumSelectionCostInput || "Selection cost"} placeholderTextColor="#8B9893" />
+            {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assigned owner</Text><View style={x.playerEditOwnerSelect}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Assigned owner, ${selectedEditOwnerName}`} accessibilityHint="Opens the owner picker" accessibilityState={{ expanded: editOwnerDropdownOpen }} style={[x.playerEditOwnerTrigger, editOwnerDropdownOpen && x.playerEditOwnerTriggerOpen]} onPress={() => setEditOwnerDropdownOpen(true)}><View style={x.playerEditOwnerTriggerIdentity}><OwnerBadge owner={selectedEditOwner?.display_name ?? "Available"} label={selectedEditOwnerName} /><Text style={x.playerEditOwnerTriggerHint}>Tap to change</Text></View><Text style={x.playerEditOwnerChevron}>⌄</Text></TouchableOpacity></View></> : <Text style={x.squadEditBidNote}>All-open-player league · owner assignment is disabled</Text>}
+            <Text style={x.squadAddLabel}>Availability</Text>
+            <View style={x.squadEditAvailability}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Set player active" accessibilityState={{ selected: editActive }} style={[x.squadEditStatus, editActive && x.squadEditStatusActive]} onPress={() => { setEditActive(true); if (editMessage) setEditMessage(""); }}><Text style={[x.squadEditStatusText, editActive && x.squadEditStatusTextActive]}>Active</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel="Deactivate player" accessibilityState={{ selected: !editActive }} style={[x.squadEditStatus, !editActive && x.squadEditStatusInactive]} onPress={() => { setEditActive(false); if (editMessage) setEditMessage(""); }}><Text style={[x.squadEditStatusText, !editActive && x.squadEditStatusTextInactive]}>Deactivate</Text></TouchableOpacity></View>
+            {ownershipEnabled ? <View style={x.playerEditReadOnly}><Text style={x.playerEditReadOnlyLabel}>AUCTION BID · READ ONLY</Text><Text style={x.playerEditReadOnlyValue}>{editingPlayer.bidPrice == null ? "—" : `₹${editingPlayer.bidPrice.toFixed(1)}m`}</Text></View> : null}
+            {editMessage ? <View accessibilityLiveRegion="polite" style={x.playerEditModalError}><Text style={x.playerEditModalErrorText}>{editMessage}</Text></View> : null}
+          </ScrollView>
+          <View style={x.playerEditModalFooter}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel editing player" disabled={editBusy} style={x.playerEditModalCancel} onPress={closeEditPlayer}><Text style={x.playerEditModalCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Save changes to ${editingPlayer.name}`} accessibilityHint={!editFormDirty ? "Change a player detail first" : !editFormValid ? "Correct the invalid fields first" : "Saves these player details"} accessibilityState={{ disabled: editSubmitDisabled, busy: editBusy }} disabled={editSubmitDisabled} style={[x.playerEditModalSave, editSubmitDisabled && x.playerEditModalSaveDisabled]} onPress={() => savePlayer(editingPlayer)}>{editBusy ? <ActivityIndicator color="#10251F" /> : <Text style={[x.playerEditModalSaveText, editSubmitDisabled && x.playerEditModalSaveTextDisabled]}>Save changes</Text>}</TouchableOpacity></View>
+        </View> : null}
+      </KeyboardAvoidingView>
+    </Modal>
+    <OwnerPickerModal visible={!!editingPlayer && editOwnerDropdownOpen} compact={compact} playerName={editingPlayer?.name ?? "this player"} owners={owners} selectedOwnerId={editOwnerId} onSelect={ownerId => { setEditOwnerId(ownerId); setEditOwnerDropdownOpen(false); if (editMessage) setEditMessage(""); }} onClose={() => setEditOwnerDropdownOpen(false)} />
+    <OwnerPickerModal visible={!!addingTeam && newPlayerOwnerPickerOpen} compact={compact} playerName={newPlayerName.trim() || `the new ${addingTeam} player`} owners={owners} selectedOwnerId={newPlayerOwnerId} onSelect={ownerId => { setNewPlayerOwnerId(ownerId); setNewPlayerOwnerPickerOpen(false); if (addMessage) setAddMessage(""); }} onClose={() => setNewPlayerOwnerPickerOpen(false)} />
   </View>;
 }
 
-export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId = "" }: { leagueId: string; currentOwner: string; requestedFixtureId?: string }) {
+export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId = "", requestedScorecardFixtureId = "", onCloseRequestedScorecard }: { leagueId: string; currentOwner: string; requestedFixtureId?: string; requestedScorecardFixtureId?: string; onCloseRequestedScorecard?: () => void }) {
   const { width: historyWidth } = useWindowDimensions();
   const compact = historyWidth < 620;
   const historyScrollRef = useRef<ScrollView>(null);
@@ -1209,8 +1334,8 @@ export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId =
     setExpandedMatch(requestedFixtureId);
     setExpandedOwner("");
     setExpandedPlayer("");
-    setScorecardMatchId("");
-  }, [requestedFixtureId, matches]);
+    setScorecardMatchId(requestedScorecardFixtureId === requestedFixtureId ? requestedFixtureId : "");
+  }, [requestedFixtureId, requestedScorecardFixtureId, matches]);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -1268,7 +1393,7 @@ export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId =
   if (loading) return <ScrollView contentContainerStyle={x.screen}><Loading /></ScrollView>;
   if (error) return <ScrollView contentContainerStyle={x.screen}><LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} /></ScrollView>;
   const scorecardMatch = matches.find(match => match.id === scorecardMatchId);
-  if (scorecardMatch) return <ProductionScorecard match={scorecardMatch} royaltyAdjustments={royaltyAdjustments.filter(row => row.fixture_id === scorecardMatch.id)} onBack={() => setScorecardMatchId("")} />;
+  if (scorecardMatch) return <ProductionScorecard match={scorecardMatch} royaltyAdjustments={royaltyAdjustments.filter(row => row.fixture_id === scorecardMatch.id)} onBack={() => { setScorecardMatchId(""); onCloseRequestedScorecard?.(); }} />;
   const publishedCount = matches.filter(match => match.scoring_status === "published").length;
   const awaitingCount = matches.length - publishedCount;
   const lineupCount = matches.reduce((total, match) => total + Number(match.lineup_submissions?.filter((lineup: any) => lineup.status === "submitted" || lineup.status === "locked").length ?? 0), 0);
@@ -2019,6 +2144,30 @@ const x = StyleSheet.create(normalizeUiStyles({
   ownerMatchLedgerEyebrow: { color: UI_TOKENS.colors.muted, fontSize: 6, fontWeight: "900", letterSpacing: 0.8 },
   ownerMatchLedgerTitle: { color: UI_TOKENS.colors.ink, fontSize: 11, fontWeight: "900", marginTop: 2 },
   ownerMatchLedgerCount: { color: UI_TOKENS.colors.primary, backgroundColor: UI_TOKENS.colors.primarySoft, borderRadius: 9, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 5, fontSize: 7, fontWeight: "900" },
+  playerPoolInsights: { flexDirection: "row", backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: 10, marginBottom: 9, overflow: "hidden" },
+  playerPoolInsightsCompact: { flexWrap: "wrap" },
+  playerPoolInsight: { flex: 1, minWidth: 105, paddingHorizontal: 10, paddingVertical: 9, borderRightWidth: 1, borderRightColor: UI_TOKENS.colors.border },
+  playerPoolRoyaltyInsight: { backgroundColor: "#F7F0FC" },
+  playerPoolInsightLabel: { color: UI_TOKENS.colors.muted, fontSize: 6, fontWeight: "900", letterSpacing: 0.55 },
+  playerPoolInsightValue: { color: UI_TOKENS.colors.ink, fontSize: 13, lineHeight: 16, fontWeight: "900", marginTop: 3, fontVariant: ["tabular-nums"] },
+  playerPoolInsightMeta: { color: UI_TOKENS.colors.muted, fontSize: 7, lineHeight: 10, fontWeight: "700", marginTop: 1 },
+  playerPoolFormCard: { backgroundColor: "#071C3B", borderWidth: 1, borderColor: "#17395F", borderRadius: 12, paddingHorizontal: 12, paddingTop: 11, paddingBottom: 9, marginBottom: 9, overflow: "hidden" },
+  playerPoolFormCardCompact: { paddingHorizontal: 10, paddingTop: 10 },
+  playerPoolFormHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
+  playerPoolFormEyebrow: { color: "#9EB0C7", fontSize: 6, fontWeight: "900", letterSpacing: 0.75 },
+  playerPoolFormTitle: { color: "#FFFFFF", fontSize: 11, lineHeight: 14, fontWeight: "900", marginTop: 2 },
+  playerPoolFormPlot: { minHeight: 66, flexDirection: "row", alignItems: "flex-end", gap: 7, backgroundColor: "rgba(2, 13, 33, 0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", borderRadius: 10, paddingHorizontal: 9, paddingTop: 6, paddingBottom: 5 },
+  playerPoolFormPoint: { flex: 1, minWidth: 0, alignItems: "center" },
+  playerPoolFormValue: { color: "#FFFFFF", fontSize: 7, lineHeight: 9, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  playerPoolFormValueNegative: { color: "#FFB2B2" },
+  playerPoolFormTrack: { height: 42, width: "62%", minWidth: 8, maxWidth: 20, justifyContent: "flex-end", marginTop: 2 },
+  playerPoolFormTrackCompact: { height: 36 },
+  playerPoolFormBar: { width: "100%", minHeight: 5, borderTopLeftRadius: 4, borderTopRightRadius: 4 },
+  playerPoolFormBarPositive: { backgroundColor: UI_TOKENS.colors.accent },
+  playerPoolFormBarNegative: { backgroundColor: "#FF7171" },
+  playerPoolFormBarZero: { backgroundColor: "#62738B" },
+  playerPoolFormMatch: { color: "#91A3BC", fontSize: 6, lineHeight: 8, fontWeight: "900", marginTop: 3 },
+  playerPoolFormCaption: { color: "#91A3BC", fontSize: 6, lineHeight: 9, fontWeight: "700", marginTop: 6 },
   ownerMatchCard: { backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: 10, padding: 9, marginBottom: 7 },
   ownerMatchCardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   ownerMatchCardNumber: { color: UI_TOKENS.colors.primary, fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
@@ -2026,6 +2175,12 @@ const x = StyleSheet.create(normalizeUiStyles({
   ownerMatchCardTotal: { alignItems: "flex-end", marginLeft: 10 },
   ownerMatchCardTotalValue: { color: UI_TOKENS.colors.primary, fontSize: 15, lineHeight: 17, fontWeight: "900", fontVariant: ["tabular-nums"] },
   ownerMatchCardTotalLabel: { color: UI_TOKENS.colors.muted, fontSize: 5, fontWeight: "900", letterSpacing: 0.6 },
+  playerPoolScorecardButton: { minHeight: 44, flexDirection: "row", alignItems: "center", marginTop: 8, paddingHorizontal: 12, borderRadius: 9, backgroundColor: UI_TOKENS.colors.primarySoft, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong },
+  playerPoolScorecardIcon: { color: UI_TOKENS.colors.primary, fontSize: 14, fontWeight: "900", marginRight: 8 },
+  playerPoolScorecardText: { flex: 1, color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900" },
+  playerPoolScorecardArrow: { color: UI_TOKENS.colors.primary, fontSize: 18, lineHeight: 20, fontWeight: "900" },
+  playerPoolScorecardInline: { alignSelf: "flex-start", minHeight: 28, justifyContent: "center", marginTop: 3, paddingHorizontal: 7, borderRadius: 7, backgroundColor: UI_TOKENS.colors.primarySoft, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong },
+  playerPoolScorecardInlineText: { color: UI_TOKENS.colors.primary, fontSize: 7, fontWeight: "900" },
   ownerMatchCareerCompact: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: UI_TOKENS.colors.primary, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 8 },
   ownerMatchCareerCompactLabel: { color: "#D9E8E2", fontSize: 7, fontWeight: "900", letterSpacing: 0.45 },
   ownerMatchCareerCompactValue: { color: UI_TOKENS.colors.accent, fontSize: 11, fontWeight: "900", fontVariant: ["tabular-nums"] },
@@ -2121,10 +2276,74 @@ const x = StyleSheet.create(normalizeUiStyles({
   squadHero: { backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: UI_TOKENS.radius.card, padding: 16, marginBottom: 14, ...CARD_SHADOW },
   squadTitleRow: { flexDirection: "row", alignItems: "flex-start" }, squadEyebrow: { color: UI_TOKENS.colors.muted, fontSize: 7, fontWeight: "900", letterSpacing: 1.1 }, squadTitle: { color: "#18223B", fontSize: 24, lineHeight: 29, fontWeight: "900", marginTop: 4 }, squadSubtitle: { color: "#687384", fontSize: 10, lineHeight: 15, marginTop: 4, maxWidth: 480 }, squadToggle: { backgroundColor: "#EEF2EF", borderWidth: 1, borderColor: "#D7DFDB", borderRadius: 10, paddingHorizontal: 11, paddingVertical: 8, marginLeft: 10 }, squadToggleText: { color: "#315047", fontSize: 8, fontWeight: "900" },
   squadOverview: { flexDirection: "row", alignItems: "center", backgroundColor: "#14273F", borderRadius: 15, paddingVertical: 12, marginTop: 14 }, squadOverviewItem: { flex: 1, alignItems: "center" }, squadOverviewValue: { color: "#DDFB72", fontSize: 16, fontWeight: "900" }, squadOverviewLabel: { color: "#C5CED8", fontSize: 8, fontWeight: "900", letterSpacing: 0.4, marginTop: 3 }, squadOverviewDivider: { width: 1, height: 27, backgroundColor: "#34465B" },
-  squadTeamCard: { backgroundColor: "#FFFFFF", borderRadius: 16, overflow: "hidden", marginBottom: 11, borderWidth: 1, borderColor: "#E0E6E2", shadowColor: "#0E2F25", shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 }, squadTeamHeader: { minHeight: 68, borderLeftWidth: 6, flexDirection: "row", alignItems: "center", paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#FFFFFF" }, squadTeamHeaderMain: { flex: 1, minHeight: 48, flexDirection: "row", alignItems: "center" }, squadTeamCode: { width: 45, fontSize: 14, fontWeight: "900" }, squadTeamBadge: { minWidth: 48, height: 38, borderRadius: 10, borderWidth: 1.5, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, marginRight: 10 }, squadTeamBadgeText: { fontSize: 11, fontWeight: "900" }, squadTeamIdentity: { flex: 1, minWidth: 0 }, squadTeamName: { color: "#18223B", fontSize: 12, fontWeight: "900" }, squadTeamSummary: { color: "#5F6E68", fontSize: 9, lineHeight: 13, fontWeight: "800", marginTop: 3 }, squadTeamChevronBubble: { width: 32, height: 32, borderRadius: 10, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginLeft: 7 }, squadTeamChevron: { color: "#465A52", fontSize: 10, fontWeight: "900" }, squadAddPlayerButton: { minWidth: 64, minHeight: 44, borderRadius: 11, borderWidth: 1, borderColor: "#C9D5CF", backgroundColor: "#F7F9F7", alignItems: "center", justifyContent: "center", marginLeft: 8, paddingHorizontal: 10 }, squadAddPlayerButtonActive: { backgroundColor: "#FFF0EC", borderColor: "#D7A89E" }, squadAddPlayerButtonText: { color: "#315047", fontSize: 9, fontWeight: "900" }, squadAddPlayerButtonTextActive: { color: "#8B4439" },
-  squadAddForm: { backgroundColor: "#F4F7F4", borderBottomWidth: 1, borderBottomColor: "#DDE5E0", padding: 12 }, squadAddFormTitle: { color: "#173028", fontSize: 12, fontWeight: "900", marginBottom: 9 }, squadAddInput: { minHeight: 44, backgroundColor: "white", borderWidth: 1, borderColor: "#D5DED9", borderRadius: 10, color: "#173028", fontSize: 12, paddingHorizontal: 11, paddingVertical: 9, marginBottom: 8 }, squadAddRoles: { flexDirection: "row", gap: 5, marginBottom: 8 }, squadAddRole: { flex: 1, minHeight: 44, backgroundColor: "#E5ECE8", borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 }, squadAddRoleActive: { backgroundColor: "#174D3D" }, squadAddRoleText: { color: "#465A52", fontSize: 9, fontWeight: "900" }, squadAddRoleTextActive: { color: "#DDFB72" }, squadAddLabel: { color: "#52645C", fontSize: 9, fontWeight: "900", marginBottom: 6 }, squadOwnerChoices: { gap: 6, paddingBottom: 9 }, squadOwnerChoice: { minHeight: 44, borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 5 }, squadOwnerChoiceActive: { backgroundColor: "#174D3D", borderColor: "#174D3D" }, squadOwnerChoiceText: { fontSize: 9, fontWeight: "800" }, squadOwnerChoiceTextActive: { color: "#DDFB72" }, squadAddSubmit: { backgroundColor: "#DDFB72", borderRadius: 10, minHeight: 44, alignItems: "center", justifyContent: "center" }, squadAddSubmitText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
+  squadTeamCard: { backgroundColor: "#FFFFFF", borderRadius: 16, overflow: "hidden", marginBottom: 11, borderWidth: 1, borderColor: "#E0E6E2", shadowColor: "#0E2F25", shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 }, squadTeamHeader: { minHeight: 68, borderLeftWidth: 6, flexDirection: "row", alignItems: "center", paddingHorizontal: 11, paddingVertical: 9, backgroundColor: "#FFFFFF" }, squadTeamHeaderMain: { flex: 1, minHeight: 48, flexDirection: "row", alignItems: "center" }, squadTeamCode: { width: 45, fontSize: 14, fontWeight: "900" }, squadTeamBadge: { minWidth: 48, height: 38, borderRadius: 10, borderWidth: 1.5, alignItems: "center", justifyContent: "center", paddingHorizontal: 8, marginRight: 10 }, squadTeamBadgeText: { fontSize: 11, fontWeight: "900" }, squadTeamIdentity: { flex: 1, minWidth: 0 }, squadTeamName: { color: "#18223B", fontSize: 12, fontWeight: "900" }, squadTeamSummary: { color: "#5F6E68", fontSize: 9, lineHeight: 13, fontWeight: "800", marginTop: 3 }, squadTeamChevronBubble: { width: 32, height: 32, borderRadius: 10, backgroundColor: "#EEF2EF", alignItems: "center", justifyContent: "center", marginLeft: 7 }, squadTeamChevron: { color: "#465A52", fontSize: 10, fontWeight: "900" }, squadAddPlayerButton: { minWidth: 64, minHeight: 44, borderRadius: 11, borderWidth: 1, borderColor: "#C9D5CF", backgroundColor: "#F7F9F7", alignItems: "center", justifyContent: "center", marginLeft: 8, paddingHorizontal: 10 }, squadAddPlayerButtonText: { color: "#315047", fontSize: 9, fontWeight: "900" },
+  squadAddInput: { minHeight: 44, backgroundColor: "white", borderWidth: 1, borderColor: "#D5DED9", borderRadius: 10, color: "#173028", fontSize: 12, paddingHorizontal: 11, paddingVertical: 9, marginBottom: 8 }, squadAddRoles: { flexDirection: "row", gap: 5, marginBottom: 8 }, squadAddRole: { flex: 1, minHeight: 44, backgroundColor: "#E5ECE8", borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 }, squadAddRoleActive: { backgroundColor: "#174D3D" }, squadAddRoleText: { color: "#465A52", fontSize: 9, fontWeight: "900" }, squadAddRoleTextActive: { color: "#DDFB72" }, squadAddLabel: { color: "#52645C", fontSize: 9, fontWeight: "900", marginBottom: 6 },
   squadPlayerRow: { minHeight: 54, flexDirection: "row", alignItems: "center", paddingLeft: 14, paddingRight: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: "#E8EDE9" }, squadPlayerMain: { flex: 1, minHeight: 40, flexDirection: "row", alignItems: "center", paddingRight: 8 }, squadPlayerNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }, squadPlayerName: { color: "#173028", fontSize: 13, fontWeight: "900" }, squadSelectionCost: { color: "#655B25", backgroundColor: "#F5EFD2", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, fontSize: 7, fontWeight: "900" }, squadPlayerOwnerRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 4 }, squadPlayerOwner: { color: "#72827B", fontSize: 8, fontWeight: "700" }, squadInactiveLabel: { color: "#8E3D35", backgroundColor: "#FBE9E5", borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, fontSize: 7, fontWeight: "900" },
-  squadScoreBlock: { flexDirection: "row", alignItems: "center", gap: 8, marginLeft: 8 }, squadRoyaltyPoints: { color: "#704091", fontSize: 7, fontWeight: "900" }, squadPlayerPoints: { color: "#174D3D", fontSize: 11, fontWeight: "900" }, squadPointsPending: { color: "#8A9691", fontSize: 11, textAlign: "right", fontWeight: "800", marginLeft: 9 }, squadPlayerChevron: { color: "#61756D", fontSize: 9, fontWeight: "900", marginLeft: 7 }, squadPointsBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 28, paddingVertical: 8 }, squadPointsWarning: { backgroundColor: "#FFF0EC", borderRadius: 10, padding: 10, marginBottom: 10 }, squadPointsWarningText: { color: "#7A4036", fontSize: 9, fontWeight: "700" },
-  squadPlayerRowInactive: { backgroundColor: "#F0F1EF", opacity: 0.75 }, squadPlayerNameInactive: { color: "#7F8985", textDecorationLine: "line-through" }, squadEditButton: { minWidth: 50, minHeight: 28, borderRadius: 7, borderWidth: 1, borderColor: "#A9BBB3", backgroundColor: "#F5F8F6", alignItems: "center", justifyContent: "center", paddingHorizontal: 7 }, squadEditButtonText: { color: "#315047", fontSize: 8, fontWeight: "900" }, squadEditForm: { backgroundColor: "#F4F7F4", borderTopWidth: 1, borderTopColor: "#DDE5E0", padding: 12 }, squadEditAvailability: { flexDirection: "row", gap: 7, marginBottom: 9 }, squadEditStatus: { flex: 1, minHeight: 34, borderRadius: 8, borderWidth: 1, borderColor: "#CBD6D0", alignItems: "center", justifyContent: "center" }, squadEditStatusActive: { backgroundColor: "#EAF6E5", borderColor: "#9FC694" }, squadEditStatusInactive: { backgroundColor: "#FFF0EC", borderColor: "#E0AFA4" }, squadEditStatusText: { color: "#65766F", fontSize: 8, fontWeight: "900" }, squadEditStatusTextActive: { color: "#285F39" }, squadEditStatusTextInactive: { color: "#7A4036" }, squadEditBidNote: { color: "#7A6A31", fontSize: 8, fontWeight: "800", marginBottom: 9 }, squadAvailabilityMessage: { backgroundColor: "#EAF6E5", borderRadius: 10, padding: 10, marginBottom: 10 }, squadAvailabilityMessageText: { color: "#285F39", fontSize: 9, fontWeight: "800" },
+  squadScoreBlock: { flexDirection: "row", alignItems: "center", gap: 8, marginLeft: 8 }, squadRoyaltyPoints: { color: "#704091", fontSize: 7, fontWeight: "900" }, playerPoolRoyaltyBlock: { alignItems: "flex-end" }, playerPoolRoyaltyValue: { color: "#704091", fontSize: 9, lineHeight: 11, fontWeight: "900", fontVariant: ["tabular-nums"] }, playerPoolRoyaltyLabel: { color: "#704091", fontSize: 5, fontWeight: "900", letterSpacing: 0.45 }, playerPoolFantasyBlock: { alignItems: "flex-end", minWidth: 46 }, squadPlayerPoints: { color: "#174D3D", fontSize: 11, lineHeight: 13, fontWeight: "900", fontVariant: ["tabular-nums"] }, playerPoolFantasyLabel: { color: UI_TOKENS.colors.muted, fontSize: 5, fontWeight: "900", letterSpacing: 0.35 }, squadPointsPending: { color: "#8A9691", fontSize: 11, textAlign: "right", fontWeight: "800", marginLeft: 9 }, squadPlayerChevron: { color: "#61756D", fontSize: 9, fontWeight: "900", marginLeft: 7 }, squadPointsBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 28, paddingVertical: 8 }, squadPointsWarning: { backgroundColor: "#FFF0EC", borderRadius: 10, padding: 10, marginBottom: 10 }, squadPointsWarningText: { color: "#7A4036", fontSize: 9, fontWeight: "700" },
+  playerPoolMobileRow: { minHeight: 0, flexDirection: "column", alignItems: "stretch", paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
+  playerPoolMobileMain: { width: "100%", minHeight: 82, flexDirection: "row", alignItems: "center", paddingRight: 0 },
+  playerPoolMobileIdentity: { flex: 1, minWidth: 0, paddingRight: 8 },
+  playerPoolMobileNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 },
+  playerPoolMobileName: { flexShrink: 1, minWidth: 100, fontSize: 12, lineHeight: 16 },
+  playerPoolMobileMetaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 7 },
+  playerPoolMobileRole: { fontSize: 8, paddingHorizontal: 6, paddingVertical: 3 },
+  playerPoolMobileBid: { color: UI_TOKENS.colors.muted, fontSize: 8, fontWeight: "700", marginTop: 6 },
+  playerPoolMobileScoreBlock: { width: 104, flexShrink: 0, justifyContent: "flex-end", gap: 9, marginLeft: 0 },
+  playerPoolMobileChevron: { width: 28, minHeight: 44, flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  playerPoolMobileEditButton: { width: "100%", minHeight: 44, borderRadius: 9 },
+  playerEditModalOverlay: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(2, 16, 13, 0.72)", padding: 16 },
+  playerEditModalCard: { width: "100%", maxWidth: 620, maxHeight: "88%", backgroundColor: UI_TOKENS.colors.card, borderRadius: 18, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, overflow: "hidden", ...CARD_SHADOW },
+  playerEditModalCardCompact: { maxHeight: "92%", borderRadius: 15 },
+  playerEditModalHeader: { minHeight: 76, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#071C3B", paddingHorizontal: 16, paddingVertical: 12 },
+  playerEditModalHeaderIdentity: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10, paddingRight: 10 },
+  playerEditModalEyebrow: { color: "#AAB9CE", fontSize: 7, fontWeight: "900", letterSpacing: 0.8 },
+  playerEditModalTitle: { color: "#FFFFFF", fontSize: 16, lineHeight: 20, fontWeight: "900", marginTop: 2 },
+  playerAddModalTeam: { color: "#C7D2E1", fontSize: 7, lineHeight: 10, fontWeight: "800", marginTop: 2 },
+  playerEditModalClose: { width: 44, height: 44, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.16)" },
+  playerEditModalCloseText: { color: "#FFFFFF", fontSize: 24, lineHeight: 25, fontWeight: "500" },
+  playerEditModalBody: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12 },
+  playerAddNotice: { flexDirection: "row", alignItems: "center", backgroundColor: UI_TOKENS.colors.primarySoft, borderWidth: 1, borderColor: "#C9DDD3", borderRadius: 11, padding: 10, marginBottom: 13 },
+  playerAddNoticeIcon: { width: 32, height: 32, lineHeight: 31, borderRadius: 10, overflow: "hidden", backgroundColor: UI_TOKENS.colors.primary, color: UI_TOKENS.colors.accent, fontSize: 17, fontWeight: "900", textAlign: "center", marginRight: 9 },
+  playerAddNoticeTitle: { color: UI_TOKENS.colors.ink, fontSize: 9, fontWeight: "900" },
+  playerAddNoticeText: { color: UI_TOKENS.colors.muted, fontSize: 7, lineHeight: 10, marginTop: 2 },
+  playerEditOwnerSelect: { position: "relative", marginBottom: 10 },
+  playerEditOwnerTrigger: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: "#C8D4CE", borderRadius: 10, paddingHorizontal: 11, paddingVertical: 6 },
+  playerEditOwnerTriggerOpen: { borderColor: UI_TOKENS.colors.primary, borderWidth: 1.5 },
+  playerEditOwnerTriggerIdentity: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  playerEditOwnerTriggerHint: { color: UI_TOKENS.colors.muted, fontSize: 7, fontWeight: "800" },
+  playerEditOwnerChevron: { color: UI_TOKENS.colors.primary, fontSize: 18, lineHeight: 20, fontWeight: "900", marginLeft: 10, marginTop: -5 },
+  playerEditOwnerPickerOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(2, 16, 13, 0.62)" },
+  playerEditOwnerPickerOverlayWide: { alignItems: "center", justifyContent: "center", padding: 24 },
+  playerEditOwnerPickerSheet: { width: "100%", maxHeight: "72%", backgroundColor: UI_TOKENS.colors.card, borderTopLeftRadius: 22, borderTopRightRadius: 22, overflow: "hidden", ...CARD_SHADOW },
+  playerEditOwnerPickerSheetWide: { maxWidth: 460, maxHeight: "76%", borderRadius: 18 },
+  playerEditOwnerPickerHeader: { flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 18, paddingTop: 17, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: UI_TOKENS.colors.border },
+  playerEditOwnerPickerEyebrow: { color: UI_TOKENS.colors.primary, fontSize: 7, fontWeight: "900", letterSpacing: 0.8 },
+  playerEditOwnerPickerTitle: { color: UI_TOKENS.colors.ink, fontSize: 17, lineHeight: 21, fontWeight: "900", marginTop: 2 },
+  playerEditOwnerPickerSubtitle: { color: UI_TOKENS.colors.muted, fontSize: 8, lineHeight: 12, marginTop: 3, paddingRight: 8 },
+  playerEditOwnerPickerClose: { width: 44, height: 44, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: UI_TOKENS.colors.surface, borderWidth: 1, borderColor: UI_TOKENS.colors.border },
+  playerEditOwnerPickerCloseText: { color: UI_TOKENS.colors.primary, fontSize: 23, lineHeight: 24, fontWeight: "500" },
+  playerEditOwnerPickerList: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 18 },
+  playerEditOwnerPickerOption: { minHeight: 58, flexDirection: "row", alignItems: "center", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 3 },
+  playerEditOwnerPickerOptionSelected: { backgroundColor: UI_TOKENS.colors.primarySoft },
+  playerEditOwnerPickerAvatar: { width: 38, height: 38, flexShrink: 0, borderRadius: 19, borderWidth: 1, alignItems: "center", justifyContent: "center", marginRight: 10 },
+  playerEditOwnerPickerAvatarText: { fontSize: 13, fontWeight: "900" },
+  playerEditOwnerPickerName: { color: UI_TOKENS.colors.ink, fontSize: 11, lineHeight: 14, fontWeight: "900" },
+  playerEditOwnerPickerDescription: { color: UI_TOKENS.colors.muted, fontSize: 7, lineHeight: 10, marginTop: 2 },
+  playerEditOwnerPickerRadio: { width: 21, height: 21, flexShrink: 0, borderRadius: 11, borderWidth: 1.5, borderColor: UI_TOKENS.colors.borderStrong, alignItems: "center", justifyContent: "center", marginLeft: 10 },
+  playerEditOwnerPickerRadioSelected: { borderColor: UI_TOKENS.colors.primary },
+  playerEditOwnerPickerRadioDot: { width: 11, height: 11, borderRadius: 6, backgroundColor: UI_TOKENS.colors.primary },
+  playerEditReadOnly: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 52, backgroundColor: "#F5EFD2", borderWidth: 1, borderColor: "#E8DDA8", borderRadius: 10, paddingHorizontal: 12, marginTop: 2, marginBottom: 9 },
+  playerEditReadOnlyLabel: { color: "#756523", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  playerEditReadOnlyValue: { color: "#56470D", fontSize: 12, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  playerEditModalError: { backgroundColor: UI_TOKENS.status.dangerWash, borderWidth: 1, borderColor: "#E3B4AE", borderRadius: 9, paddingHorizontal: 11, paddingVertical: 9, marginTop: 2 },
+  playerEditModalErrorText: { color: UI_TOKENS.status.danger, fontSize: 9, lineHeight: 13, fontWeight: "800" },
+  playerEditModalFooter: { minHeight: 68, flexDirection: "row", gap: 8, backgroundColor: "#F2F6F3", borderTopWidth: 1, borderTopColor: UI_TOKENS.colors.border, padding: 12 },
+  playerEditModalCancel: { minWidth: 100, minHeight: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, backgroundColor: UI_TOKENS.colors.card, borderRadius: 10, paddingHorizontal: 14 },
+  playerEditModalCancelText: { color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900" },
+  playerEditModalSave: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: UI_TOKENS.colors.accent, borderRadius: 10, paddingHorizontal: 14 },
+  playerEditModalSaveText: { color: "#10251F", fontSize: 9, fontWeight: "900" },
+  playerEditModalSaveDisabled: { backgroundColor: "#DCE4DF" },
+  playerEditModalSaveTextDisabled: { color: "#718079" },
+  squadPlayerRowInactive: { backgroundColor: "#F0F1EF", opacity: 0.75 }, squadPlayerNameInactive: { color: "#7F8985", textDecorationLine: "line-through" }, squadEditButton: { minWidth: 50, minHeight: 28, borderRadius: 7, borderWidth: 1, borderColor: "#A9BBB3", backgroundColor: "#F5F8F6", alignItems: "center", justifyContent: "center", paddingHorizontal: 7 }, squadEditButtonText: { color: "#315047", fontSize: 8, fontWeight: "900" }, squadEditAvailability: { flexDirection: "row", gap: 7, marginBottom: 9 }, squadEditStatus: { flex: 1, minHeight: 34, borderRadius: 8, borderWidth: 1, borderColor: "#CBD6D0", alignItems: "center", justifyContent: "center" }, squadEditStatusActive: { backgroundColor: "#EAF6E5", borderColor: "#9FC694" }, squadEditStatusInactive: { backgroundColor: "#FFF0EC", borderColor: "#E0AFA4" }, squadEditStatusText: { color: "#65766F", fontSize: 8, fontWeight: "900" }, squadEditStatusTextActive: { color: "#285F39" }, squadEditStatusTextInactive: { color: "#7A4036" }, squadEditBidNote: { color: "#7A6A31", fontSize: 8, fontWeight: "800", marginBottom: 9 }, squadAvailabilityMessage: { backgroundColor: "#EAF6E5", borderRadius: 10, padding: 10, marginBottom: 10 }, squadAvailabilityMessageText: { color: "#285F39", fontSize: 9, fontWeight: "800" },
   ownerBlock: { borderTopWidth: 1, borderTopColor: "#DCE4DF" }, ownerNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 }, ownerName: { color: "#10251F", fontFamily: OWNER_FONT, fontSize: 15, fontWeight: "700", letterSpacing: 0.25 }, historyBoosterBadge: { backgroundColor: "#6D44C5", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }, historyBoosterBadgeText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 }, ownerMeta: { color: "#5F6E68", fontSize: 10, lineHeight: 14, marginTop: 4 }, transferSummary: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, transferUsed: { color: "#254D42", backgroundColor: "#E4F0EB", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 9, fontWeight: "800" }, transferBalance: { color: "#5D4E13", backgroundColor: "#F5EFD2", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 9, fontWeight: "900" }, historyPlayer: { flexDirection: "row", alignItems: "center", minHeight: 62, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "#FAFBF8", borderTopWidth: 1, borderTopColor: "#E4EAE6" }, playerName: { color: "#173028", fontSize: 13, lineHeight: 18, fontWeight: "800" }, playerMetaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, teamBadge: { overflow: "hidden", borderWidth: 1, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" }, roleText: { color: "#465A52", backgroundColor: "#E7EEE9", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 9, fontWeight: "700" }, ownershipText: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 9, fontWeight: "800" }, ownershipMine: { color: "#285F39", backgroundColor: "#DFF0DD" }, ownershipOpen: { color: "#465A52", backgroundColor: "#E7ECE9" }, ownershipOther: { color: "#74463D", backgroundColor: "#F8E6E1" }, baseText: { color: "#65746E", fontSize: 10, fontWeight: "600" }, playerValue: { color: "#174D3D", fontSize: 13, fontWeight: "900", marginHorizontal: 8 }, marker: { color: "#173028", backgroundColor: "#DDFB72", borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, fontSize: 9, fontWeight: "900" }, playerBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 34, paddingVertical: 8 }, breakdownLine: { flexDirection: "row", paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: "#E1E7E3" }, breakdownLabel: { flex: 1, color: "#53675F", fontSize: 10 }, breakdownValue: { color: "#334C43", fontSize: 10 }, breakdownStrong: { color: "#173028", fontWeight: "900" }, breakdownNegative: { color: UI_TOKENS.status.danger },
 }));
