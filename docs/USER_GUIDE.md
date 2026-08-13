@@ -180,9 +180,9 @@ In a Unique-player-driven league:
 
 ### Automatic Unique status
 
-In Royalty mode, locked-XI appearances accumulate across the whole league. With the default threshold of 48 appearances:
+In Royalty mode, a player accumulates qualifying usage only when another owner includes that player in a locked XI for a scored fixture involving the player's IPL team. The owning owner's own XI, fixtures between other IPL teams and No Result fixtures do not count. With the default threshold of 56 qualifying borrowed appearances:
 
-- the 49th appearance triggers automatic Unique status starting with the next match;
+- the 57th qualifying borrowed appearance triggers automatic Unique status starting with the next match;
 - locked and published matches are never recalculated;
 - other owners can still select that player but cannot use the restricted power roles;
 - the owning owner can use those roles when otherwise valid;

@@ -84,14 +84,15 @@ League-admin configuration includes the number of Marquee Players per owner, reg
 
 ### Automatic Unique status in a Royalty-driven league
 
-- Usage is one appearance in an owner's locked submitted XI.
-- Usage accumulates across the full league and does not reset at phase boundaries.
-- When usage exceeds 48 (the 49th locked appearance), the player becomes automatically Unique beginning with the next match. Locked and published matches are never recalculated.
+- Usage is one appearance in a borrowing owner's locked submitted XI, only when the fixture involves that player's IPL team.
+- The owning owner's own appearance does not count. An appearance in a fixture between two other IPL teams or one settled as No Result does not count.
+- Qualifying borrowed usage accumulates across that player's IPL-team fixtures and does not reset at phase boundaries.
+- When usage exceeds 56 (the 57th qualifying borrowed appearance), the player becomes automatically Unique beginning with the next match. Locked and published matches are never recalculated.
 - Other owners may continue selecting an automatically Unique player but cannot assign Captain, Vice-Captain, BAI, BOI or `3X` to that player.
 - The owning owner may still apply power markers to their automatically Unique player.
 - Automatic Unique status does not remove Marquee status. If the owner selected the player as Marquee for the phase, the 15% royalty rate continues.
 
-The automatic-Unique usage threshold and restricted power-player markers are league-admin configuration. Defaults are 48 completed appearances and no C/VC/BAI/BOI/`3X` for borrowers after the threshold.
+The automatic-Unique usage threshold and restricted power-player markers are league-admin configuration. Defaults are 56 qualifying borrowed appearances and no C/VC/BAI/BOI/`3X` for borrowers after the threshold.
 
 Royalty and automatic-Unique calculations must be versioned, pinned to each published match and displayed as separate explainable breakdowns.
 

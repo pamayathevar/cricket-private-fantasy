@@ -27,7 +27,11 @@ Run `verify_lineup_integrity.sql` after lineup-related migrations and before a r
 
 Migration 045 adds a deferred invariant for future 3X submissions. Run `verify_migration_045.sql` after applying it. Historical published score records are intentionally immutable and are excluded from the release-blocking 3X integrity check.
 
-Use `verify_automatic_unique_conversion.sql` in the disposable Royalty test league after publishing a deliberately low Automatic Unique threshold effective from an unlocked match. It verifies the `AUTO UNIQUE` label, confirms the owning owner remains power-eligible, and confirms a borrowing owner is restricted.
+Use `verify_automatic_unique_conversion.sql` in the disposable Royalty test league after publishing a deliberately low Automatic Unique threshold effective from an unlocked match. Seed qualifying locked uses by borrowing owners in fixtures involving the player's IPL team; owner appearances and fixtures between other teams must not advance the counter. The script verifies the `AUTO UNIQUE` label, confirms the owning owner remains power-eligible, and confirms a borrowing owner is restricted.
+
+Migration 060 scopes Automatic Unique usage to borrowed appearances in fixtures involving the player's IPL team and makes labels and power restrictions share one counter. Apply it to staging, run `../verify_migration_060.sql`, and confirm its first row is all `true` and its remaining queries return no rows. In a disposable Royalty league, additionally lock three XIs for the same owned player: one by the owner in a team fixture, one by a borrower in a fixture between other teams, and one by a borrower in a player-team fixture. Only the third XI may increment the counter. Rollback requires restoring the function bodies from migrations 039 and 049; no historical lineup or score data is modified by migration 060.
+
+Migration 061 raises the Automatic Unique default and active rules still using the prior default from 48 to 56 without changing locked or published history or deliberately customized thresholds. Apply it after migration 060, run `../verify_migration_061.sql`, and confirm the installation checks are all `true` and both subsequent queries return no rows. In a disposable league whose next fixture is unlocked, confirm a new rule version starts at that fixture while the preceding locked fixture still resolves its prior version. Rollback requires another forward rule version; do not reactivate an old rule across already-published matches.
 
 ## Migrations 032–034
 

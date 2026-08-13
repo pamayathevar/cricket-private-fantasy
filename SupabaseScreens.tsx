@@ -140,26 +140,42 @@ export function ProductionRanking({ leagueId, currentOwner }: { leagueId: string
   const [selected, setSelected] = useState("overall");
   const [overall, setOverall] = useState<any[]>([]);
   const [phaseRows, setPhaseRows] = useState<any[]>([]);
+  const [matchScores, setMatchScores] = useState<Array<{ match_number: number; member_id: string; total_points: number; valid_result: boolean }>>([]);
+  const [playerSelections, setPlayerSelections] = useState<Array<{ match_number: number; player_id: string; player_name: string; valid_result: boolean }>>([]);
+  const [showEveryOwner, setShowEveryOwner] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setError(""); setPhases([]); setOverall([]); setPhaseRows([]);
+    setLoading(true); setError(""); setPhases([]); setOverall([]); setPhaseRows([]); setMatchScores([]); setPlayerSelections([]);
     Promise.all([
       supabase.from("league_phases").select("id,code,name,start_match_number,end_match_number,sort_order").eq("league_id", leagueId).eq("active", true).order("sort_order"),
       supabase.from("league_standings").select("member_id,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
       supabase.from("league_phase_standings").select("phase_id,member_id,phase_code,phase_name,display_name,total_points,matches_scored,rank").eq("league_id", leagueId).order("rank"),
       supabase.from("league_members").select("id").eq("league_id", leagueId).eq("status", "active").in("role", ["owner", "league_admin"]),
-    ]).then(([p, o, r, m]) => {
+      supabase.from("fixtures").select("match_number,status,scoring_status,home_team_id,away_team_id,member_match_scores(member_id,total_points,published_at),lineup_submissions(member_id,status,lineup_players(player_id,player:players(full_name,team_id)))").eq("league_id", leagueId).order("match_number"),
+    ]).then(([p, o, r, m, s]) => {
       if (cancelled) return;
-      const e = p.error ?? o.error ?? r.error ?? m.error;
+      const e = p.error ?? o.error ?? r.error ?? m.error ?? s.error;
       if (e) setError(e.message);
       else {
         const activeMemberIds = new Set((m.data ?? []).map(member => member.id));
         setPhases(p.data ?? []);
         setOverall((o.data ?? []).filter(row => activeMemberIds.has(row.member_id)));
         setPhaseRows((r.data ?? []).filter(row => activeMemberIds.has(row.member_id)));
+        setMatchScores((s.data ?? []).flatMap((fixture: any) => (fixture.member_match_scores ?? [])
+          .filter((score: any) => score.published_at && activeMemberIds.has(score.member_id))
+          .map((score: any) => ({ match_number: Number(fixture.match_number), member_id: score.member_id, total_points: Number(score.total_points ?? 0), valid_result: !isNoResultFixture(fixture.status) }))));
+        setPlayerSelections(
+          (s.data ?? [])
+            .filter((fixture: any) => (fixture.member_match_scores ?? []).some((score: any) => score.published_at))
+            .flatMap((fixture: any) => (fixture.lineup_submissions ?? [])
+              .filter((lineup: any) => activeMemberIds.has(lineup.member_id) && ["submitted", "locked"].includes(lineup.status))
+              .flatMap((lineup: any) => (lineup.lineup_players ?? [])
+                .filter((selection: any) => selection.player?.team_id === fixture.home_team_id || selection.player?.team_id === fixture.away_team_id)
+                .map((selection: any) => ({ match_number: Number(fixture.match_number), player_id: selection.player_id, player_name: selection.player?.full_name ?? "Unknown player", valid_result: !isNoResultFixture(fixture.status) }))))
+        );
       }
     }).catch(loadError => {
       if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Ranking data could not be loaded.");
@@ -185,6 +201,8 @@ export function ProductionRanking({ leagueId, currentOwner }: { leagueId: string
   const podiumRows = rows.length >= 3 ? [rows[1], rows[0], rows[2]] : rows;
   const chasingRows = rows.length >= 3 ? rows.slice(3) : [];
   const maxMatches = rows.reduce((value, row) => Math.max(value, Number(row.matches_scored ?? 0)), 0);
+  const periodMatchScores = matchScores.filter(score => selected === "overall" || (activePhase && score.match_number >= Number(activePhase.start_match_number) && score.match_number <= Number(activePhase.end_match_number)));
+  const periodPlayerSelections = playerSelections.filter(selection => selected === "overall" || (activePhase && selection.match_number >= Number(activePhase.start_match_number) && selection.match_number <= Number(activePhase.end_match_number)));
   return <View style={x.rankingScreen}>
     <View style={x.rankingHero}>
       <View style={x.rankingHeroGlowLarge} /><View style={x.rankingHeroGlowSmall} />
@@ -218,6 +236,8 @@ export function ProductionRanking({ leagueId, currentOwner }: { leagueId: string
     </View>
 
     {rows.length ? <>
+      <RankingTrendChart rows={rows} scores={periodMatchScores} currentOwner={currentOwner} compact={compact} showEveryOwner={showEveryOwner} onToggleOwners={() => setShowEveryOwner(value => !value)} />
+      <RankingRecords rows={overall} scores={periodMatchScores} selections={periodPlayerSelections} compact={compact} periodLabel={periodLabel} currentOwner={currentOwner} />
       <View style={x.rankingSectionHeading}><View><Text style={x.rankingSectionEyebrow}>TOP OF THE TABLE</Text><Text accessibilityRole="header" style={x.rankingSectionTitle}>{rows.length >= 3 ? "Podium" : "Current leaders"}</Text></View><Text style={x.rankingSectionMeta}>{rows.length} ranked</Text></View>
       <View accessibilityLabel={`Top ${podiumRows.length} owners`} style={[x.rankingPodium, rows.length < 3 && x.rankingPodiumShort]}>{podiumRows.map((row, index) => {
         const originalIndex = rows.indexOf(row);
@@ -238,6 +258,234 @@ export function ProductionRanking({ leagueId, currentOwner }: { leagueId: string
   </View>;
 }
 
+type RankingTrendSeries = { memberId: string; name: string; current: boolean; color: string; values: Array<{ matchNumber: number; value: number; matchPoints: number }> };
+
+function RankingRecords({ rows, scores, selections, compact, periodLabel, currentOwner }: { rows: any[]; scores: Array<{ match_number: number; member_id: string; total_points: number; valid_result: boolean }>; selections: Array<{ match_number: number; player_id: string; player_name: string; valid_result: boolean }>; compact: boolean; periodLabel: string; currentOwner: string }) {
+  const ownerNames = new Map(rows.map(row => [row.member_id, row.display_name]));
+  const validScores = scores.filter(score => score.valid_result);
+  const validSelections = selections.filter(selection => selection.valid_result);
+  if (!validScores.length) return null;
+  const highest = [...validScores].sort((left, right) => right.total_points - left.total_points || left.match_number - right.match_number)[0];
+  const lowest = [...validScores].sort((left, right) => left.total_points - right.total_points || left.match_number - right.match_number)[0];
+  const selectionCounts = new Map<string, { name: string; count: number; matches: Set<number> }>();
+  validSelections.forEach(selection => {
+    const current = selectionCounts.get(selection.player_id) ?? { name: selection.player_name, count: 0, matches: new Set<number>() };
+    current.count += 1;
+    current.matches.add(selection.match_number);
+    selectionCounts.set(selection.player_id, current);
+  });
+  const mostUsed = [...selectionCounts.values()].sort((left, right) => right.count - left.count || right.matches.size - left.matches.size || left.name.localeCompare(right.name))[0];
+  const matchScores = new Map<number, number[]>();
+  validScores.forEach(score => matchScores.set(score.match_number, [...(matchScores.get(score.match_number) ?? []), score.total_points]));
+  const closest = [...matchScores.entries()].flatMap(([matchNumber, matchValues]) => {
+    const ordered = [...matchValues].sort((left, right) => right - left);
+    return ordered.length >= 2 ? [{ matchNumber, margin: Math.abs(ordered[0] - ordered[1]), first: ordered[0], second: ordered[1] }] : [];
+  }).sort((left, right) => left.margin - right.margin || left.matchNumber - right.matchNumber)[0];
+  const cards = [
+    mostUsed ? { icon: "◎", label: "MOST SELECTED", value: mostUsed.name, detail: `${mostUsed.count} eligible picks · ${mostUsed.matches.size} matches`, tone: "green" as const } : null,
+    highest ? { icon: "↗", label: "HIGHEST MATCH", value: `${fmt(highest.total_points)} pts`, detail: `${ownerNames.get(highest.member_id) ?? "Owner"} · Match ${highest.match_number}`, tone: "gold" as const } : null,
+    lowest ? { icon: "↘", label: "LOWEST MATCH", value: `${fmt(lowest.total_points)} pts`, detail: `${ownerNames.get(lowest.member_id) ?? "Owner"} · Match ${lowest.match_number}`, tone: "blue" as const } : null,
+    closest ? { icon: "≈", label: "CLOSEST FINISH", value: `${fmt(closest.margin)} pt${closest.margin === 1 ? "" : "s"}`, detail: `Match ${closest.matchNumber} · ${fmt(closest.first)} vs ${fmt(closest.second)}`, tone: "purple" as const } : null,
+  ].filter(Boolean) as Array<{ icon: string; label: string; value: string; detail: string; tone: "green" | "gold" | "blue" | "purple" }>;
+  const publishedMatches = [...new Set(validScores.map(score => score.match_number))].sort((left, right) => left - right);
+  const scoresByMatch = new Map<number, typeof validScores>();
+  const scoresByOwner = new Map<string, typeof validScores>();
+  validScores.forEach(score => {
+    scoresByMatch.set(score.match_number, [...(scoresByMatch.get(score.match_number) ?? []), score]);
+    scoresByOwner.set(score.member_id, [...(scoresByOwner.get(score.member_id) ?? []), score]);
+  });
+  const matchWins = new Map<string, number>();
+  scoresByMatch.forEach(matchRows => {
+    const winningScore = Math.max(...matchRows.map(score => score.total_points));
+    matchRows.filter(score => score.total_points === winningScore).forEach(score => matchWins.set(score.member_id, (matchWins.get(score.member_id) ?? 0) + 1));
+  });
+  const winLeader = [...matchWins.entries()].sort((left, right) => right[1] - left[1] || Number(rows.find(row => row.member_id === right[0])?.total_points ?? 0) - Number(rows.find(row => row.member_id === left[0])?.total_points ?? 0))[0];
+  const recentMatches = publishedMatches.slice(-Math.min(3, publishedMatches.length));
+  const recentForm = [...scoresByOwner.entries()].flatMap(([memberId, ownerScores]) => {
+    const recent = ownerScores.filter(score => recentMatches.includes(score.match_number));
+    return recent.length === recentMatches.length && recent.length ? [{ memberId, average: recent.reduce((sum, score) => sum + score.total_points, 0) / recent.length }] : [];
+  }).sort((left, right) => right.average - left.average)[0];
+  const consistentOwner = [...scoresByOwner.entries()].flatMap(([memberId, ownerScores]) => {
+    if (ownerScores.length < 3) return [];
+    const values = ownerScores.map(score => score.total_points);
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const deviation = Math.sqrt(values.reduce((sum, value) => sum + Math.pow(value - average, 2), 0) / values.length);
+    return [{ memberId, average, deviation, consistency: deviation / Math.max(1, Math.abs(average)) }];
+  }).sort((left, right) => left.consistency - right.consistency || right.average - left.average)[0];
+  const runningTotals = new Map(rows.map(row => [row.member_id, 0]));
+  let initialRanks = new Map<string, number>();
+  let latestRanks = new Map<string, number>();
+  let previousLeader = "";
+  let leadChanges = 0;
+  const raceLeaders = new Set<string>();
+  publishedMatches.forEach((matchNumber, matchIndex) => {
+    (scoresByMatch.get(matchNumber) ?? []).forEach(score => runningTotals.set(score.member_id, Number(runningTotals.get(score.member_id) ?? 0) + score.total_points));
+    const ordered = [...runningTotals.entries()].sort((left, right) => right[1] - left[1] || String(ownerNames.get(left[0]) ?? "").localeCompare(String(ownerNames.get(right[0]) ?? "")));
+    const ranks = new Map(ordered.map(([memberId], index) => [memberId, index + 1]));
+    if (matchIndex === 0) initialRanks = ranks;
+    latestRanks = ranks;
+    const leaderId = ordered[0]?.[0] ?? "";
+    if (leaderId) raceLeaders.add(leaderId);
+    if (previousLeader && leaderId && previousLeader !== leaderId) leadChanges += 1;
+    previousLeader = leaderId;
+  });
+  const biggestClimber = rows.map(row => ({ memberId: row.member_id, places: Number(initialRanks.get(row.member_id) ?? 0) - Number(latestRanks.get(row.member_id) ?? 0) })).sort((left, right) => right.places - left.places || Number(latestRanks.get(left.memberId) ?? 99) - Number(latestRanks.get(right.memberId) ?? 99))[0];
+  const selectionMoments = new Map<string, { name: string; matchNumber: number; count: number }>();
+  validSelections.forEach(selection => {
+    const key = `${selection.player_id}:${selection.match_number}`;
+    const current = selectionMoments.get(key) ?? { name: selection.player_name, matchNumber: selection.match_number, count: 0 };
+    current.count += 1;
+    selectionMoments.set(key, current);
+  });
+  const popularMoment = [...selectionMoments.values()].sort((left, right) => right.count - left.count || left.matchNumber - right.matchNumber || left.name.localeCompare(right.name))[0];
+  const normalizedOwner = currentOwner.trim().toLocaleLowerCase();
+  const currentMemberId = rows.find(row => String(row.display_name ?? "").trim().toLocaleLowerCase() === normalizedOwner)?.member_id;
+  const personalBest = currentMemberId ? [...(scoresByOwner.get(currentMemberId) ?? [])].sort((left, right) => right.total_points - left.total_points || left.match_number - right.match_number)[0] : null;
+  type FactTone = "lime" | "gold" | "blue" | "purple" | "orange" | "pink";
+  const facts = [
+    winLeader ? { icon: "♛", label: "TROPHY MAGNET", value: ownerNames.get(winLeader[0]) ?? "League leader", detail: `${winLeader[1]} match win${winLeader[1] === 1 ? "" : "s"} from ${publishedMatches.length}`, tone: "gold" as FactTone } : null,
+    recentForm ? { icon: "⚡", label: recentMatches.length >= 3 ? "HOT HAND" : "FAST START", value: ownerNames.get(recentForm.memberId) ?? "Form leader", detail: `${fmt(recentForm.average)} avg · ${recentMatches.map(match => `M${match}`).join("–")}`, tone: "lime" as FactTone } : null,
+    consistentOwner ? { icon: "≈", label: "METRONOME", value: ownerNames.get(consistentOwner.memberId) ?? "Most consistent", detail: `±${fmt(consistentOwner.deviation)} pts typical swing`, tone: "blue" as FactTone } : null,
+    biggestClimber?.places > 0
+      ? { icon: "↗", label: "BIGGEST CLIMB", value: ownerNames.get(biggestClimber.memberId) ?? "Biggest mover", detail: `Up ${biggestClimber.places} place${biggestClimber.places === 1 ? "" : "s"} since M${publishedMatches[0]}`, tone: "purple" as FactTone }
+      : publishedMatches.length > 1 ? { icon: "⇄", label: "LEAD DRAMA", value: `${leadChanges} lead change${leadChanges === 1 ? "" : "s"}`, detail: `${raceLeaders.size} owner${raceLeaders.size === 1 ? " has" : "s have"} led the race`, tone: "purple" as FactTone } : null,
+    popularMoment ? { icon: "◎", label: "EVERYONE'S XI", value: popularMoment.name, detail: `${popularMoment.count} of ${scoresByMatch.get(popularMoment.matchNumber)?.length ?? rows.length} owners · M${popularMoment.matchNumber}`, tone: "orange" as FactTone } : null,
+    personalBest ? { icon: "★", label: "YOUR PEAK", value: `${fmt(personalBest.total_points)} pts`, detail: `Your best score · Match ${personalBest.match_number}`, tone: "pink" as FactTone } : null,
+  ].filter(Boolean) as Array<{ icon: string; label: string; value: string; detail: string; tone: FactTone }>;
+  const factToneStyle = (tone: FactTone) => tone === "gold" ? x.rankingFactGold : tone === "blue" ? x.rankingFactBlue : tone === "purple" ? x.rankingFactPurple : tone === "orange" ? x.rankingFactOrange : tone === "pink" ? x.rankingFactPink : x.rankingFactLime;
+  const toneStyle = (tone: "green" | "gold" | "blue" | "purple") => tone === "gold" ? x.rankingRecordGold : tone === "blue" ? x.rankingRecordBlue : tone === "purple" ? x.rankingRecordPurple : x.rankingRecordGreen;
+  return <View style={x.rankingRecordsSection}>
+    <View style={x.rankingRecordsHeading}><View><Text style={x.rankingSectionEyebrow}>LEAGUE RECORDS</Text><Text accessibilityRole="header" style={x.rankingRecordsTitle}>Numbers that tell the story</Text></View><Text numberOfLines={1} style={x.rankingRecordsPeriod}>{compact ? "PUBLISHED" : periodLabel.toUpperCase()}</Text></View>
+    <View style={x.rankingRecordsGrid}>{cards.map(card => <View accessibilityLabel={`${card.label}: ${card.value}. ${card.detail}`} key={card.label} style={[x.rankingRecordCard, compact && x.rankingRecordCardCompact, toneStyle(card.tone)]}><View style={x.rankingRecordIcon}><Text style={x.rankingRecordIconText}>{card.icon}</Text></View><View style={x.grow}><Text style={x.rankingRecordLabel}>{card.label}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={x.rankingRecordValue}>{card.value}</Text><Text style={x.rankingRecordDetail}>{card.detail}</Text></View></View>)}</View>
+    {facts.length ? <View style={x.rankingFactsPanel}><View style={x.rankingFactsGlow} /><View style={x.rankingFactsHeading}><View><Text style={x.rankingFactsEyebrow}>LEAGUE FUN FACTS</Text><Text accessibilityRole="header" style={x.rankingFactsTitle}>Stories behind the scores</Text></View><Text style={x.rankingFactsHint}>{compact ? "SWIPE →" : `${publishedMatches.length} MATCH SNAPSHOT`}</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={x.rankingFactsScroller}>{facts.map(fact => <View accessible accessibilityLabel={`${fact.label}: ${fact.value}. ${fact.detail}`} key={fact.label} style={[x.rankingFactCard, compact && x.rankingFactCardCompact, factToneStyle(fact.tone)]}><View style={x.rankingFactIcon}><Text style={x.rankingFactIconText}>{fact.icon}</Text></View><Text style={x.rankingFactLabel}>{fact.label}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={x.rankingFactValue}>{fact.value}</Text><Text numberOfLines={2} style={x.rankingFactDetail}>{fact.detail}</Text></View>)}</ScrollView></View> : null}
+  </View>;
+}
+
+function RankingTrendChart({ rows, scores, currentOwner, compact, showEveryOwner, onToggleOwners }: { rows: any[]; scores: Array<{ match_number: number; member_id: string; total_points: number }>; currentOwner: string; compact: boolean; showEveryOwner: boolean; onToggleOwners: () => void }) {
+  const [plotWidth, setPlotWidth] = useState(0);
+  const [chartMode, setChartMode] = useState<"race" | "form">("race");
+  const [selectedMatchNumber, setSelectedMatchNumber] = useState<number | null>(null);
+  const normalizedOwner = currentOwner.trim().toLocaleLowerCase();
+  const matchNumbers = [...new Set(scores.map(score => score.match_number))].sort((left, right) => left - right);
+  const matchNumberKey = matchNumbers.join(":");
+  useEffect(() => {
+    if (!matchNumbers.length) { setSelectedMatchNumber(null); return; }
+    setSelectedMatchNumber(value => value != null && matchNumbers.includes(value) ? value : matchNumbers[matchNumbers.length - 1]);
+  }, [matchNumberKey]);
+  const scoreMap = new Map(scores.map(score => [`${score.member_id}:${score.match_number}`, score.total_points]));
+  const allSeries: RankingTrendSeries[] = rows.map(row => {
+    let runningTotal = 0;
+    return {
+      memberId: row.member_id,
+      name: row.display_name,
+      current: String(row.display_name ?? "").trim().toLocaleLowerCase() === normalizedOwner,
+      color: ownerTheme(row.display_name).accent,
+      values: matchNumbers.map(matchNumber => {
+        const matchPoints = Number(scoreMap.get(`${row.member_id}:${matchNumber}`) ?? 0);
+        runningTotal += matchPoints;
+        return { matchNumber, value: runningTotal, matchPoints };
+      }),
+    };
+  });
+  const focusedIds = new Set([...rows.slice(0, 3).map(row => row.member_id), ...allSeries.filter(series => series.current).map(series => series.memberId)]);
+  const visibleSeries = (showEveryOwner ? allSeries : allSeries.filter(series => focusedIds.has(series.memberId))).sort((left, right) => Number(left.current) - Number(right.current));
+  if (!matchNumbers.length || !visibleSeries.length) return null;
+  const values = visibleSeries.flatMap(series => series.values.map(point => chartMode === "race" ? point.value : point.matchPoints));
+  const minimum = Math.min(0, ...values);
+  const maximum = Math.max(1, ...values);
+  const range = Math.max(1, maximum - minimum);
+  const chartHeight = compact ? 194 : 226;
+  const inset = compact ? { left: 34, right: 10, top: 12, bottom: 25 } : { left: 45, right: 15, top: 14, bottom: 27 };
+  const innerWidth = Math.max(1, plotWidth - inset.left - inset.right);
+  const innerHeight = chartHeight - inset.top - inset.bottom;
+  const coordinates = (series: RankingTrendSeries) => series.values.map((point, index) => ({
+    ...point,
+    x: inset.left + (matchNumbers.length === 1 ? innerWidth / 2 : index / (matchNumbers.length - 1) * innerWidth),
+    y: inset.top + (maximum - (chartMode === "race" ? point.value : point.matchPoints)) / range * innerHeight,
+  }));
+  const ticks = [0, 0.5, 1].map(ratio => ({ value: maximum - ratio * range, top: inset.top + ratio * innerHeight }));
+  const tickLabel = (value: number) => compact && Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(1)}k` : fmt(value);
+  const leaderName = rows[0]?.display_name ?? "leader";
+  const activeMatchNumber = selectedMatchNumber ?? matchNumbers[matchNumbers.length - 1];
+  const activeMatchIndex = Math.max(0, matchNumbers.indexOf(activeMatchNumber));
+  const raceOrder = [...allSeries].sort((left, right) => Number(right.values[activeMatchIndex]?.value ?? 0) - Number(left.values[activeMatchIndex]?.value ?? 0));
+  const formOrder = [...allSeries].sort((left, right) => Number(right.values[activeMatchIndex]?.matchPoints ?? 0) - Number(left.values[activeMatchIndex]?.matchPoints ?? 0));
+  const activeLeader = raceOrder[0];
+  const activeFormLeader = formOrder[0];
+  const activeCurrent = allSeries.find(series => series.current);
+  const currentRacePoints = Number(activeCurrent?.values[activeMatchIndex]?.value ?? 0);
+  const currentFormPoints = Number(activeCurrent?.values[activeMatchIndex]?.matchPoints ?? 0);
+  const currentGap = Math.max(0, Number(activeLeader?.values[activeMatchIndex]?.value ?? 0) - currentRacePoints);
+  const formGap = Math.max(0, Number(activeFormLeader?.values[activeMatchIndex]?.matchPoints ?? 0) - currentFormPoints);
+  const accessibilitySummary = visibleSeries.map(series => `${series.name} ${fmt(chartMode === "race" ? series.values[activeMatchIndex]?.value : series.values[activeMatchIndex]?.matchPoints)} points`).join(", ");
+  const selectedX = chartMode === "race"
+    ? inset.left + (matchNumbers.length === 1 ? innerWidth / 2 : activeMatchIndex / (matchNumbers.length - 1) * innerWidth)
+    : inset.left + innerWidth / matchNumbers.length * activeMatchIndex + innerWidth / matchNumbers.length / 2;
+  const baseline = inset.top + maximum / range * innerHeight;
+  return <View style={x.rankingTrendCard}>
+    <View style={x.rankingTrendGlowLarge} /><View style={x.rankingTrendGlowSmall} />
+    <View style={x.rankingTrendHeader}>
+      <View style={x.grow}><Text style={x.rankingTrendEyebrow}>RACE ANALYTICS</Text><Text accessibilityRole="header" style={x.rankingTrendTitle}>Momentum centre</Text><Text style={x.rankingTrendSubtitle}>{chartMode === "race" ? "How the championship moved after every match" : "Compare every owner’s points match by match"}</Text></View>
+      <View style={x.rankingTrendLive}><View style={x.rankingTrendLiveDot} /><Text style={x.rankingTrendLiveText}>LIVE</Text></View>
+    </View>
+    <View style={x.rankingTrendToolbar}>
+      <View accessibilityRole="tablist" style={x.rankingTrendTabs}>
+        <TouchableOpacity accessibilityRole="tab" accessibilityState={{ selected: chartMode === "race" }} style={[x.rankingTrendTab, chartMode === "race" && x.rankingTrendTabActive]} onPress={() => setChartMode("race")}><Text style={[x.rankingTrendTabText, chartMode === "race" && x.rankingTrendTabTextActive]}>TITLE RACE</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="tab" accessibilityState={{ selected: chartMode === "form" }} style={[x.rankingTrendTab, chartMode === "form" && x.rankingTrendTabActive]} onPress={() => setChartMode("form")}><Text style={[x.rankingTrendTabText, chartMode === "form" && x.rankingTrendTabTextActive]}>MATCH FORM</Text></TouchableOpacity>
+      </View>
+      {allSeries.length > 3 ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={showEveryOwner ? "Show top three owners and my team" : "Show every ranked owner"} style={x.rankingTrendToggle} onPress={onToggleOwners}><Text style={x.rankingTrendToggleText}>{showEveryOwner ? "FOCUS" : "ALL OWNERS"}</Text></TouchableOpacity> : null}
+    </View>
+    <View accessible accessibilityLabel={`${leaderName} leads. ${accessibilitySummary}`} style={[x.rankingTrendPlot, { height: chartHeight }]} onLayout={event => setPlotWidth(event.nativeEvent.layout.width)}>
+      {plotWidth ? <>
+        {ticks.map((tick, index) => <React.Fragment key={`tick:${index}`}><View style={[x.rankingTrendGridLine, { left: inset.left, right: inset.right, top: tick.top }]} /><Text style={[x.rankingTrendAxisValue, { top: tick.top - 7, width: inset.left - 5 }]}>{tickLabel(tick.value)}</Text></React.Fragment>)}
+        <View style={[x.rankingTrendSelectionBand, { left: selectedX - 9, top: inset.top, height: innerHeight }]} />
+        {chartMode === "race" ? visibleSeries.map(series => {
+          const points = coordinates(series);
+          return <React.Fragment key={series.memberId}>
+            {points.slice(1).map((point, index) => {
+              const previous = points[index];
+              const dx = point.x - previous.x;
+              const dy = point.y - previous.y;
+              const length = Math.sqrt(dx * dx + dy * dy);
+              const angle = Math.atan2(dy, dx);
+              return <View key={`${series.memberId}:line:${point.matchNumber}`} style={[x.rankingTrendSegment, series.current && x.rankingTrendSegmentCurrent, { left: (previous.x + point.x) / 2 - length / 2, top: (previous.y + point.y) / 2 - (series.current ? 1.5 : 1), width: length, backgroundColor: series.color, transform: [{ rotate: `${angle}rad` }] }]} />;
+            })}
+            {points.map((point, index) => <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${series.name}, Match ${point.matchNumber}, ${fmt(point.value)} cumulative points`} key={`${series.memberId}:dot:${point.matchNumber}`} style={[x.rankingTrendDotHit, { left: point.x - 9, top: point.y - 9 }]} onPress={() => setSelectedMatchNumber(point.matchNumber)}><View style={[x.rankingTrendDot, series.current && x.rankingTrendDotCurrent, index === activeMatchIndex && x.rankingTrendDotSelected, { backgroundColor: series.color }]} /></TouchableOpacity>)}
+          </React.Fragment>;
+        }) : <>
+          <View style={[x.rankingTrendBaseline, { left: inset.left, right: inset.right, top: baseline }]} />
+          {matchNumbers.flatMap((matchNumber, matchIndex) => {
+            const groupWidth = innerWidth / matchNumbers.length;
+            const gap = compact ? 1.5 : 2;
+            const barWidth = Math.max(2, Math.min(compact ? 8 : 14, (groupWidth * 0.76 - gap * (visibleSeries.length - 1)) / visibleSeries.length));
+            const groupBarsWidth = barWidth * visibleSeries.length + gap * (visibleSeries.length - 1);
+            const groupCenter = inset.left + groupWidth * matchIndex + groupWidth / 2;
+            return visibleSeries.map((series, seriesIndex) => {
+              const point = series.values[matchIndex];
+              const valueY = inset.top + (maximum - point.matchPoints) / range * innerHeight;
+              const barTop = Math.min(valueY, baseline);
+              const barHeight = Math.max(2, Math.abs(baseline - valueY));
+              return <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${series.name}, Match ${matchNumber}, ${fmt(point.matchPoints)} points`} key={`${series.memberId}:bar:${matchNumber}`} style={[x.rankingFormBarHit, { left: groupCenter - groupBarsWidth / 2 + seriesIndex * (barWidth + gap), top: barTop, width: barWidth, height: barHeight }]} onPress={() => setSelectedMatchNumber(matchNumber)}><View style={[x.rankingFormBar, series.current && x.rankingFormBarCurrent, matchNumber === activeMatchNumber && x.rankingFormBarSelected, { backgroundColor: series.color }]} /></TouchableOpacity>;
+            });
+          })}
+        </>}
+        {matchNumbers.map((matchNumber, index) => {
+          const showLabel = !compact || matchNumbers.length <= 6 || index === 0 || index === matchNumbers.length - 1 || index % 2 === 0;
+          if (!showLabel) return null;
+          const left = chartMode === "race" ? inset.left + (matchNumbers.length === 1 ? innerWidth / 2 : index / (matchNumbers.length - 1) * innerWidth) : inset.left + innerWidth / matchNumbers.length * index + innerWidth / matchNumbers.length / 2;
+          return <Text key={`match:${matchNumber}`} style={[x.rankingTrendMatchLabel, { left: Math.max(0, Math.min(plotWidth - 30, left - 15)), top: chartHeight - 18 }, matchNumber === activeMatchNumber && x.rankingTrendMatchLabelActive]}>M{matchNumber}</Text>;
+        })}
+      </> : null}
+    </View>
+    <View style={x.rankingTrendInsights}>
+      <View style={x.rankingTrendInsight}><Text style={x.rankingTrendInsightLabel}>SELECTED</Text><Text style={x.rankingTrendInsightValue}>MATCH {activeMatchNumber}</Text><Text style={x.rankingTrendInsightDetail}>Tap chart to change</Text></View>
+      <View style={x.rankingTrendInsight}><Text style={x.rankingTrendInsightLabel}>{chartMode === "race" ? "LEADER" : "BEST FORM"}</Text><Text numberOfLines={1} style={x.rankingTrendInsightValue}>{chartMode === "race" ? activeLeader?.name : activeFormLeader?.name}</Text><Text style={x.rankingTrendInsightDetail}>{fmt(chartMode === "race" ? activeLeader?.values[activeMatchIndex]?.value : activeFormLeader?.values[activeMatchIndex]?.matchPoints)} pts</Text></View>
+      <View style={[x.rankingTrendInsight, x.rankingTrendInsightYou]}><Text style={x.rankingTrendInsightLabel}>YOU</Text><Text style={x.rankingTrendInsightValue}>{fmt(chartMode === "race" ? currentRacePoints : currentFormPoints)} PTS</Text><Text style={x.rankingTrendInsightDetail}>{(chartMode === "race" ? currentGap : formGap) ? `${fmt(chartMode === "race" ? currentGap : formGap)} off pace` : "Leading pace"}</Text></View>
+    </View>
+    <View style={x.rankingTrendLegend}>{visibleSeries.map(series => <View key={`legend:${series.memberId}`} style={[x.rankingTrendLegendItem, series.current && x.rankingTrendLegendCurrent]}><View style={[x.rankingTrendLegendDot, { backgroundColor: series.color }]} /><Text numberOfLines={1} style={x.rankingTrendLegendName}>{series.name}{series.current ? " · YOU" : ""}</Text><Text style={x.rankingTrendLegendScore}>{fmt(chartMode === "race" ? series.values[activeMatchIndex]?.value : series.values[activeMatchIndex]?.matchPoints)}</Text></View>)}</View>
+  </View>;
+}
+
 function RankingHeroStat({ label, value, detail }: { label: string; value: string; detail: string }) { return <View style={x.rankingHeroStat}><Text style={x.rankingHeroStatLabel}>{label}</Text><Text numberOfLines={1} style={x.rankingHeroStatValue}>{value}</Text><Text numberOfLines={1} style={x.rankingHeroStatDetail}>{detail}</Text></View>; }
 
 function RankingPodiumCard({ row, winner, current, compact, leaderPoints }: { row: any; winner: boolean; current: boolean; compact: boolean; leaderPoints: number }) {
@@ -252,10 +500,10 @@ function RankingPodiumCard({ row, winner, current, compact, leaderPoints }: { ro
   const behindLeader = Math.max(0, Math.round(leaderPoints) - Math.round(Number(row.total_points)));
   return <View accessibilityLabel={`${row.display_name}, podium rank ${rank}, ${fmt(row.total_points)} points`} style={[x.rankingPodiumCard, { borderColor: palette.border, backgroundColor: palette.soft }, compact && x.rankingPodiumCardCompact, winner && x.rankingPodiumCardWinner, winner && compact && x.rankingPodiumCardWinnerCompact, current && x.rankingPodiumCardCurrent]}>
     <View style={[x.rankingPodiumTopBar, { backgroundColor: palette.accent }]} /><View style={[x.rankingPodiumGlow, { backgroundColor: palette.glow }]} />
-    {current ? <View style={x.rankingPodiumYou}><Text style={x.rankingPodiumYouText}>YOU</Text></View> : null}
+    {current && !compact ? <View style={x.rankingPodiumYou}><Text style={x.rankingPodiumYouText}>YOU</Text></View> : null}
     <View style={[x.rankingMedal, compact && x.rankingMedalCompact, { backgroundColor: palette.soft, borderColor: palette.border }]}><Text style={[x.rankingMedalRank, compact && x.rankingMedalRankCompact, { color: palette.strong }]}>{rank}</Text><View style={[x.rankingMedalRibbon, { backgroundColor: palette.strong }]} /></View>
     <View style={[x.rankingPodiumAvatar, compact && x.rankingPodiumAvatarCompact, { backgroundColor: theme.soft, borderColor: theme.border }]}><Text style={[x.rankingPodiumAvatarText, compact && x.rankingPodiumAvatarTextCompact, { color: theme.strong }]}>{String(row.display_name ?? "?").charAt(0).toUpperCase()}</Text></View>
-    <Text numberOfLines={1} style={[x.rankingPodiumName, compact && x.rankingPodiumNameCompact]}>{row.display_name}</Text>
+    <Text numberOfLines={1} adjustsFontSizeToFit style={[x.rankingPodiumName, compact && x.rankingPodiumNameCompact]}>{row.display_name}{current && compact ? " · YOU" : ""}</Text>
     <Text style={[x.rankingPodiumPoints, compact && x.rankingPodiumPointsCompact, { color: palette.strong }]}>{fmt(row.total_points)}</Text><Text style={[x.rankingPodiumPointsLabel, compact && x.rankingPodiumCompactBadgeText]}>POINTS</Text>
     <Text numberOfLines={1} style={[x.rankingPodiumMeta, compact && x.rankingPodiumCompactBadgeText]}>{matches === 1 ? (compact ? "1 match" : "1 scored match") : `${matches} ${compact ? "matches" : "scored matches"}`}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={[x.rankingPodiumLeaderGap, compact && x.rankingPodiumCompactBadgeText, !behindLeader && x.rankingPodiumLeader]}>{behindLeader ? `${fmt(behindLeader)} ${compact ? "to" : "behind"} #1` : "LEADER"}</Text>
   </View>;
@@ -408,6 +656,26 @@ type SpecialSelectionPhase = { id: string; name: string; sort_order: number; is_
 type OwnerPlayerSort = "points" | "royalty" | "cost" | "name";
 type OwnerRoleFilter = "ALL" | Player["role"];
 type OwnerSpecialFilter = "ALL" | "MARQUEE";
+type OwnerPlayerMatchScore = {
+  fixtureId: string;
+  matchNumber: number;
+  home: string;
+  away: string;
+  batting: number;
+  bowling: number;
+  fielding: number;
+  bonus: number;
+  royalty: number;
+  total: number;
+};
+
+function OwnerPlayerMatchBreakdown({ matches, compact, royaltyMode, career }: { matches: OwnerPlayerMatchScore[]; compact: boolean; royaltyMode: boolean; career: { matches: number; batting: number; bowling: number; fielding: number; bonus: number; royalty: number; total: number } }) {
+  if (!matches.length) return <View style={x.ownerMatchLedgerEmpty}><Text style={x.ownerMatchLedgerEmptyTitle}>No published match points yet</Text><Text style={x.ownerMatchLedgerEmptyText}>Match-by-match scores will appear here after points are published.</Text></View>;
+  return <View style={[x.ownerMatchLedger, compact && x.ownerMatchLedgerCompact]}><View style={x.ownerMatchLedgerHeading}><View><Text style={x.ownerMatchLedgerEyebrow}>MATCH HISTORY</Text><Text style={x.ownerMatchLedgerTitle}>Points by match</Text></View><Text style={x.ownerMatchLedgerCount}>{matches.length} scored</Text></View>
+  {compact ? <>{matches.map(match => <View key={match.fixtureId} style={x.ownerMatchCard}><View style={x.ownerMatchCardTop}><View><Text style={x.ownerMatchCardNumber}>MATCH {match.matchNumber}</Text><Text style={x.ownerMatchCardTeams}>{match.home} vs {match.away}</Text></View><View style={x.ownerMatchCardTotal}><Text style={x.ownerMatchCardTotalValue}>{fmt(match.total)}</Text><Text style={x.ownerMatchCardTotalLabel}>TOTAL PTS</Text></View></View><View style={x.ownerSquadPlayerMetrics}><FixtureScoreMetric label="BAT" value={match.batting} /><FixtureScoreMetric label="BOWL" value={match.bowling} /><FixtureScoreMetric label="FIELD" value={match.fielding} /><FixtureScoreMetric label="BONUS" value={match.bonus} />{royaltyMode ? <FixtureScoreMetric label="ROY" value={match.royalty} accent={match.royalty > 0} /> : null}</View></View>)}<View style={x.ownerMatchCareerCompact}><Text style={x.ownerMatchCareerCompactLabel}>CAREER TOTAL · {career.matches} MATCH{career.matches === 1 ? "" : "ES"}</Text><Text style={x.ownerMatchCareerCompactValue}>{fmt(career.total)} PTS</Text></View></> : <><View style={x.ownerMatchTableHead}><Text style={x.ownerMatchTableMatchHead}>MATCH</Text><Text style={x.ownerSquadTableMetricHead}>BAT</Text><Text style={x.ownerSquadTableMetricHead}>BOWL</Text><Text style={x.ownerSquadTableMetricHead}>FIELD</Text><Text style={x.ownerSquadTableMetricHead}>BONUS</Text>{royaltyMode ? <Text style={x.ownerSquadTableMetricHead}>ROY</Text> : null}<Text style={x.ownerSquadTableTotalHead}>TOTAL</Text></View>{matches.map(match => <View key={match.fixtureId} style={x.ownerMatchTableRow}><View style={x.ownerMatchTableMatch}><Text style={x.ownerMatchTableNumber}>MATCH {match.matchNumber}</Text><Text style={x.ownerMatchTableTeams}>{match.home} vs {match.away}</Text></View><Text style={x.ownerSquadTableMetric}>{fmt(match.batting)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.bowling)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.fielding)}</Text><Text style={x.ownerSquadTableMetric}>{fmt(match.bonus)}</Text>{royaltyMode ? <Text style={[x.ownerSquadTableMetric, match.royalty > 0 && x.royaltyColumn]}>{fmt(match.royalty)}</Text> : null}<Text style={x.ownerSquadTableTotal}>{fmt(match.total)}</Text></View>)}<View style={x.ownerMatchCareerRow}><View style={x.ownerMatchTableMatch}><Text style={x.ownerMatchCareerLabel}>CAREER TOTAL</Text><Text style={x.ownerMatchTableTeams}>{career.matches} scored match{career.matches === 1 ? "" : "es"}</Text></View><Text style={x.ownerMatchCareerMetric}>{fmt(career.batting)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.bowling)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.fielding)}</Text><Text style={x.ownerMatchCareerMetric}>{fmt(career.bonus)}</Text>{royaltyMode ? <Text style={[x.ownerMatchCareerMetric, career.royalty > 0 && x.royaltyColumn]}>{fmt(career.royalty)}</Text> : null}<Text style={x.ownerMatchCareerTotal}>{fmt(career.total)}</Text></View></>}
+  </View>;
+}
+
 export function ProductionSquads({ leagueId, currentOwner, roster, specialSelection }: { leagueId: string; currentOwner: string; roster: Player[]; specialSelection?: SpecialSelectionConfig | null }) {
   const { width: ownerSquadsWidth } = useWindowDimensions();
   const compact = ownerSquadsWidth < 620;
@@ -443,8 +711,8 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
     let cancelled = false;
     setLoading(true); setError(""); setPoints([]); setRoyalties([]); setMemberNames({});
     Promise.all([
-      supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name),fixture:fixtures!inner(league_id)").eq("fixture.league_id", leagueId).not("published_at", "is", null),
-      supabase.from("special_player_score_adjustments").select("fixture_id,player_id,source_member_id,recipient_member_id,adjustment_type,final_player_contribution,rate_percent,minimum_fee,adjustment_points,player:players(full_name)").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
+      supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name,team:cricket_teams(code)),fixture:fixtures!inner(league_id,match_number,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code))").eq("fixture.league_id", leagueId).not("published_at", "is", null),
+      supabase.from("special_player_score_adjustments").select("fixture_id,player_id,source_member_id,recipient_member_id,adjustment_type,final_player_contribution,rate_percent,minimum_fee,adjustment_points,player:players(full_name,team:cricket_teams(code))").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
       supabase.from("league_members").select("id,display_name").eq("league_id", leagueId),
     ]).then(([pointResult, royaltyResult, memberResult]) => {
       if (cancelled) return;
@@ -525,8 +793,10 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
       setSpecialBusy(false);
     }
   };
-  const totals = useMemo(() => { const latest = new Map<string, any>(); for (const row of points) { const key = `${row.fixture_id}:${row.player?.full_name}`; if (!latest.has(key) || latest.get(key).calculation_version < row.calculation_version) latest.set(key, row); } const map = new Map<string, any>(); for (const row of latest.values()) { const name = row.player?.full_name; const current = map.get(name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; map.set(name, { matches: current.matches + 1, batting: current.batting + Number(row.batting_points), bowling: current.bowling + Number(row.bowling_points), fielding: current.fielding + Number(row.fielding_points), bonus: current.bonus + Number(row.bonus_points), total: current.total + Number(row.total_points) }); } return map; }, [points]);
-  const royaltyTotals = useMemo(() => { const map = new Map<string, { total: number; rows: any[] }>(); for (const row of royalties) { const owner = memberNames[row.recipient_member_id]; const name = row.player?.full_name; if (!owner || !name) continue; const key = `${owner}:${name}`; const current = map.get(key) ?? { total: 0, rows: [] }; map.set(key, { total: current.total + Number(row.adjustment_points), rows: [...current.rows, row] }); } return map; }, [royalties, memberNames]);
+  const latestPointRows = useMemo(() => { const latest = new Map<string, any>(); for (const row of points) { const playerKey = `${row.player?.team?.code ?? ""}:${row.player?.full_name ?? ""}`; const key = `${row.fixture_id}:${playerKey}`; if (!latest.has(key) || Number(latest.get(key).calculation_version) < Number(row.calculation_version)) latest.set(key, row); } return [...latest.values()]; }, [points]);
+  const totals = useMemo(() => { const map = new Map<string, any>(); for (const row of latestPointRows) { const playerKey = `${row.player?.team?.code ?? ""}:${row.player?.full_name ?? ""}`; const current = map.get(playerKey) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; map.set(playerKey, { matches: current.matches + 1, batting: current.batting + Number(row.batting_points), bowling: current.bowling + Number(row.bowling_points), fielding: current.fielding + Number(row.fielding_points), bonus: current.bonus + Number(row.bonus_points), total: current.total + Number(row.total_points) }); } return map; }, [latestPointRows]);
+  const matchPointsByPlayer = useMemo(() => { const map = new Map<string, any[]>(); for (const row of latestPointRows) { const playerKey = `${row.player?.team?.code ?? ""}:${row.player?.full_name ?? ""}`; if (!row.player?.full_name) continue; map.set(playerKey, [...(map.get(playerKey) ?? []), row]); } for (const rows of map.values()) rows.sort((left, right) => Number(right.fixture?.match_number ?? 0) - Number(left.fixture?.match_number ?? 0)); return map; }, [latestPointRows]);
+  const royaltyTotals = useMemo(() => { const map = new Map<string, { total: number; rows: any[] }>(); for (const row of royalties) { const owner = memberNames[row.recipient_member_id]; const name = row.player?.full_name; const team = row.player?.team?.code; if (!owner || !name || !team) continue; const key = `${owner}:${team}:${name}`; const current = map.get(key) ?? { total: 0, rows: [] }; map.set(key, { total: current.total + Number(row.adjustment_points), rows: [...current.rows, row] }); } return map; }, [royalties, memberNames]);
   if (loading) return <Loading />;
   if (error) return <LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} />;
   const owners = Array.from(new Set(roster.filter(p => p.owner !== "Available").map(p => p.owner))).sort((a, b) => a === currentOwner ? -1 : b === currentOwner ? 1 : a.localeCompare(b));
@@ -536,8 +806,8 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
   const specialLabel = specialSelection?.type === "unique" ? "Unique" : "Marquee";
   const auctionPlayers = roster.filter(player => player.owner !== "Available");
   const currentOwnerPlayers = auctionPlayers.filter(player => player.owner === currentOwner);
-  const currentOwnerBasePoints = currentOwnerPlayers.reduce((sum, player) => sum + (totals.get(player.name)?.total ?? 0), 0);
-  const currentOwnerRoyalty = currentOwnerPlayers.reduce((sum, player) => sum + (royaltyTotals.get(`${currentOwner}:${player.name}`)?.total ?? 0), 0);
+  const currentOwnerBasePoints = currentOwnerPlayers.reduce((sum, player) => sum + (totals.get(`${player.team}:${player.name}`)?.total ?? 0), 0);
+  const currentOwnerRoyalty = currentOwnerPlayers.reduce((sum, player) => sum + (royaltyTotals.get(`${currentOwner}:${player.team}:${player.name}`)?.total ?? 0), 0);
   const normalizedOwnerSearch = ownerPlayerSearch.trim().toLocaleLowerCase();
   const ownerPlayerMatchesFilters = (player: Player) => (!normalizedOwnerSearch || player.name.toLocaleLowerCase().includes(normalizedOwnerSearch)) && (roleFilter === "ALL" || player.role === roleFilter) && (specialFilter === "ALL" || (leagueSpecialLabels[player.name] ?? []).includes("MARQUEE"));
   const matchingOwnerPlayers = auctionPlayers.filter(ownerPlayerMatchesFilters);
@@ -573,7 +843,7 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
 {ownerFiltersApplied ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Reset owner squad search and filters" style={x.ownerSquadsFilterReset} onPress={resetOwnerFilters}><Text style={x.ownerSquadsFilterResetText}>Reset search & filters</Text></TouchableOpacity> : null}
 </> : null}
 </View>
-{visibleOwners.length ? visibleOwners.map(owner => { const open = expanded === owner || !!normalizedOwnerSearch; const isCurrentOwner = owner === currentOwner; const theme = ownerTheme(owner); const allOwnerPlayers = roster.filter(p => p.owner === owner); const ownerPlayers = allOwnerPlayers.filter(ownerPlayerMatchesFilters).sort((a, b) => { if (playerSort === "name") return a.name.localeCompare(b.name); if (playerSort === "cost") return Number(b.price ?? 0) - Number(a.price ?? 0) || a.name.localeCompare(b.name); if (playerSort === "royalty") return (royaltyTotals.get(`${owner}:${b.name}`)?.total ?? 0) - (royaltyTotals.get(`${owner}:${a.name}`)?.total ?? 0) || a.name.localeCompare(b.name); return (totals.get(b.name)?.total ?? 0) - (totals.get(a.name)?.total ?? 0) || a.name.localeCompare(b.name); }); const baseTotal = allOwnerPlayers.reduce((sum, p) => sum + (totals.get(p.name)?.total ?? 0), 0); const royaltyTotal = allOwnerPlayers.reduce((sum, p) => sum + (royaltyTotals.get(`${owner}:${p.name}`)?.total ?? 0), 0); const total = baseTotal + royaltyTotal; return <View key={owner} style={[x.ownerSquadCard, open && x.ownerSquadCardOpen, isCurrentOwner && x.ownerSquadCardCurrent, { borderLeftColor: theme.accent }]}>
+{visibleOwners.length ? visibleOwners.map(owner => { const open = expanded === owner || !!normalizedOwnerSearch; const isCurrentOwner = owner === currentOwner; const theme = ownerTheme(owner); const allOwnerPlayers = roster.filter(p => p.owner === owner); const ownerPlayers = allOwnerPlayers.filter(ownerPlayerMatchesFilters).sort((a, b) => { if (playerSort === "name") return a.name.localeCompare(b.name); if (playerSort === "cost") return Number(b.price ?? 0) - Number(a.price ?? 0) || a.name.localeCompare(b.name); if (playerSort === "royalty") return (royaltyTotals.get(`${owner}:${b.team}:${b.name}`)?.total ?? 0) - (royaltyTotals.get(`${owner}:${a.team}:${a.name}`)?.total ?? 0) || a.name.localeCompare(b.name); return (totals.get(`${b.team}:${b.name}`)?.total ?? 0) - (totals.get(`${a.team}:${a.name}`)?.total ?? 0) || a.name.localeCompare(b.name); }); const baseTotal = allOwnerPlayers.reduce((sum, p) => sum + (totals.get(`${p.team}:${p.name}`)?.total ?? 0), 0); const royaltyTotal = allOwnerPlayers.reduce((sum, p) => sum + (royaltyTotals.get(`${owner}:${p.team}:${p.name}`)?.total ?? 0), 0); const total = baseTotal + royaltyTotal; return <View key={owner} style={[x.ownerSquadCard, open && x.ownerSquadCardOpen, isCurrentOwner && x.ownerSquadCardCurrent, { borderLeftColor: theme.accent }]}>
 <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${owner}’s squad, ${ownerPlayers.length} ${ownerPlayers.length === 1 ? "player" : "players"}, ${fmt(total)} points`} accessibilityState={{ expanded: open }} style={[x.ownerSquadHeader, compact && x.ownerSquadHeaderCompact, open && { backgroundColor: theme.soft }]} onPress={() => setExpanded(open ? "" : owner)}>
 <OwnerAvatar owner={owner} current={isCurrentOwner} />
 <View style={x.ownerSquadIdentity}>
@@ -585,27 +855,19 @@ export function ProductionSquads({ leagueId, currentOwner, roster, specialSelect
 </TouchableOpacity>{open && isCurrentOwner && specialSelection && !royaltyMode ? <View style={x.specialSelectionBanner}>
 <View style={x.specialSelectionHeader}><View style={x.grow}><Text style={x.specialSelectionEyebrow}>{specialPhase ? `${specialPhase.name.toUpperCase()} · ${specialLabel.toUpperCase()} SELECTION` : `${specialLabel.toUpperCase()} SELECTION`}</Text><Text style={x.specialSelectionTitle}>{specialPhase ? `Choose your ${specialSelection.required} ${specialLabel} Players` : "Selections are currently locked"}</Text></View>{specialPhase ? <View style={x.specialSelectionCount}><Text style={x.specialSelectionCountValue}>{specialSelected.length}/{specialSelection.required}</Text><Text style={x.specialSelectionCountLabel}>SELECTED</Text></View> : null}</View>
 {specialPhase ? <><View style={x.specialSelectionSlots}>{Array.from({ length: specialSelection.required }).map((_, index) => <View key={index} style={[x.specialSelectionSlot, selectedSpecialNames[index] && x.specialSelectionSlotFilled]}><Text numberOfLines={1} style={[x.specialSelectionSlotText, selectedSpecialNames[index] && x.specialSelectionSlotTextFilled]}>{selectedSpecialNames[index] ?? `Slot ${index + 1} · Not selected`}</Text></View>)}</View><Text style={x.specialSelectionDeadline}>Selection closes {new Date(specialPhase.closesAt!).toLocaleString()}</Text><Text style={x.specialSelectionHelp}>Use the {specialLabel} button beside a player below. You must fill all {specialSelection.required} slots before saving.</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Save ${specialLabel} Players for ${specialPhase.name}`} accessibilityState={{ disabled: specialBusy || specialSelected.length !== specialSelection.required, busy: specialBusy }} disabled={specialBusy || specialSelected.length !== specialSelection.required} style={[x.specialSelectionSave, (specialBusy || specialSelected.length !== specialSelection.required) && x.specialSelectionSaveDisabled]} onPress={saveSpecial}><Text style={x.specialSelectionSaveText}>{specialBusy ? "Saving…" : `Save ${specialLabel} Players · ${specialSelected.length}/${specialSelection.required}`}</Text></TouchableOpacity></> : <Text style={x.specialSelectionText}>{specialBusy ? "Loading selection…" : "The next phase opens after the current phase starts. Playoff selections carry forward automatically."}</Text>}{specialMessage ? <Text accessibilityLiveRegion="polite" style={x.specialSelectionInlineMessage}>{specialMessage}</Text> : null}
-</View> : null}{open && !compact ? <View style={x.ownerSquadTableHead}><Text numberOfLines={1} style={x.ownerSquadTablePlayerHead}>PLAYER</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>BAT</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>BOWL</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>FIELD</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>BONUS</Text>{royaltyMode ? <Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>ROY</Text> : null}<Text numberOfLines={1} style={x.ownerSquadTableTotalHead}>TOTAL</Text></View> : null}{open && !ownerPlayers.length ? <Empty text="No players match the selected filters." /> : null}{open && ownerPlayers.map(player => { const p = totals.get(player.name) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; const royalty = royaltyTotals.get(`${owner}:${player.name}`) ?? { total: 0, rows: [] }; const playerKey = `${owner}:${player.team}:${player.name}`; const playerOpen = expandedPlayer === playerKey; const specialPlayerId = specialPlayerIds[player.name]; const specialChecked = !!specialPlayerId && specialSelected.includes(specialPlayerId); const specialDisabled = specialBusy || (!specialChecked && specialSelected.length >= (specialSelection?.required ?? 0)); const totalPoints = p.total + (royaltyMode ? royalty.total : 0); return <View key={player.name} style={compact ? x.ownerSquadPlayerCard : undefined}>
+</View> : null}{open && !compact ? <View style={x.ownerSquadTableHead}><Text numberOfLines={1} style={x.ownerSquadTablePlayerHead}>PLAYER</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>BAT</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>BOWL</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>FIELD</Text><Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>BONUS</Text>{royaltyMode ? <Text numberOfLines={1} style={x.ownerSquadTableMetricHead}>ROY</Text> : null}<Text numberOfLines={1} style={x.ownerSquadTableTotalHead}>TOTAL</Text></View> : null}{open && !ownerPlayers.length ? <Empty text="No players match the selected filters." /> : null}{open && ownerPlayers.map(player => { const scoreKey = `${player.team}:${player.name}`; const p = totals.get(scoreKey) ?? { matches: 0, batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 }; const royalty = royaltyTotals.get(`${owner}:${scoreKey}`) ?? { total: 0, rows: [] }; const royaltyByFixture = new Map<string, number>(); for (const row of royalty.rows) royaltyByFixture.set(row.fixture_id, (royaltyByFixture.get(row.fixture_id) ?? 0) + Number(row.adjustment_points)); const playerMatchRows: OwnerPlayerMatchScore[] = (matchPointsByPlayer.get(scoreKey) ?? []).map(row => { const matchRoyalty = royaltyMode ? (royaltyByFixture.get(row.fixture_id) ?? 0) : 0; return { fixtureId: row.fixture_id, matchNumber: Number(row.fixture?.match_number ?? 0), home: row.fixture?.home?.code ?? "—", away: row.fixture?.away?.code ?? "—", batting: Number(row.batting_points), bowling: Number(row.bowling_points), fielding: Number(row.fielding_points), bonus: Number(row.bonus_points), royalty: matchRoyalty, total: Number(row.total_points) + matchRoyalty }; }); const playerKey = `${owner}:${scoreKey}`; const playerOpen = expandedPlayer === playerKey; const specialPlayerId = specialPlayerIds[player.name]; const specialChecked = !!specialPlayerId && specialSelected.includes(specialPlayerId); const specialDisabled = specialBusy || (!specialChecked && specialSelected.length >= (specialSelection?.required ?? 0)); const totalPoints = p.total + (royaltyMode ? royalty.total : 0); const career = { matches: p.matches, batting: p.batting, bowling: p.bowling, fielding: p.fielding, bonus: p.bonus, royalty: royaltyMode ? royalty.total : 0, total: totalPoints }; return <View key={scoreKey} style={compact ? x.ownerSquadPlayerCard : undefined}>
 {compact ? <>
 <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${player.name}, ${player.team}, ${player.role}, ${fmt(totalPoints)} points`} accessibilityState={{ expanded: playerOpen }} style={x.ownerSquadPlayerTop} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}>
 <View style={x.ownerSquadPlayerIdentity}><View style={x.playerLabelRow}><Text numberOfLines={1} style={x.ownerSquadPlayerName}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}</View><View style={x.ownerSquadPlayerMeta}><IplTeamBadge code={player.team} /><Text style={x.ownerPlayerRole}>{player.role}</Text><Text numberOfLines={1} style={x.ownerPlayerCosts}>₹{player.price}m · Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice}m`}</Text></View></View>
 <View style={x.ownerSquadPlayerTotal}><Text style={x.ownerSquadPlayerTotalValue}>{fmt(totalPoints)}</Text><Text style={x.ownerSquadPlayerTotalLabel}>PTS</Text></View><View style={x.ownerSquadPlayerDisclosure}><Text style={x.ownerSquadPlayerDisclosureText}>{playerOpen ? "▲" : "▼"}</Text></View>
 </TouchableOpacity>
 {isCurrentOwner && specialSelection && specialPhase && specialPlayerId && (!specialDisabled || specialChecked) ? <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: specialChecked, disabled: specialDisabled }} disabled={specialDisabled} style={[x.ownerSquadPlayerSelect, specialChecked && x.specialSelectButtonChecked, specialDisabled && x.specialSelectButtonDisabled]} onPress={() => toggleSpecial(specialPlayerId)}><Text style={[x.specialSelectButtonText, specialChecked && x.specialSelectButtonTextChecked]}>{specialChecked ? `✓ ${specialLabel}` : `+ ${specialLabel}`}</Text></TouchableOpacity> : null}
-{playerOpen ? <View style={x.ownerSquadPlayerExpanded}><View style={x.ownerSquadPlayerMetrics}><FixtureScoreMetric label="BAT" value={p.batting} /><FixtureScoreMetric label="BOWL" value={p.bowling} /><FixtureScoreMetric label="FLD" value={p.fielding} /><FixtureScoreMetric label="BON" value={p.bonus} />{royaltyMode ? <FixtureScoreMetric label="ROY" value={royalty.total} accent={royalty.total > 0} /> : null}</View><Text style={x.ownerSquadPlayerMatches}>{p.matches} scored match{p.matches === 1 ? "" : "es"} · {fmt(totalPoints)} total points</Text></View> : null}
+{playerOpen ? <OwnerPlayerMatchBreakdown matches={playerMatchRows} compact royaltyMode={royaltyMode} career={career} /> : null}
 </> : <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${player.name}, ${player.team}, ${player.role}, ${fmt(totalPoints)} points`} accessibilityState={{ expanded: playerOpen }} style={x.ownerSquadTableRow} onPress={() => setExpandedPlayer(playerOpen ? "" : playerKey)}>
 <View style={x.ownerSquadTablePlayer}><View style={x.ownerPlayerNameRow}><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={x.playerListName}>{player.name}</Text>{(leagueSpecialLabels[player.name] ?? []).map((label: string) => <SpecialPlayerBadge key={label} label={label} />)}<Text style={x.ownerPlayerChevron}>{playerOpen ? "▲" : "▼"}</Text></View><View style={x.ownerPlayerTeamRole}><IplTeamBadge code={player.team} /><Text style={x.ownerPlayerRole}>{roleLabel[player.role]}</Text></View><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={x.ownerPlayerCosts}>Selection ₹{player.price}m  ·  Bid {player.bidPrice == null ? "—" : `₹${player.bidPrice}m`}</Text>{isCurrentOwner && specialSelection && specialPhase && specialPlayerId ? <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: specialChecked, disabled: specialDisabled }} disabled={specialDisabled} style={[x.specialSelectButton, specialChecked && x.specialSelectButtonChecked, specialDisabled && x.specialSelectButtonDisabled]} onPress={event => { event.stopPropagation(); toggleSpecial(specialPlayerId); }}><Text style={[x.specialSelectButtonText, specialChecked && x.specialSelectButtonTextChecked]}>{specialChecked ? `✓ ${specialLabel} selected` : `+ Select as ${specialLabel}`}</Text></TouchableOpacity> : null}</View>
 <Text numberOfLines={1} style={x.ownerSquadTableMetric}>{fmt(p.batting)}</Text><Text numberOfLines={1} style={x.ownerSquadTableMetric}>{fmt(p.bowling)}</Text><Text numberOfLines={1} style={x.ownerSquadTableMetric}>{fmt(p.fielding)}</Text><Text numberOfLines={1} style={x.ownerSquadTableMetric}>{fmt(p.bonus)}</Text>{royaltyMode ? <Text numberOfLines={1} style={[x.ownerSquadTableMetric, royalty.total > 0 && x.royaltyColumn]}>{fmt(royalty.total)}</Text> : null}<Text numberOfLines={1} style={x.ownerSquadTableTotal}>{fmt(totalPoints)}</Text>
 </TouchableOpacity>}
-{playerOpen && !compact ? <View style={x.ownerPlayerBreakdown}>
-<BreakdownLine label="Scored matches" value={p.matches} />
-<BreakdownLine label="Batting" value={p.batting} />
-<BreakdownLine label="Bowling" value={p.bowling} />
-<BreakdownLine label="Fielding" value={p.fielding} />
-<BreakdownLine label="Bonus" value={p.bonus} />
-{royaltyMode ? <BreakdownLine label="Royalty earned" value={royalty.total} /> : null}
-<BreakdownLine label="Total points" value={p.total + (royaltyMode ? royalty.total : 0)} strong />
-</View> : null}</View>; })}</View>; }) : <Empty text="No squad players match your search and filters." />}</View>;
+{playerOpen && !compact ? <OwnerPlayerMatchBreakdown matches={playerMatchRows} compact={false} royaltyMode={royaltyMode} career={career} /> : null}</View>; })}</View>; }) : <Empty text="No squad players match your search and filters." />}</View>;
 }
 
 type LeagueSquadPlayer = Player & { leaguePlayerId: string; playerId: string; active: boolean; bidPrice: number | null; ownerId: string };
@@ -1169,7 +1431,7 @@ function ProductionScorecard({ match, royaltyAdjustments, onBack }: { match: any
     <View style={x.scorecardTopRow}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to Results" style={x.scorecardBack} onPress={onBack}><Text style={x.scorecardBackArrow}>‹</Text><Text style={x.scorecardBackText}>Results</Text></TouchableOpacity>{sourceUrl ? <TouchableOpacity accessibilityRole="link" accessibilityLabel="Open official scorecard source" style={x.scorecardSource} onPress={() => Linking.openURL(sourceUrl)}><Text style={x.scorecardSourceText}>Official source ↗</Text></TouchableOpacity> : null}</View>
     <View style={x.scorecardHero}><View style={x.scorecardHeroGlow} /><Text style={x.scorecardHeroEyebrow}>MATCH {match.match_number} · CRICKET SCORECARD</Text><View style={[x.scorecardHeroMain, compact && x.scorecardHeroMainCompact]}><View style={x.scorecardHeroTeams}><IplTeamBadge code={match.home?.code} /><Text style={x.scorecardHeroVs}>VS</Text><IplTeamBadge code={match.away?.code} /></View>{scorecard ? <View style={x.scorecardWinnerBadge}><Text style={x.scorecardWinnerCheck}>✓</Text><View><Text style={x.scorecardWinnerLabel}>IPL WINNER</Text><Text style={x.scorecardWinnerTeam}>{scorecard.winnerTeam}</Text></View></View> : null}</View><Text style={x.scorecardHeroMeta}>{dateText}{match.venue ? ` · ${match.venue}` : ""}</Text>{scorecard ? <><Text style={x.scorecardResult}>{scorecard.result}</Text><View style={[x.scorecardInningsSummary, compact && x.scorecardInningsSummaryCompact]}>{scorecard.innings.map((item, index) => <View key={item.team} style={x.scorecardSummaryItem}><Text style={x.scorecardSummaryOrder}>{index + 1}{index === 0 ? "ST" : "ND"} INNINGS</Text><View style={x.scorecardSummaryScoreRow}><IplTeamBadge code={item.team} /><Text style={x.scorecardSummaryScore}>{item.score}</Text></View><Text style={x.scorecardSummaryOvers}>{item.overs} overs</Text></View>)}</View><Text style={x.scorecardPom}>★ Player of the Match · {scorecard.playerOfMatch}</Text></> : <Text style={x.scorecardUnavailable}>Detailed innings data has not been imported for this match. Published fantasy points remain available below.</Text>}</View>
     <View accessibilityRole="tablist" style={x.scorecardTabs}>{[["scorecard", "Scorecard"], ["points", "Fantasy points"]].map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="tab" accessibilityLabel={label} accessibilityState={{ selected: section === value }} style={[x.scorecardTab, section === value && x.scorecardTabActive]} onPress={() => setSection(value as "scorecard" | "points")}><Text style={[x.scorecardTabText, section === value && x.scorecardTabTextActive]}>{label}</Text></TouchableOpacity>)}</View>
-    {section === "scorecard" ? scorecard && innings ? <><View accessibilityRole="tablist" style={x.inningsTabs}>{scorecard.innings.map((item, index) => <TouchableOpacity key={`${item.team}:${index}`} accessibilityRole="tab" accessibilityLabel={`${index === 0 ? "First" : "Second"} innings, ${item.team}`} accessibilityState={{ selected: inningsIndex === index }} style={[x.inningsTab, inningsIndex === index && x.inningsTabActive]} onPress={() => setInningsIndex(index)}><Text style={[x.inningsTabEyebrow, inningsIndex === index && x.inningsTabTextActive]}>{index === 0 ? "1ST INNINGS" : "2ND INNINGS"}</Text><View style={x.inningsTabScore}><Text style={[x.inningsTabTeam, inningsIndex === index && x.inningsTabTextActive]}>{item.team}</Text><Text style={[x.inningsTabTotal, inningsIndex === index && x.inningsTabTextActive]}>{item.score}</Text></View></TouchableOpacity>)}</View><ScorecardInningsBlock innings={innings} compact={compact} /></> : <View style={x.scorecardEmpty}><Text style={x.scorecardEmptyTitle}>Scorecard data unavailable</Text><Text style={x.scorecardEmptyText}>The scoring import contains fantasy totals but not both innings. Use the official source for the cricket scorecard.</Text>{sourceUrl ? <TouchableOpacity accessibilityRole="link" style={x.scorecardEmptyButton} onPress={() => Linking.openURL(sourceUrl)}><Text style={x.scorecardEmptyButtonText}>Open official scorecard</Text></TouchableOpacity> : null}</View> : <View><View style={x.pointsIntro}><View style={x.grow}><Text style={x.pointsIntroEyebrow}>VERIFIED FANTASY SCORING</Text><Text style={x.pointsIntroTitle}>Player points breakdown</Text><Text style={x.pointsIntroText}>Tap any player for batting, bowling, fielding, bonus and ROY credits. ROY is paid separately to the owning member.</Text></View>{highestPoints ? <View style={x.pointsLeader}><Text style={x.pointsLeaderLabel}>TOP SCORE</Text><Text style={x.pointsLeaderValue}>{fmt(highestPoints.total_points)}</Text><Text numberOfLines={1} style={x.pointsLeaderName}>{highestPoints.player?.full_name ?? "Player"}</Text></View> : null}</View>{royaltyAdjustments.length ? <View style={x.scorecardRoyaltySummary}><View><Text style={x.scorecardRoyaltySummaryLabel}>ROYALTY AWARDED</Text><Text style={x.scorecardRoyaltySummaryText}>{royaltyAdjustments.length} borrower credit{royaltyAdjustments.length === 1 ? "" : "s"} in this match</Text></View><Text style={x.scorecardRoyaltySummaryValue}>+{fmt(royaltyTotal)} ROY</Text></View> : null}{publishedPoints.length ? publishedPoints.map((pointRow: any) => <ScorecardPointPlayer key={`${pointRow.player_id}:${pointRow.calculation_version}`} pointRow={pointRow} royaltyRows={royaltyAdjustments.filter(row => row.player_id === pointRow.player_id)} matchNumber={Number(match.match_number)} compact={compact} open={expandedPointPlayer === pointRow.player_id} onToggle={() => setExpandedPointPlayer(expandedPointPlayer === pointRow.player_id ? "" : pointRow.player_id)} />) : <Empty text="Fantasy points have not been published for this match." />}</View>}
+    {section === "scorecard" ? scorecard && innings ? <><View accessibilityRole="tablist" style={x.inningsTabs}>{scorecard.innings.map((item, index) => <TouchableOpacity key={`${item.team}:${index}`} accessibilityRole="tab" accessibilityLabel={`${index === 0 ? "First" : "Second"} innings, ${item.team}`} accessibilityState={{ selected: inningsIndex === index }} style={[x.inningsTab, inningsIndex === index && x.inningsTabActive]} onPress={() => setInningsIndex(index)}><Text style={[x.inningsTabEyebrow, inningsIndex === index && x.inningsTabTextActive]}>{index === 0 ? "1ST INNINGS" : "2ND INNINGS"}</Text><View style={x.inningsTabScore}><Text style={[x.inningsTabTeam, inningsIndex === index && x.inningsTabTextActive]}>{item.team}</Text><Text style={[x.inningsTabTotal, inningsIndex === index && x.inningsTabTextActive]}>{item.score}</Text></View></TouchableOpacity>)}</View><ScorecardInningsBlock innings={innings} compact={compact} /></> : <View style={x.scorecardEmpty}><Text style={x.scorecardEmptyTitle}>Scorecard data unavailable</Text><Text style={x.scorecardEmptyText}>The scoring import contains fantasy totals but not both innings. Use the official source for the cricket scorecard.</Text>{sourceUrl ? <TouchableOpacity accessibilityRole="link" style={x.scorecardEmptyButton} onPress={() => Linking.openURL(sourceUrl)}><Text style={x.scorecardEmptyButtonText}>Open official scorecard</Text></TouchableOpacity> : null}</View> : <View><View style={x.pointsIntro}><View style={x.grow}><Text style={x.pointsIntroEyebrow}>VERIFIED FANTASY SCORING</Text><Text style={x.pointsIntroTitle}>Player points breakdown</Text><Text style={x.pointsIntroText}>Tap any player for batting, bowling, fielding, bonus and owner royalty. ROY is credited separately and never changes the player’s fantasy score.</Text></View>{highestPoints ? <View style={x.pointsLeader}><Text style={x.pointsLeaderLabel}>TOP SCORE</Text><Text style={x.pointsLeaderValue}>{fmt(highestPoints.total_points)}</Text><Text numberOfLines={1} style={x.pointsLeaderName}>{highestPoints.player?.full_name ?? "Player"}</Text></View> : null}</View>{royaltyAdjustments.length ? <View style={x.scorecardRoyaltySummary}><View style={x.grow}><Text style={x.scorecardRoyaltySummaryLabel}>OWNER ROYALTY AWARDED</Text><Text style={x.scorecardRoyaltySummaryText}>{royaltyAdjustments.length} borrower credit{royaltyAdjustments.length === 1 ? "" : "s"} paid to player owners</Text></View><View style={x.scorecardRoyaltySummaryMetric}><Text style={x.scorecardRoyaltySummaryValue}>+{fmt(royaltyTotal)}</Text><Text style={x.scorecardRoyaltySummaryUnit}>OWNER ROY</Text></View></View> : null}{publishedPoints.length ? publishedPoints.map((pointRow: any) => <ScorecardPointPlayer key={`${pointRow.player_id}:${pointRow.calculation_version}`} pointRow={pointRow} royaltyRows={royaltyAdjustments.filter(row => row.player_id === pointRow.player_id)} matchNumber={Number(match.match_number)} compact={compact} open={expandedPointPlayer === pointRow.player_id} onToggle={() => setExpandedPointPlayer(expandedPointPlayer === pointRow.player_id ? "" : pointRow.player_id)} />) : <Empty text="Fantasy points have not been published for this match." />}</View>}
   </ScrollView>;
 }
 
@@ -1188,7 +1450,24 @@ function ScorecardPointPlayer({ pointRow, royaltyRows, matchNumber, compact, ope
   const runs = Number(stats?.runs ?? 0);
   const wickets = Number(stats ? stats.bowlerWickets + stats.nonBowlerWickets : 0);
   const detailSections = details ? [["BATTING", details.batting, categoryTotals.batting], ["BOWLING", details.bowling, categoryTotals.bowling], ["FIELDING", details.fielding, categoryTotals.fielding], ["BONUS", details.bonus, categoryTotals.bonus]] as const : [];
-  return <View style={[x.pointPlayerCard, open && x.pointPlayerCardOpen]}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`${playerName}, ${fmt(pointRow.total_points)} fantasy points${royaltyTotal ? `, ${fmt(royaltyTotal)} royalty points generated` : ""}`} accessibilityState={{ expanded: open }} style={x.pointPlayerHeader} onPress={onToggle}><View style={x.pointPlayerRank}><Text style={x.pointPlayerRankText}>{String(playerName).charAt(0).toUpperCase()}</Text></View><View style={x.pointPlayerIdentity}><View style={x.pointPlayerNameRow}><Text numberOfLines={1} style={x.pointPlayerName}>{playerName}</Text>{stats?.playerOfMatch ? <Text style={x.pointPomBadge}>POTM</Text> : null}</View><View style={x.pointPlayerMeta}><IplTeamBadge code={pointRow.player?.team?.code} /><Text style={x.roleText}>{pointRow.player?.role ?? "—"}</Text>{stats ? <Text numberOfLines={1} style={x.pointRawSummary}>{runs} {runs === 1 ? "run" : "runs"} · {wickets} {wickets === 1 ? "wkt" : "wkts"}</Text> : null}</View></View><View style={x.pointPlayerTotal}><Text style={[x.pointPlayerTotalValue, Number(pointRow.total_points) < 0 && x.breakdownNegative]}>{fmt(pointRow.total_points)}</Text><Text style={x.pointPlayerTotalLabel}>PTS</Text>{royaltyTotal ? <Text style={x.pointPlayerRoyalty}>+{fmt(royaltyTotal)} ROY</Text> : null}</View><View style={x.pointPlayerChevron}><Text style={x.pointPlayerChevronText}>{open ? "▲" : "▼"}</Text></View></TouchableOpacity>{open ? <View style={x.pointPlayerBody}><View style={[x.pointCategoryGrid, compact && x.pointCategoryGridCompact]}>{[["BAT", categoryTotals.batting, "#946C00"], ["BOWL", categoryTotals.bowling, "#1766A5"], ["FIELD", categoryTotals.fielding, "#2A8751"], ["BONUS", categoryTotals.bonus, "#6B35AD"], ["ROY", royaltyTotal, "#704091"]].map(([label, value, color]) => <View key={String(label)} style={x.pointCategory}><Text style={[x.pointCategoryLabel, { color: String(color) }]}>{label}</Text><Text style={[x.pointCategoryValue, Number(value) < 0 && x.breakdownNegative]}>{fmt(value)}</Text></View>)}</View>{detailSections.length ? detailSections.map(([title, rows, total]) => <View key={title} style={x.pointDetailSection}><View style={x.pointDetailHeading}><Text style={x.pointDetailTitle}>{title}</Text><Text style={x.pointDetailTotal}>{fmt(total)} pts</Text></View>{rows.filter(([, value]) => Number(value) !== 0).length ? rows.filter(([, value]) => Number(value) !== 0).map(([label, value]) => <BreakdownLine key={label} label={label} value={value} />) : <Text style={x.pointDetailEmpty}>No points in this category</Text>}</View>) : <View style={x.pointDetailUnavailable}><Text style={x.pointDetailUnavailableTitle}>Source calculation lines unavailable</Text><Text style={x.pointDetailUnavailableText}>{typeof pointRow.breakdown?.detail === "string" ? pointRow.breakdown.detail : "This older import stores the verified category totals but not each underlying scoring line."}</Text></View>}<View style={[x.pointDetailSection, x.pointRoyaltySection]}><View style={x.pointDetailHeading}><Text style={[x.pointDetailTitle, x.pointRoyaltyTitle]}>ROYALTY (ROY)</Text><Text style={[x.pointDetailTotal, x.pointRoyaltyTitle]}>{fmt(royaltyTotal)} pts</Text></View>{royaltyRows.length ? royaltyRows.map((row, index) => { const source = row.source?.display_name ?? "Borrower"; const recipient = row.recipient?.display_name ?? "Owner"; const royaltyType = row.adjustment_type === "marquee_royalty" ? "Marquee" : "Regular"; const minimum = Number(row.minimum_fee ?? 0); return <View key={`${row.source_member_id}:${row.recipient_member_id}:${index}`} style={x.royaltyAuditRow}><View style={x.grow}><Text style={x.royaltyAuditNames}>{source} → {recipient}</Text><Text style={x.royaltyAuditFormula}>{royaltyType} · {fmt(row.rate_percent)}% of {fmt(row.final_player_contribution)}{minimum ? ` · minimum ${fmt(minimum)}` : ""}</Text></View><Text style={x.royaltyAuditValue}>+{fmt(row.adjustment_points)}</Text></View>; }) : <Text style={x.pointDetailEmpty}>No royalty was generated by this player.</Text>}<Text style={x.royaltyAuditNote}>ROY is credited to the owning member separately; it is not added to the player’s cricket score.</Text></View><BreakdownLine label="Verified cricket points" value={pointRow.total_points} strong />{royaltyTotal ? <BreakdownLine label="Total value generated (PTS + ROY)" value={Number(pointRow.total_points) + royaltyTotal} strong /> : null}</View> : null}</View>;
+  return <View style={[x.pointPlayerCard, open && x.pointPlayerCardOpen]}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${playerName}, ${fmt(pointRow.total_points)} fantasy points${royaltyTotal ? `, ${fmt(royaltyTotal)} owner royalty points generated` : ""}`} accessibilityState={{ expanded: open }} style={[x.pointPlayerHeader, compact && x.pointPlayerHeaderCompact]} onPress={onToggle}>
+      <View style={x.pointPlayerHeaderMain}>
+        <View style={x.pointPlayerRank}><Text style={x.pointPlayerRankText}>{String(playerName).charAt(0).toUpperCase()}</Text></View>
+        <View style={x.pointPlayerIdentity}><View style={x.pointPlayerNameRow}><Text numberOfLines={1} style={x.pointPlayerName}>{playerName}</Text>{stats?.playerOfMatch ? <Text style={x.pointPomBadge}>POTM</Text> : null}</View><View style={x.pointPlayerMeta}><IplTeamBadge code={pointRow.player?.team?.code} /><Text style={x.roleText}>{pointRow.player?.role ?? "—"}</Text>{stats ? <Text numberOfLines={1} style={x.pointRawSummary}>{runs} {runs === 1 ? "run" : "runs"} · {wickets} {wickets === 1 ? "wkt" : "wkts"}</Text> : null}</View></View>
+        {!compact ? <PointPlayerScoreMetrics fantasyPoints={pointRow.total_points} royalty={royaltyTotal} /> : null}
+        <View style={x.pointPlayerChevron}><Text style={x.pointPlayerChevronText}>{open ? "▲" : "▼"}</Text></View>
+      </View>
+      {compact ? <PointPlayerScoreMetrics fantasyPoints={pointRow.total_points} royalty={royaltyTotal} compact /> : null}
+    </TouchableOpacity>
+    {open ? <View style={x.pointPlayerBody}><View style={[x.pointCategoryGrid, compact && x.pointCategoryGridCompact]}>{[["BAT", categoryTotals.batting, "#946C00"], ["BOWL", categoryTotals.bowling, "#1766A5"], ["FIELD", categoryTotals.fielding, "#2A8751"], ["BONUS", categoryTotals.bonus, "#6B35AD"], ["OWNER ROY", royaltyTotal, "#704091"]].map(([label, value, color]) => <View key={String(label)} style={x.pointCategory}><Text style={[x.pointCategoryLabel, { color: String(color) }]}>{label}</Text><Text style={[x.pointCategoryValue, Number(value) < 0 && x.breakdownNegative]}>{fmt(value)}</Text></View>)}</View>{detailSections.length ? detailSections.map(([title, rows, total]) => <View key={title}><View style={x.pointDetailSection}><View style={x.pointDetailHeading}><Text style={x.pointDetailTitle}>{title}</Text><Text style={x.pointDetailTotal}>{fmt(total)} pts</Text></View>{rows.filter(([, value]) => Number(value) !== 0).length ? rows.filter(([, value]) => Number(value) !== 0).map(([label, value]) => <BreakdownLine key={label} label={label} value={value} />) : <Text style={x.pointDetailEmpty}>No points in this category</Text>}</View></View>) : <View style={x.pointDetailUnavailable}><Text style={x.pointDetailUnavailableTitle}>Source calculation lines unavailable</Text><Text style={x.pointDetailUnavailableText}>{typeof pointRow.breakdown?.detail === "string" ? pointRow.breakdown.detail : "This older import stores the verified category totals but not each underlying scoring line."}</Text></View>}<View style={[x.pointDetailSection, x.pointRoyaltySection]}><View style={x.pointDetailHeading}><Text style={[x.pointDetailTitle, x.pointRoyaltyTitle]}>OWNER ROYALTY (ROY)</Text><Text style={[x.pointDetailTotal, x.pointRoyaltyTitle]}>{fmt(royaltyTotal)} pts</Text></View>{royaltyRows.length ? royaltyRows.map((row, index) => { const source = row.source?.display_name ?? "Borrower"; const recipient = row.recipient?.display_name ?? "Owner"; const royaltyType = row.adjustment_type === "marquee_royalty" ? "Marquee" : "Regular"; const minimum = Number(row.minimum_fee ?? 0); return <View key={`${row.source_member_id}:${row.recipient_member_id}:${index}`} style={x.royaltyAuditRow}><View style={x.grow}><Text style={x.royaltyAuditNames}>{source} → {recipient}</Text><Text style={x.royaltyAuditFormula}>{royaltyType} · {fmt(row.rate_percent)}% of {fmt(row.final_player_contribution)}{minimum ? ` · minimum ${fmt(minimum)}` : ""}</Text></View><Text style={x.royaltyAuditValue}>+{fmt(row.adjustment_points)}</Text></View>; }) : <Text style={x.pointDetailEmpty}>No royalty was generated by this player.</Text>}<Text style={x.royaltyAuditNote}>ROY is credited to the owning member separately; it is not added to the player’s fantasy score.</Text></View><BreakdownLine label="Verified fantasy points" value={pointRow.total_points} strong />{royaltyTotal ? <BreakdownLine label="Total value generated (Fantasy PTS + Owner ROY)" value={Number(pointRow.total_points) + royaltyTotal} strong /> : null}</View> : null}
+  </View>;
+}
+function PointPlayerScoreMetrics({ fantasyPoints, royalty, compact = false }: { fantasyPoints: unknown; royalty: number; compact?: boolean }) {
+  return <View style={[x.pointPlayerScoreMetrics, compact && x.pointPlayerScoreMetricsCompact]}>
+    <View style={x.pointPlayerScoreMetric}><Text style={[x.pointPlayerTotalValue, Number(fantasyPoints) < 0 && x.breakdownNegative]}>{fmt(fantasyPoints)}</Text><Text style={x.pointPlayerScoreLabel}>FANTASY PTS</Text></View>
+    {royalty > 0 ? <View style={[x.pointPlayerScoreMetric, x.pointPlayerRoyaltyMetric]}><Text style={x.pointPlayerRoyaltyValue}>+{fmt(royalty)}</Text><Text style={x.pointPlayerRoyaltyLabel}>OWNER ROY</Text></View> : null}
+  </View>;
 }
 function ResultsHeroStat({ label, value, detail, compact }: { label: string; value: string; detail: string; compact: boolean }) { return <View style={[x.resultsHeroStat, compact ? x.resultsHeroStatCompact : x.resultsHeroStatDesktop]}><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={x.resultsHeroStatLabel}>{label}</Text><Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={x.resultsHeroStatValue}>{value}</Text><Text numberOfLines={1} style={x.resultsHeroStatDetail}>{detail}</Text></View>; }
 function BreakdownLine({ label, value, strong = false }: { label: string; value: unknown; strong?: boolean }) { const negative = Number(value) < 0; return <View style={x.breakdownLine}><Text style={[x.breakdownLabel, strong && x.breakdownStrong]}>{label}</Text><Text style={[x.breakdownValue, strong && x.breakdownStrong, negative && x.breakdownNegative]}>{fmt(value)}</Text></View>; }
@@ -1431,10 +1710,14 @@ const x = StyleSheet.create(normalizeUiStyles({
   scorecardRoyaltySummary: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#F8F2FF", borderWidth: 1, borderColor: "#DFCDEE", borderRadius: 13, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 10 },
   scorecardRoyaltySummaryLabel: { color: "#704091", fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
   scorecardRoyaltySummaryText: { color: "#6C5D73", fontSize: 8, marginTop: 2 },
-  scorecardRoyaltySummaryValue: { color: "#704091", fontSize: 13, fontWeight: "900", marginLeft: 10 },
+  scorecardRoyaltySummaryMetric: { flexShrink: 0, alignItems: "flex-end", marginLeft: 12 },
+  scorecardRoyaltySummaryValue: { color: "#704091", fontSize: 14, fontWeight: "900" },
+  scorecardRoyaltySummaryUnit: { color: "#85619A", fontSize: 6, fontWeight: "900", letterSpacing: 0.5, marginTop: 1 },
   pointPlayerCard: { overflow: "hidden", backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: 14, marginBottom: 9 },
   pointPlayerCardOpen: { borderWidth: 2, borderColor: UI_TOKENS.colors.primary, ...CARD_SHADOW },
-  pointPlayerHeader: { minHeight: 68, flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 9 },
+  pointPlayerHeader: { minHeight: 68, paddingHorizontal: 10, paddingVertical: 9 },
+  pointPlayerHeaderCompact: { paddingBottom: 7 },
+  pointPlayerHeaderMain: { flexDirection: "row", alignItems: "center" },
   pointPlayerRank: { width: 36, height: 36, flexShrink: 0, borderRadius: 11, backgroundColor: UI_TOKENS.colors.primarySoft, alignItems: "center", justifyContent: "center", marginRight: 9 },
   pointPlayerRankText: { color: UI_TOKENS.colors.primary, fontSize: 12, fontWeight: "900" },
   pointPlayerIdentity: { flex: 1, minWidth: 0 },
@@ -1443,10 +1726,14 @@ const x = StyleSheet.create(normalizeUiStyles({
   pointPomBadge: { color: "#694F00", backgroundColor: "#FFF0A6", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, fontSize: 6, fontWeight: "900" },
   pointPlayerMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5, marginTop: 5 },
   pointRawSummary: { flexShrink: 1, color: UI_TOKENS.colors.muted, fontSize: 7, fontWeight: "700" },
-  pointPlayerTotal: { width: 52, flexShrink: 0, alignItems: "flex-end", marginLeft: 6 },
   pointPlayerTotalValue: { color: UI_TOKENS.colors.primary, fontSize: 15, fontWeight: "900" },
-  pointPlayerTotalLabel: { color: UI_TOKENS.colors.muted, fontSize: 6, fontWeight: "900", letterSpacing: 0.5 },
-  pointPlayerRoyalty: { color: "#704091", fontSize: 6, lineHeight: 9, fontWeight: "900", marginTop: 2 },
+  pointPlayerScoreMetrics: { minWidth: 160, flexShrink: 0, flexDirection: "row", justifyContent: "flex-end", alignItems: "stretch", marginLeft: 12 },
+  pointPlayerScoreMetricsCompact: { minWidth: 0, alignSelf: "stretch", justifyContent: "flex-end", marginLeft: 45, marginRight: 37, marginTop: 7, paddingTop: 7, borderTopWidth: 1, borderTopColor: UI_TOKENS.colors.border },
+  pointPlayerScoreMetric: { minWidth: 72, justifyContent: "center", alignItems: "flex-end", paddingHorizontal: 9 },
+  pointPlayerScoreLabel: { color: UI_TOKENS.colors.muted, fontSize: 6, fontWeight: "900", letterSpacing: 0.4, marginTop: 1 },
+  pointPlayerRoyaltyMetric: { borderLeftWidth: 1, borderLeftColor: "#DFCDEE" },
+  pointPlayerRoyaltyValue: { color: "#704091", fontSize: 15, fontWeight: "900" },
+  pointPlayerRoyaltyLabel: { color: "#85619A", fontSize: 6, fontWeight: "900", letterSpacing: 0.4, marginTop: 1 },
   pointPlayerChevron: { width: 30, height: 30, flexShrink: 0, borderRadius: 9, backgroundColor: UI_TOKENS.colors.surface, alignItems: "center", justifyContent: "center", marginLeft: 7 },
   pointPlayerChevronText: { color: UI_TOKENS.colors.primary, fontSize: 8, fontWeight: "900" },
   pointPlayerBody: { backgroundColor: "#F4F8F6", borderTopWidth: 1, borderTopColor: UI_TOKENS.colors.border, padding: 10 },
@@ -1508,37 +1795,120 @@ const x = StyleSheet.create(normalizeUiStyles({
   rankingPhaseTitle: { color: "#18223B", fontSize: 13, lineHeight: 17, fontWeight: "900", marginTop: 2 },
   rankingPhaseCount: { color: UI_TOKENS.colors.primary, backgroundColor: UI_TOKENS.colors.primarySoft, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6, fontSize: 8, fontWeight: "900" },
   rankingPhaseSwipe: { color: UI_TOKENS.colors.primary, fontSize: 8, fontWeight: "900", letterSpacing: 0.6 },
+  rankingTrendCard: { position: "relative", overflow: "hidden", backgroundColor: "#071C3B", borderWidth: 1, borderColor: "#17395F", borderRadius: 20, paddingHorizontal: 12, paddingTop: 13, paddingBottom: 12, marginTop: 12, ...CARD_SHADOW },
+  rankingTrendGlowLarge: { position: "absolute", width: 210, height: 210, borderRadius: 105, right: -95, top: -130, backgroundColor: "rgba(216,255,99,0.10)" },
+  rankingTrendGlowSmall: { position: "absolute", width: 120, height: 120, borderRadius: 60, left: "42%", bottom: -88, backgroundColor: "rgba(43,146,255,0.10)" },
+  rankingTrendHeader: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 9 },
+  rankingTrendEyebrow: { color: "#AAB9CE", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  rankingTrendTitle: { color: "#FFFFFF", fontSize: 17, lineHeight: 21, fontWeight: "900", marginTop: 2 },
+  rankingTrendSubtitle: { color: "#B9C6D8", fontSize: 8, lineHeight: 12, marginTop: 2 },
+  rankingTrendLive: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "rgba(216,255,99,0.25)", backgroundColor: "rgba(216,255,99,0.08)", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 5 },
+  rankingTrendLiveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: UI_TOKENS.colors.accent, marginRight: 5 },
+  rankingTrendLiveText: { color: UI_TOKENS.colors.accent, fontSize: 6, fontWeight: "900", letterSpacing: 0.6 },
+  rankingTrendToolbar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 7, marginBottom: 8 },
+  rankingTrendTabs: { flex: 1, minWidth: 0, flexDirection: "row", backgroundColor: "rgba(255,255,255,0.07)", borderRadius: 10, padding: 3 },
+  rankingTrendTab: { flex: 1, minHeight: 30, alignItems: "center", justifyContent: "center", borderRadius: 8, paddingHorizontal: 5 },
+  rankingTrendTabActive: { backgroundColor: UI_TOKENS.colors.accent },
+  rankingTrendTabText: { color: "#B9C6D8", fontSize: 7, fontWeight: "900", letterSpacing: 0.35 },
+  rankingTrendTabTextActive: { color: "#071C3B" },
+  rankingTrendToggle: { minHeight: 36, flexShrink: 0, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 9, paddingHorizontal: 9 },
+  rankingTrendToggleText: { color: "#FFFFFF", fontSize: 7, fontWeight: "900", letterSpacing: 0.4 },
+  rankingTrendPlot: { position: "relative", overflow: "hidden", width: "100%", backgroundColor: "rgba(3,14,34,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", borderRadius: 13 },
+  rankingTrendGridLine: { position: "absolute", height: 1, backgroundColor: "rgba(255,255,255,0.12)" },
+  rankingTrendAxisValue: { position: "absolute", left: 0, color: "#8FA0B8", fontSize: 7, lineHeight: 14, fontWeight: "800", textAlign: "right" },
+  rankingTrendSelectionBand: { position: "absolute", width: 18, borderRadius: 8, backgroundColor: "rgba(216,255,99,0.06)", borderLeftWidth: 1, borderRightWidth: 1, borderColor: "rgba(216,255,99,0.13)" },
+  rankingTrendSegment: { position: "absolute", height: 2, borderRadius: 2, opacity: 0.82 },
+  rankingTrendSegmentCurrent: { height: 3, opacity: 1 },
+  rankingTrendDotHit: { position: "absolute", width: 18, height: 18, alignItems: "center", justifyContent: "center" },
+  rankingTrendDot: { width: 6, height: 6, borderRadius: 3 },
+  rankingTrendDotCurrent: { width: 8, height: 8, borderRadius: 4 },
+  rankingTrendDotSelected: { borderWidth: 2, borderColor: "#FFFFFF", shadowColor: "#FFFFFF", shadowOpacity: 0.5, shadowRadius: 4, elevation: 3 },
+  rankingTrendBaseline: { position: "absolute", height: 1, backgroundColor: "rgba(255,255,255,0.28)" },
+  rankingFormBarHit: { position: "absolute", minHeight: 2 },
+  rankingFormBar: { flex: 1, width: "100%", borderTopLeftRadius: 3, borderTopRightRadius: 3, opacity: 0.72 },
+  rankingFormBarCurrent: { opacity: 1, borderWidth: 1, borderColor: "#FFFFFF" },
+  rankingFormBarSelected: { opacity: 1, shadowColor: "#FFFFFF", shadowOpacity: 0.35, shadowRadius: 3, elevation: 2 },
+  rankingTrendMatchLabel: { position: "absolute", width: 30, color: "#8091AA", fontSize: 7, lineHeight: 12, fontWeight: "900", textAlign: "center" },
+  rankingTrendMatchLabelActive: { color: UI_TOKENS.colors.accent },
+  rankingTrendInsights: { flexDirection: "row", gap: 6, marginTop: 8 },
+  rankingTrendInsight: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "rgba(255,255,255,0.11)", backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 7 },
+  rankingTrendInsightYou: { borderColor: "rgba(216,255,99,0.25)", backgroundColor: "rgba(216,255,99,0.08)" },
+  rankingTrendInsightLabel: { color: "#91A1B8", fontSize: 6, fontWeight: "900", letterSpacing: 0.6 },
+  rankingTrendInsightValue: { color: "#FFFFFF", fontSize: 10, lineHeight: 13, fontWeight: "900", marginTop: 3 },
+  rankingTrendInsightDetail: { color: "#B9C6D8", fontSize: 6, lineHeight: 9, marginTop: 2 },
+  rankingTrendLegend: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 9 },
+  rankingTrendLegendItem: { minWidth: 105, flexGrow: 1, flexBasis: 125, minHeight: 30, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 9, paddingHorizontal: 8 },
+  rankingTrendLegendCurrent: { borderColor: "rgba(216,255,99,0.35)", backgroundColor: "rgba(216,255,99,0.08)" },
+  rankingTrendLegendDot: { width: 7, height: 7, flexShrink: 0, borderRadius: 4, marginRight: 6 },
+  rankingTrendLegendName: { flex: 1, minWidth: 0, color: "#D8E0EC", fontSize: 8, fontWeight: "900" },
+  rankingTrendLegendScore: { color: "#FFFFFF", fontSize: 8, fontWeight: "900", marginLeft: 6 },
+  rankingRecordsSection: { marginTop: 18 },
+  rankingRecordsHeading: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 10, marginBottom: 9, paddingHorizontal: 2 },
+  rankingRecordsTitle: { color: "#18223B", fontSize: 16, lineHeight: 20, fontWeight: "900", marginTop: 2 },
+  rankingRecordsPeriod: { flexShrink: 1, color: UI_TOKENS.colors.primary, backgroundColor: UI_TOKENS.colors.primarySoft, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 5, fontSize: 6, fontWeight: "900", letterSpacing: 0.4 },
+  rankingRecordsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  rankingRecordCard: { width: "24.2%", minWidth: 150, flexGrow: 1, minHeight: 94, flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 15, paddingHorizontal: 11, paddingVertical: 10, ...CARD_SHADOW },
+  rankingRecordCardCompact: { width: "48.5%", minWidth: 0, minHeight: 86, paddingHorizontal: 8, paddingVertical: 8 },
+  rankingRecordGreen: { backgroundColor: "#EAF6EF", borderColor: "#A8D2B9" },
+  rankingRecordGold: { backgroundColor: "#FFF5D7", borderColor: "#E4C36A" },
+  rankingRecordBlue: { backgroundColor: "#EAF3FF", borderColor: "#A6C4EA" },
+  rankingRecordPurple: { backgroundColor: "#F2ECFF", borderColor: "#C2AFE8" },
+  rankingRecordIcon: { width: 34, height: 34, flexShrink: 0, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.72)", marginRight: 9 },
+  rankingRecordIconText: { color: UI_TOKENS.colors.primary, fontSize: 17, lineHeight: 21, fontWeight: "900" },
+  rankingRecordLabel: { color: "#68766F", fontSize: 6, fontWeight: "900", letterSpacing: 0.55 },
+  rankingRecordValue: { color: "#18223B", fontFamily: OWNER_FONT, fontSize: 14, lineHeight: 18, fontWeight: "900", marginTop: 3 },
+  rankingRecordDetail: { minHeight: 20, color: "#66736D", fontSize: 7, lineHeight: 10, fontWeight: "700", marginTop: 2 },
+  rankingFactsPanel: { position: "relative", overflow: "hidden", backgroundColor: "#071C3B", borderWidth: 1, borderColor: "#183B62", borderRadius: 18, paddingTop: 12, paddingBottom: 12, marginTop: 12, ...CARD_SHADOW },
+  rankingFactsGlow: { position: "absolute", width: 190, height: 190, borderRadius: 95, right: -95, top: -115, backgroundColor: "rgba(216,255,99,0.09)" },
+  rankingFactsHeading: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 10, paddingHorizontal: 13, marginBottom: 9 },
+  rankingFactsEyebrow: { color: UI_TOKENS.colors.accent, fontSize: 7, fontWeight: "900", letterSpacing: 1 },
+  rankingFactsTitle: { color: "#FFFFFF", fontSize: 15, lineHeight: 19, fontWeight: "900", marginTop: 2 },
+  rankingFactsHint: { flexShrink: 0, color: "#AEBBD0", fontSize: 6, fontWeight: "900", letterSpacing: 0.55, marginBottom: 2 },
+  rankingFactsScroller: { gap: 8, paddingHorizontal: 12, paddingRight: 20 },
+  rankingFactCard: { width: 178, minHeight: 116, borderWidth: 1, borderRadius: 14, paddingHorizontal: 11, paddingVertical: 10 },
+  rankingFactCardCompact: { width: 148, minHeight: 108, paddingHorizontal: 9, paddingVertical: 9 },
+  rankingFactLime: { backgroundColor: "rgba(216,255,99,0.12)", borderColor: "rgba(216,255,99,0.30)" },
+  rankingFactGold: { backgroundColor: "rgba(255,190,56,0.13)", borderColor: "rgba(255,190,56,0.32)" },
+  rankingFactBlue: { backgroundColor: "rgba(62,159,255,0.14)", borderColor: "rgba(62,159,255,0.32)" },
+  rankingFactPurple: { backgroundColor: "rgba(151,103,255,0.14)", borderColor: "rgba(151,103,255,0.32)" },
+  rankingFactOrange: { backgroundColor: "rgba(255,111,62,0.13)", borderColor: "rgba(255,111,62,0.32)" },
+  rankingFactPink: { backgroundColor: "rgba(242,95,159,0.13)", borderColor: "rgba(242,95,159,0.32)" },
+  rankingFactIcon: { width: 28, height: 28, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.10)", marginBottom: 8 },
+  rankingFactIconText: { color: "#FFFFFF", fontSize: 15, lineHeight: 18, fontWeight: "900" },
+  rankingFactLabel: { color: "#AEBBD0", fontSize: 6, fontWeight: "900", letterSpacing: 0.65 },
+  rankingFactValue: { color: "#FFFFFF", fontFamily: OWNER_FONT, fontSize: 14, lineHeight: 18, fontWeight: "900", marginTop: 4 },
+  rankingFactDetail: { color: "#C8D2E1", fontSize: 7, lineHeight: 10, fontWeight: "700", marginTop: 3 },
   rankingSectionHeading: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 20, marginBottom: 9, paddingHorizontal: 2 },
   rankingSectionEyebrow: { color: UI_TOKENS.colors.muted, fontSize: 8, fontWeight: "900", letterSpacing: 0.9 },
   rankingSectionTitle: { color: "#18223B", fontSize: 18, lineHeight: 22, fontWeight: "900", marginTop: 2 },
   rankingSectionMeta: { flexShrink: 0, color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900", marginLeft: 10, marginBottom: 2 },
-  rankingPodium: { flexDirection: "row", alignItems: "flex-end", justifyContent: "center", gap: 7, paddingTop: 9 },
+  rankingPodium: { flexDirection: "row", alignItems: "flex-end", justifyContent: "center", gap: 12, paddingTop: 18 },
   rankingPodiumShort: { alignItems: "stretch", paddingTop: 0 },
-  rankingPodiumCard: { position: "relative", flex: 1, maxWidth: 320, minWidth: 0, minHeight: 150, overflow: "hidden", alignItems: "center", justifyContent: "flex-end", borderWidth: 1.5, borderRadius: 17, paddingHorizontal: 8, paddingTop: 16, paddingBottom: 11, ...CARD_SHADOW },
+  rankingPodiumCard: { position: "relative", flex: 1, maxWidth: 420, minWidth: 0, minHeight: 205, overflow: "hidden", alignItems: "center", justifyContent: "flex-end", borderWidth: 1.5, borderRadius: 22, paddingHorizontal: 14, paddingTop: 24, paddingBottom: 17, ...CARD_SHADOW },
   rankingPodiumCardCompact: { minHeight: 119, borderRadius: 14, paddingHorizontal: 5, paddingTop: 11, paddingBottom: 7 },
-  rankingPodiumCardWinner: { minHeight: 164, transform: [{ translateY: -7 }], shadowOpacity: 0.11, elevation: 4 },
+  rankingPodiumCardWinner: { minHeight: 230, transform: [{ translateY: -12 }], shadowOpacity: 0.14, elevation: 6 },
   rankingPodiumCardWinnerCompact: { minHeight: 128, transform: [{ translateY: -4 }] },
   rankingPodiumCardCurrent: { borderWidth: 2.5, borderColor: UI_TOKENS.colors.primary },
   rankingPodiumTopBar: { position: "absolute", left: 0, right: 0, top: 0, height: 5 },
-  rankingPodiumGlow: { position: "absolute", width: 120, height: 120, borderRadius: 60, right: -55, bottom: -70 },
-  rankingPodiumYou: { position: "absolute", top: 7, right: 7, borderRadius: 7, backgroundColor: UI_TOKENS.colors.primary, paddingHorizontal: 6, paddingVertical: 3 },
-  rankingPodiumYouText: { color: "#FFFFFF", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
-  rankingMedal: { position: "absolute", top: 10, left: 9, width: 29, height: 29, borderRadius: 15, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
+  rankingPodiumGlow: { position: "absolute", width: 180, height: 180, borderRadius: 90, right: -70, bottom: -105 },
+  rankingPodiumYou: { position: "absolute", top: 10, right: 10, borderRadius: 9, backgroundColor: UI_TOKENS.colors.primary, paddingHorizontal: 9, paddingVertical: 5 },
+  rankingPodiumYouText: { color: "#FFFFFF", fontSize: 8, fontWeight: "900", letterSpacing: 0.6 },
+  rankingMedal: { position: "absolute", top: 14, left: 13, width: 36, height: 36, borderRadius: 18, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
   rankingMedalCompact: { top: 7, left: 6, width: 24, height: 24, borderRadius: 12 },
-  rankingMedalRank: { fontSize: 12, lineHeight: 15, fontWeight: "900" },
+  rankingMedalRank: { fontSize: 15, lineHeight: 18, fontWeight: "900" },
   rankingMedalRankCompact: { fontSize: 10, lineHeight: 12 },
-  rankingMedalRibbon: { position: "absolute", bottom: -6, width: 11, height: 8, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 },
-  rankingPodiumAvatar: { width: 48, height: 48, borderRadius: 17, borderWidth: 1.5, alignItems: "center", justifyContent: "center", marginBottom: 8 },
+  rankingMedalRibbon: { position: "absolute", bottom: -8, width: 14, height: 10, borderBottomLeftRadius: 3, borderBottomRightRadius: 3 },
+  rankingPodiumAvatar: { width: 66, height: 66, borderRadius: 22, borderWidth: 1.5, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   rankingPodiumAvatarCompact: { width: 36, height: 36, borderRadius: 12, marginBottom: 5 },
-  rankingPodiumAvatarText: { fontFamily: OWNER_FONT, fontSize: 19, lineHeight: 23, fontWeight: "900" },
+  rankingPodiumAvatarText: { fontFamily: OWNER_FONT, fontSize: 25, lineHeight: 30, fontWeight: "900" },
   rankingPodiumAvatarTextCompact: { fontSize: 15, lineHeight: 18 },
-  rankingPodiumName: { width: "100%", color: "#18223B", fontFamily: OWNER_FONT, fontSize: 14, lineHeight: 18, fontWeight: "700", textAlign: "center" },
+  rankingPodiumName: { width: "100%", color: "#18223B", fontFamily: OWNER_FONT, fontSize: 17, lineHeight: 22, fontWeight: "700", textAlign: "center" },
   rankingPodiumNameCompact: { fontSize: 11, lineHeight: 14 },
-  rankingPodiumPoints: { fontSize: 20, lineHeight: 24, fontWeight: "900", marginTop: 5 },
+  rankingPodiumPoints: { fontSize: 29, lineHeight: 34, fontWeight: "900", marginTop: 7 },
   rankingPodiumPointsCompact: { fontSize: 16, lineHeight: 19, marginTop: 2 },
-  rankingPodiumPointsLabel: { color: UI_TOKENS.colors.muted, fontSize: 7, fontWeight: "900", letterSpacing: 0.8 },
-  rankingPodiumMeta: { color: UI_TOKENS.colors.muted, fontSize: 8, lineHeight: 11, textAlign: "center", marginTop: 5 },
-  rankingPodiumLeaderGap: { width: "100%", flexShrink: 1, color: "#7A5417", fontSize: 8, lineHeight: 11, fontWeight: "900", textAlign: "center", marginTop: 3 },
+  rankingPodiumPointsLabel: { color: UI_TOKENS.colors.muted, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  rankingPodiumMeta: { color: UI_TOKENS.colors.muted, fontSize: 10, lineHeight: 13, textAlign: "center", marginTop: 7 },
+  rankingPodiumLeaderGap: { width: "100%", flexShrink: 1, color: "#7A5417", fontSize: 10, lineHeight: 13, fontWeight: "900", textAlign: "center", marginTop: 4 },
   rankingPodiumCompactBadgeText: { fontSize: 8, lineHeight: 10, marginTop: 2 },
   rankingPodiumLeader: { color: UI_TOKENS.colors.primary, letterSpacing: 0.6 },
   rankingChaserGrid: { flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", justifyContent: "space-between", gap: 9 },
@@ -1639,9 +2009,36 @@ const x = StyleSheet.create(normalizeUiStyles({
   ownerSquadPlayerTotalLabel: { color: UI_TOKENS.colors.muted, fontSize: 6, fontWeight: "900", letterSpacing: 0.6 },
   ownerSquadPlayerDisclosure: { width: 32, height: 32, flexShrink: 0, borderRadius: 10, backgroundColor: UI_TOKENS.colors.surface, alignItems: "center", justifyContent: "center", marginLeft: 6 },
   ownerSquadPlayerDisclosureText: { color: UI_TOKENS.colors.primary, fontSize: 7, fontWeight: "900" },
-  ownerSquadPlayerExpanded: { backgroundColor: "#F5F8F6", borderRadius: 10, padding: 8, marginTop: 5 },
   ownerSquadPlayerMetrics: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
-  ownerSquadPlayerMatches: { color: UI_TOKENS.colors.muted, fontSize: 7, lineHeight: 10, fontWeight: "800", marginTop: 7 },
+  ownerMatchLedgerEmpty: { backgroundColor: "#F5F8F6", borderTopWidth: 1, borderTopColor: UI_TOKENS.colors.border, paddingHorizontal: 14, paddingVertical: 13 },
+  ownerMatchLedgerEmptyTitle: { color: UI_TOKENS.colors.ink, fontSize: 9, fontWeight: "900" },
+  ownerMatchLedgerEmptyText: { color: UI_TOKENS.colors.muted, fontSize: 8, lineHeight: 12, marginTop: 3 },
+  ownerMatchLedger: { backgroundColor: "#F5F8F6", borderTopWidth: 1, borderTopColor: UI_TOKENS.colors.border, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12 },
+  ownerMatchLedgerCompact: { borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: 12, marginTop: 7, padding: 9 },
+  ownerMatchLedgerHeading: { minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  ownerMatchLedgerEyebrow: { color: UI_TOKENS.colors.muted, fontSize: 6, fontWeight: "900", letterSpacing: 0.8 },
+  ownerMatchLedgerTitle: { color: UI_TOKENS.colors.ink, fontSize: 11, fontWeight: "900", marginTop: 2 },
+  ownerMatchLedgerCount: { color: UI_TOKENS.colors.primary, backgroundColor: UI_TOKENS.colors.primarySoft, borderRadius: 9, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 5, fontSize: 7, fontWeight: "900" },
+  ownerMatchCard: { backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: 10, padding: 9, marginBottom: 7 },
+  ownerMatchCardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  ownerMatchCardNumber: { color: UI_TOKENS.colors.primary, fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  ownerMatchCardTeams: { color: UI_TOKENS.colors.ink, fontSize: 10, fontWeight: "900", marginTop: 2 },
+  ownerMatchCardTotal: { alignItems: "flex-end", marginLeft: 10 },
+  ownerMatchCardTotalValue: { color: UI_TOKENS.colors.primary, fontSize: 15, lineHeight: 17, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  ownerMatchCardTotalLabel: { color: UI_TOKENS.colors.muted, fontSize: 5, fontWeight: "900", letterSpacing: 0.6 },
+  ownerMatchCareerCompact: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: UI_TOKENS.colors.primary, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 8 },
+  ownerMatchCareerCompactLabel: { color: "#D9E8E2", fontSize: 7, fontWeight: "900", letterSpacing: 0.45 },
+  ownerMatchCareerCompactValue: { color: UI_TOKENS.colors.accent, fontSize: 11, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  ownerMatchTableHead: { minHeight: 34, flexDirection: "row", alignItems: "center", backgroundColor: "#E7EEEA", borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderTopLeftRadius: 9, borderTopRightRadius: 9, paddingHorizontal: 10 },
+  ownerMatchTableMatchHead: { flex: 1, minWidth: 0, color: UI_TOKENS.colors.muted, fontSize: 7, fontWeight: "900", letterSpacing: 0.55 },
+  ownerMatchTableRow: { minHeight: 47, flexDirection: "row", alignItems: "center", backgroundColor: UI_TOKENS.colors.card, borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: UI_TOKENS.colors.border, paddingHorizontal: 10, paddingVertical: 6 },
+  ownerMatchTableMatch: { flex: 1, minWidth: 0, paddingRight: 8 },
+  ownerMatchTableNumber: { color: UI_TOKENS.colors.primary, fontSize: 7, fontWeight: "900", letterSpacing: 0.35 },
+  ownerMatchTableTeams: { color: UI_TOKENS.colors.muted, fontSize: 7, fontWeight: "800", marginTop: 2 },
+  ownerMatchCareerRow: { minHeight: 48, flexDirection: "row", alignItems: "center", backgroundColor: UI_TOKENS.colors.primarySoft, borderLeftWidth: 1, borderRightWidth: 1, borderBottomWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, borderBottomLeftRadius: 9, borderBottomRightRadius: 9, paddingHorizontal: 10, paddingVertical: 6 },
+  ownerMatchCareerLabel: { color: UI_TOKENS.colors.primary, fontSize: 8, fontWeight: "900", letterSpacing: 0.4 },
+  ownerMatchCareerMetric: { width: 58, flexShrink: 0, textAlign: "center", color: UI_TOKENS.colors.ink, fontSize: 9, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  ownerMatchCareerTotal: { width: 64, flexShrink: 0, textAlign: "center", color: UI_TOKENS.colors.primary, fontSize: 11, fontWeight: "900", fontVariant: ["tabular-nums"] },
   ownerSquadPlayerSelect: { alignSelf: "flex-start", minHeight: 34, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, backgroundColor: UI_TOKENS.colors.card, borderRadius: 17, alignItems: "center", justifyContent: "center", paddingHorizontal: 11, marginTop: 3, marginBottom: 2 },
   ownerSquadTableHead: { minHeight: 40, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, backgroundColor: "#EEF2EF", borderTopWidth: 1, borderTopColor: UI_TOKENS.colors.border },
   ownerSquadTablePlayerHead: { flex: 1, minWidth: 0, color: UI_TOKENS.colors.muted, fontSize: 8, fontWeight: "900", letterSpacing: 0.7 },
@@ -1685,7 +2082,7 @@ const x = StyleSheet.create(normalizeUiStyles({
   playerLabelRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }, specialPlayerBadge: { color: "#6B4E00", backgroundColor: "#FFF0A8", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, fontSize: 7, fontWeight: "900", overflow: "hidden" }, marqueePlayerBadge: { color: "#FFFFFF", backgroundColor: "#7B3FA1" },
   ownerDisplayName: { color: "#10251F", fontFamily: OWNER_FONT, fontSize: 15, fontWeight: "700", letterSpacing: 0.25 },
   playerListName: { flex: 1, color: "#173028", fontSize: 11, fontWeight: "900" },
-  ownerPlayerNameRow: { flexDirection: "row", alignItems: "center", minWidth: 0 }, ownerPlayerChevron: { color: "#61756D", fontSize: 7, fontWeight: "900", marginLeft: 4 }, ownerPlayerTeamRole: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 5 }, ownerPlayerRole: { color: "#536B62", fontSize: 8, fontWeight: "800" }, ownerPlayerCosts: { color: UI_TOKENS.colors.muted, fontSize: 8, lineHeight: 11, marginTop: 4 }, ownerPlayerBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 28, paddingVertical: 8 },
+  ownerPlayerNameRow: { flexDirection: "row", alignItems: "center", minWidth: 0 }, ownerPlayerChevron: { color: "#61756D", fontSize: 7, fontWeight: "900", marginLeft: 4 }, ownerPlayerTeamRole: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 5 }, ownerPlayerRole: { color: "#536B62", fontSize: 8, fontWeight: "800" }, ownerPlayerCosts: { color: UI_TOKENS.colors.muted, fontSize: 8, lineHeight: 11, marginTop: 4 },
   marqueeHeroCard: { backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, borderRadius: UI_TOKENS.radius.card, padding: 14, marginBottom: 14, ...CARD_SHADOW },
   marqueeCurrentBlock: { backgroundColor: UI_TOKENS.colors.surface, borderWidth: 1, borderColor: UI_TOKENS.colors.border, borderRadius: 14, padding: 12 },
   marqueeCurrentHeading: { flexDirection: "row", alignItems: "center", marginBottom: 5 },

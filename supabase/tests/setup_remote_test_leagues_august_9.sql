@@ -179,7 +179,7 @@ set
       'zero_floor', true,
       'rounding', 'immediate_whole_point',
       'automatic_unique_enabled', true,
-      'automatic_unique_usage_threshold', 48
+      'automatic_unique_usage_threshold', 56
     )
     else '{}'::jsonb
   end,
@@ -210,7 +210,7 @@ set
   royalty_zero_floor = true,
   royalty_rounding = 'immediate_whole_point',
   automatic_unique_enabled = target.mode = 'royalty',
-  automatic_unique_usage_threshold = 48,
+  automatic_unique_usage_threshold = 56,
   phase_change_deadline_hours = 24,
   mid_phase_replacement_allowed = false
 from remote_test_leagues target

@@ -1,6 +1,7 @@
 -- End-to-end Automatic Unique verification for a Royalty-driven test league.
 -- Before running, configure a low threshold (for example 2) effective from an
--- unlocked test match that follows enough locked appearances.
+-- unlocked test match that follows enough qualifying locked appearances by
+-- borrowing owners in fixtures involving the player's IPL team.
 -- Expected for each returned candidate:
 --   label_status = PASS
 --   owner_power_status = PASS
@@ -33,27 +34,17 @@ with target_league as (
     league_player.player_id,
     league_player.owner_member_id,
     player.full_name,
-    count(lineup_player.player_id) filter (where used_fixture.id is not null)::integer usage_count
+    public.automatic_unique_qualifying_usage_count(
+      context.fixture_id,
+      league_player.player_id
+    ) usage_count
   from context
   join public.league_players league_player
     on league_player.league_id = context.league_id
    and league_player.active
    and league_player.owner_member_id is not null
   join public.players player on player.id = league_player.player_id
-  left join public.lineup_players lineup_player
-    on lineup_player.player_id = league_player.player_id
-  left join public.lineup_submissions lineup
-    on lineup.id = lineup_player.lineup_id
-   and lineup.league_id = context.league_id
-   and lineup.status in ('submitted', 'locked')
-  left join public.fixtures used_fixture
-    on used_fixture.id = lineup.fixture_id
-   and used_fixture.match_number < context.match_number
-   and (
-     used_fixture.status in ('live', 'completed', 'abandoned')
-     or now() >= used_fixture.lineup_lock_at
-   )
-  group by league_player.player_id, league_player.owner_member_id, player.full_name
+  group by context.fixture_id, league_player.player_id, league_player.owner_member_id, player.full_name
 ), candidates as (
   select usage.*
   from player_usage usage
