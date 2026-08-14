@@ -120,6 +120,15 @@ set role = excluded.role,
     active = true,
     updated_at = now();
 
+-- A player can represent a different IPL team in another season. Retire the
+-- league's previous pool before activating this season's exact name + team
+-- identities so a stale prior-season row cannot remain selectable.
+update public.league_players
+set active = false,
+    released_at = coalesce(released_at, now()),
+    updated_at = now()
+where league_id = '${leagueId}';
+
 insert into public.league_players (
   league_id, player_id, owner_member_id, acquisition_type,
   acquisition_price, active, acquired_at, released_at

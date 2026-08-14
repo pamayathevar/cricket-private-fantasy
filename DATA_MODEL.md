@@ -19,6 +19,9 @@ leagues
   ├─ fixtures and competition history
   └─ audit_events
 
+players (global team/role identities retained for cross-season history)
+  └─ league_players (the exact identity eligible in one league season)
+
 league_templates
   └─ versioned JSON snapshot of configuration only
 ```
@@ -60,6 +63,20 @@ A template snapshot contains:
 
 It deliberately excludes all transactional state: players/ownership, auctions, fixtures, lineups, transfer events, booster usage, points, standings and historical audit records. Cloning creates a new setup league, active creator-admin, draft format, v1 rules and new configuration IDs.
 
+## Season-scoped player identity
+
+`players` deliberately retains historical team/role identities. The same real
+player can therefore have a different `players` row after moving IPL teams in a
+later season. `league_players` is the season boundary: only the name + team +
+role identity imported for that league's competition year may be active.
+
+Migration `065` enforces one active normalized player name per league, retires
+stale cross-season identities from IPL 2026 pools, and preserves later-season
+records for history. Roster imports deactivate the previous league pool before
+activating the authoritative year's exact name + team identities. Lineups and
+score history continue to reference immutable player IDs rather than being
+rewritten when a player changes teams in a future IPL season.
+
 ## Next model extensions
 
 Migration 018 creates the configuration foundation but does not claim runtime enforcement for new formats. Follow-up migrations should add:
@@ -71,4 +88,3 @@ Migration 018 creates the configuration foundation but does not claim runtime en
 5. Acquisition-mode resolution inside lineup, transfer and score-publish RPCs.
 
 Every extension must preserve published calculations and must be covered by RLS and concurrency tests.
-

@@ -66,6 +66,7 @@ The detailed lineup workflow is documented in [team-selection-flow.md](team-sele
 - Migration `024` is safe to rerun and imports only the 180 nonblank completed bids; blank B$ cells remain null. The existing league-player read policy covers the new field. Roll back the app before removing the column; if only the imported values must be undone, set IPL 2026 `bid_price` values to null instead of deleting roster rows.
 - Migration `025` adds an audited admin-only player editor for name, role, selection cost, league owner and active status. It deliberately preserves the completed auction `bid_price`.
 - Migration `026` exposes audited draft league-format publishing. All-open mode always disables ownership, bidding and other-owner deductions; started leagues remain protected by the existing format lock.
+- Migration `065` makes roster eligibility season-safe: a historical player/team identity remains stored, but only one identity for that player can be active in a league. Imports retire the old pool before activating the selected season's exact squad, so a player moving teams in a later IPL year cannot appear twice in an earlier league.
 - Run each matching `supabase/verify_migration_*.sql` file after applying its migration.
 - Both imports refuse to run after an IPL 2027 lineup exists. Rollback before league play consists of deleting IPL 2027 `league_players`/fixtures only; shared `players` records should be retained because another league may reference them.
 
