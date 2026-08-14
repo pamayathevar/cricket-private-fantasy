@@ -55,6 +55,11 @@ const {
   scorecardDismissalLabel,
 } = loadTypeScriptModule("scorecardRules.ts");
 
+const {
+  previousNavigation,
+  recordNavigation,
+} = loadTypeScriptModule("navigationHistory.ts");
+
 const blankStats = {
   runs: 0,
   balls: 0,
@@ -78,6 +83,19 @@ const blankStats = {
 };
 
 const tests = [
+  ["navigation records the current screen without duplicating the active destination", () => {
+    assert.deepEqual(recordNavigation(["Home"], "Team", "Ranking"), ["Home", "Team"]);
+    assert.deepEqual(recordNavigation(["Home"], "Team", "Team"), ["Home"]);
+  }],
+  ["navigation back skips unavailable screens and preserves the remaining history", () => {
+    assert.deepEqual(
+      previousNavigation(["Home", "Ranking", "Squads"], ["Home", "Team", "Ranking"]),
+      { destination: "Ranking", history: ["Home"] },
+    );
+  }],
+  ["navigation back reports the root when no previous screen exists", () => {
+    assert.deepEqual(previousNavigation([], ["Home", "Team"]), { destination: null, history: [] });
+  }],
   ["scorecard overs preserve cricket's base-six ball notation", () => {
     assert.equal(formatOversFromBalls(0), "0.0");
     assert.equal(formatOversFromBalls(17), "2.5");

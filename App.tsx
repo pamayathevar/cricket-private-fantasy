@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, ImageBackground, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, BackHandler, ImageBackground, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Session } from "@supabase/supabase-js";
 import { Player, Role, squadPlayers as players } from "./squadData";
@@ -12,6 +12,7 @@ import { IplTeamBadge, OwnerBadge, SpecialPlayerBadge, ProductionDashboard, Prod
 import { userActionError } from "./errorMessages";
 import { boosterForFixture, countLineupChanges, firstMissingOpenPriorMatch, fixtureStripStatusLabel, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isNoResultFixture, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
 import { CARD_SHADOW, UI_TOKENS, normalizeUiStyles } from "./uiTokens";
+import { previousNavigation, recordNavigation } from "./navigationHistory";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Help" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
@@ -248,6 +249,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const insets = useSafeAreaInsets();
   const useMobileNavigation = appWidth < 900;
   const [tab, setTab] = useState<Tab>("Home");
+  const [tabHistory, setTabHistory] = useState<Tab[]>([]);
   const [showMobileMore, setShowMobileMore] = useState(false);
   useWebModalFocus(showMobileMore && useMobileNavigation, "mobile-more-dialog");
   const [activeLeagueId, setActiveLeagueId] = useState("");
@@ -268,17 +270,65 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const [requestedTeamFixtureId, setRequestedTeamFixtureId] = useState("");
   const [requestedHistoryFixtureId, setRequestedHistoryFixtureId] = useState("");
   const [requestedScorecardFixtureId, setRequestedScorecardFixtureId] = useState("");
+  const [historyScorecardOpen, setHistoryScorecardOpen] = useState(false);
+  const [historyScorecardBackRequest, setHistoryScorecardBackRequest] = useState(0);
   const activeMembership = memberships.find(item => item.league_id === activeLeagueId && item.status === "active");
   const activeLeague = activeMembership?.league;
   const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
   const leagueDatabaseId = activeLeague?.id ?? "";
   const tabs = ownershipEnabled === false ? standardTabs.filter(item => item !== "Squads") : standardTabs;
   const showMobileNavigation = Boolean(activeLeague && tab !== "Home" && useMobileNavigation);
+  const allowedBackTabs: Tab[] = ["Home", ...tabs];
+  const navigateToTab = (destination: Tab) => {
+    setShowMobileMore(false);
+    if (destination === tab) return;
+    if (tab === "History" && destination !== "History") {
+      setRequestedScorecardFixtureId("");
+      setHistoryScorecardOpen(false);
+    }
+    setTabHistory(history => recordNavigation(history, tab, destination));
+    setTab(destination);
+  };
+  const replaceTab = (destination: Tab) => {
+    if (destination === tab) return;
+    setTab(destination);
+  };
+  const navigateBack = () => {
+    if (showMobileMore) {
+      setShowMobileMore(false);
+      return true;
+    }
+    if (tab === "History" && historyScorecardOpen) {
+      setHistoryScorecardBackRequest(request => request + 1);
+      return true;
+    }
+    const previous = previousNavigation(tabHistory, allowedBackTabs);
+    if (previous.destination) {
+      setTabHistory(previous.history);
+      setTab(previous.destination);
+      return true;
+    }
+    if (tab !== "Home") {
+      setRequestedTeamFixtureId("");
+      setRequestedHistoryFixtureId("");
+      setRequestedScorecardFixtureId("");
+      setHistoryScorecardOpen(false);
+      setTab("Home");
+      return true;
+    }
+    return false;
+  };
+  const canNavigateBack = historyScorecardOpen || tabHistory.some(item => allowedBackTabs.includes(item)) || tab !== "Home";
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", navigateBack);
+    return () => subscription.remove();
+  }, [tab, tabHistory, showMobileMore, historyScorecardOpen, ownershipEnabled]);
   const resetLineupState = () => {
     setSelected([]); setCaptain(""); setVice(""); setLineupSubmitted(false);
     setImpactPlayer(""); setImpactType(""); setBoosterCode(""); setBoosterPlayer("");
   };
-  const selectLeague = (leagueId: string) => { resetLineupState(); setRequestedTeamFixtureId(""); setRequestedHistoryFixtureId(""); setRequestedScorecardFixtureId(""); setOwnershipEnabled(null); setActiveLeagueId(leagueId); setTab("Team"); };
+  const selectLeague = (leagueId: string) => { resetLineupState(); setRequestedTeamFixtureId(""); setRequestedHistoryFixtureId(""); setRequestedScorecardFixtureId(""); setHistoryScorecardOpen(false); setOwnershipEnabled(null); setActiveLeagueId(leagueId); setTabHistory(["Home"]); setTab("Team"); };
   useEffect(() => {
     if (!leagueDatabaseId) return;
     let cancelled = false;
@@ -291,7 +341,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     return () => { cancelled = true; };
   }, [leagueDatabaseId]);
   useEffect(() => {
-    if (ownershipEnabled === false && tab === "Squads") setTab("Ranking");
+    if (ownershipEnabled === false && tab === "Squads") replaceTab("Ranking");
   }, [ownershipEnabled, tab]);
   useEffect(() => {
     if (!leagueDatabaseId) return;
@@ -328,16 +378,16 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); setTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(""); setTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} requestedScorecardFixtureId={requestedScorecardFixtureId} onCloseRequestedScorecard={() => setRequestedScorecardFixtureId("")} /> : tab === "Help" ? <HelpScreen openTeam={() => setTab("Team")} openFixtures={() => setTab("Matches")} openHistory={() => setTab("History")} openRules={() => setTab("Admin")} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView key={`ranking:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView key={`players:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} openScorecard={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(fixtureId); setTab("History"); }} /></ScrollView> : tab === "Squads" ? <ScrollView key={`squads:${leagueDatabaseId}`} contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView key={`rules:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => setTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); navigateToTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(""); navigateToTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} requestedScorecardFixtureId={requestedScorecardFixtureId} scorecardBackRequest={historyScorecardBackRequest} onScorecardStateChange={setHistoryScorecardOpen} onCloseRequestedScorecard={() => setRequestedScorecardFixtureId("")} /> : tab === "Help" ? <HelpScreen openTeam={() => navigateToTab("Team")} openFixtures={() => navigateToTab("Matches")} openHistory={() => navigateToTab("History")} openRules={() => navigateToTab("Admin")} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView key={`ranking:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView key={`players:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} openScorecard={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(fixtureId); navigateToTab("History"); }} /></ScrollView> : tab === "Squads" ? <ScrollView key={`squads:${leagueDatabaseId}`} contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView key={`rules:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => navigateToTab("Team")} /></ScrollView>;
   return <SafeAreaView edges={showMobileNavigation ? ["top", "left", "right"] : ["top", "bottom", "left", "right"]} style={s.safe}>
     <StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} />
     <View style={s.appShell}>
-      <View style={[s.header, s.headerModern, useMobileNavigation && s.headerModernMobile]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : UI.primary }]} /><TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, useMobileNavigation && s.logoModernMobile, tab === "Home" && s.logoHomeActive]} onPress={() => setTab("Home")}><HomeIcon /></TouchableOpacity><View style={[s.headerIdentity, useMobileNavigation && s.headerIdentityMobile]}><Text style={[s.eyebrow, s.eyebrowModern, useMobileNavigation && s.eyebrowModernMobile]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern, useMobileNavigation && s.brandModernMobile]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={[s.headerMetaRow, useMobileNavigation && s.headerMetaRowMobile]}><Text style={[s.signedInAs, s.signedInAsModern, useMobileNavigation && s.signedInAsModernMobile]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={[s.livePill, useMobileNavigation && s.livePillMobile]}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
+      <View style={[s.header, s.headerModern, useMobileNavigation && s.headerModernMobile]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : UI.primary }]} />{Platform.OS !== "web" && canNavigateBack ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" accessibilityHint="Returns to the previous app screen" style={[s.nativeBackButton, useMobileNavigation && s.nativeBackButtonMobile]} onPress={navigateBack}><Text style={s.nativeBackButtonText}>‹</Text></TouchableOpacity> : null}<TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, useMobileNavigation && s.logoModernMobile, tab === "Home" && s.logoHomeActive]} onPress={() => navigateToTab("Home")}><HomeIcon /></TouchableOpacity><View style={[s.headerIdentity, useMobileNavigation && s.headerIdentityMobile]}><Text style={[s.eyebrow, s.eyebrowModern, useMobileNavigation && s.eyebrowModernMobile]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern, useMobileNavigation && s.brandModernMobile]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={[s.headerMetaRow, useMobileNavigation && s.headerMetaRowMobile]}><Text style={[s.signedInAs, s.signedInAsModern, useMobileNavigation && s.signedInAsModernMobile]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={[s.livePill, useMobileNavigation && s.livePillMobile]}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
       {activeLeague && tab !== "Home" && !useMobileNavigation ? <View style={s.topNavigationShell}><ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} contentContainerStyle={s.topNavigationContent}>{tabs.map(item => {
         const active = tab === item;
         const accent = tabAccent(item);
         const label = tabLabels[item] ?? item;
-        return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.topNavigationItem, active && { backgroundColor: `${accent}16`, borderColor: accent }]} onPress={() => setTab(item)}>
+        return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.topNavigationItem, active && { backgroundColor: `${accent}16`, borderColor: accent }]} onPress={() => navigateToTab(item)}>
           <CricketTabIcon item={item} active={active} />
           <Text style={[s.topNavigationLabel, active && { color: tabTextAccent(item) }]}>{label}</Text>
           {active ? <View pointerEvents="none" style={[s.topNavigationIndicator, { backgroundColor: accent }]} /> : null}
@@ -349,7 +399,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
           const active = tab === item;
           const accent = tabAccent(item);
           const label = tabLabels[item] ?? item;
-          return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.mobilePrimaryTab, active && s.mobilePrimaryTabActive]} onPress={() => { setShowMobileMore(false); setTab(item); }}>
+          return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.mobilePrimaryTab, active && s.mobilePrimaryTabActive]} onPress={() => navigateToTab(item)}>
             <CricketTabIcon item={item} active={active} />
             <Text style={[s.mobilePrimaryTabLabel, active && { color: tabTextAccent(item) }]}>{label}</Text>
             {active ? <View pointerEvents="none" style={[s.mobilePrimaryIndicator, { backgroundColor: accent }]} /> : null}
@@ -370,7 +420,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
               const active = tab === item;
               const accent = tabAccent(item);
               const label = tabLabels[item] ?? item;
-              return <TouchableOpacity key={item} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[s.mobileMoreItem, active && { backgroundColor: `${accent}16`, borderColor: `${accent}55` }]} onPress={() => { setTab(item); setShowMobileMore(false); }}><CricketTabIcon item={item} active={active} /><Text style={[s.mobileMoreItemLabel, active && { color: tabTextAccent(item) }]}>{label}</Text><Text style={[s.mobileMoreArrow, active && { color: tabTextAccent(item) }]}>{active ? "✓" : "›"}</Text></TouchableOpacity>;
+              return <TouchableOpacity key={item} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[s.mobileMoreItem, active && { backgroundColor: `${accent}16`, borderColor: `${accent}55` }]} onPress={() => navigateToTab(item)}><CricketTabIcon item={item} active={active} /><Text style={[s.mobileMoreItemLabel, active && { color: tabTextAccent(item) }]}>{label}</Text><Text style={[s.mobileMoreArrow, active && { color: tabTextAccent(item) }]}>{active ? "✓" : "›"}</Text></TouchableOpacity>;
             })}
             <View style={s.mobileMoreDivider} />
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sign out" style={s.mobileMoreSignOut} onPress={() => supabase.auth.signOut()}><Text style={s.mobileMoreSignOutText}>Sign out</Text></TouchableOpacity>
@@ -2715,6 +2765,9 @@ const s = StyleSheet.create(normalizeUiStyles({
   headerIdentity: { flex: 1, marginLeft: 11, paddingRight: 8, minWidth: 0 },
   headerMetaRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 3 },
   headerActions: { alignItems: "flex-end", gap: 6, marginLeft: 5 },
+  nativeBackButton: { width: 44, height: 44, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(255,255,255,0.08)", marginRight: 8 },
+  nativeBackButtonMobile: { width: 36, height: 36, borderRadius: 11, marginRight: 7 },
+  nativeBackButtonText: { color: "#FFFFFF", fontSize: 34, lineHeight: 36, fontWeight: "400", marginTop: -2 },
   topNavigationShell: { backgroundColor: "#F8FAF9", borderBottomWidth: 1, borderBottomColor: "#DDE4E0", shadowColor: "#091C16", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 4, zIndex: 5 },
   topNavigationContent: { flexGrow: 1, paddingHorizontal: 10, paddingVertical: 8, gap: 7 },
   topNavigationItem: { flexGrow: 1, minHeight: 49, minWidth: 88, borderRadius: 13, borderWidth: 1.5, borderColor: "transparent", paddingHorizontal: 11, paddingVertical: 6, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, position: "relative", overflow: "hidden" },

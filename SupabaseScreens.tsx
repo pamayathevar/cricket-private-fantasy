@@ -1325,7 +1325,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   </View>;
 }
 
-export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId = "", requestedScorecardFixtureId = "", onCloseRequestedScorecard }: { leagueId: string; currentOwner: string; requestedFixtureId?: string; requestedScorecardFixtureId?: string; onCloseRequestedScorecard?: () => void }) {
+export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId = "", requestedScorecardFixtureId = "", scorecardBackRequest = 0, onScorecardStateChange, onCloseRequestedScorecard }: { leagueId: string; currentOwner: string; requestedFixtureId?: string; requestedScorecardFixtureId?: string; scorecardBackRequest?: number; onScorecardStateChange?: (open: boolean) => void; onCloseRequestedScorecard?: () => void }) {
   const { width: historyWidth } = useWindowDimensions();
   const compact = historyWidth < 620;
   const historyScrollRef = useRef<ScrollView>(null);
@@ -1353,6 +1353,18 @@ export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId =
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [scorecardMatchId, setScorecardMatchId] = useState("");
   const specialLabels = useFixtureSpecialLabels(expandedMatch ? [expandedMatch] : []);
+  const closeScorecard = () => {
+    setScorecardMatchId("");
+    onCloseRequestedScorecard?.();
+  };
+  useEffect(() => {
+    onScorecardStateChange?.(!!scorecardMatchId);
+    return () => { if (scorecardMatchId) onScorecardStateChange?.(false); };
+  }, [scorecardMatchId, onScorecardStateChange]);
+  useEffect(() => {
+    if (!scorecardBackRequest || !scorecardMatchId) return;
+    closeScorecard();
+  }, [scorecardBackRequest]);
   useEffect(() => {
     if (!requestedFixtureId || !matches.some(match => match.id === requestedFixtureId)) return;
     setMatchFilter("");
@@ -1422,7 +1434,7 @@ export function ProductionHistory({ leagueId, currentOwner, requestedFixtureId =
   if (loading) return <ScrollView contentContainerStyle={x.screen}><Loading /></ScrollView>;
   if (error) return <ScrollView contentContainerStyle={x.screen}><LoadError message={error} onRetry={() => setReloadKey(value => value + 1)} /></ScrollView>;
   const scorecardMatch = matches.find(match => match.id === scorecardMatchId);
-  if (scorecardMatch) return <ProductionScorecard match={scorecardMatch} royaltyAdjustments={royaltyAdjustments.filter(row => row.fixture_id === scorecardMatch.id)} onBack={() => { setScorecardMatchId(""); onCloseRequestedScorecard?.(); }} />;
+  if (scorecardMatch) return <ProductionScorecard match={scorecardMatch} royaltyAdjustments={royaltyAdjustments.filter(row => row.fixture_id === scorecardMatch.id)} onBack={closeScorecard} />;
   const publishedCount = matches.filter(match => match.scoring_status === "published").length;
   const awaitingCount = matches.length - publishedCount;
   const lineupCount = matches.reduce((total, match) => total + Number(match.lineup_submissions?.filter((lineup: any) => lineup.status === "submitted" || lineup.status === "locked").length ?? 0), 0);
