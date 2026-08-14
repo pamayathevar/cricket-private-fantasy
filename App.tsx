@@ -2114,7 +2114,7 @@ const s = StyleSheet.create(normalizeUiStyles({
   signOutText: { color: "#B7CDC6", fontSize: 8, fontWeight: "800" },
   homeBackground: { flex: 1, borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: "hidden" },
   homeBackgroundImage: { borderTopLeftRadius: 28, borderTopRightRadius: 28 },
-  homeBackgroundShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(2, 18, 15, 0.34)" },
+  homeBackgroundShade: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(2, 18, 15, 0.34)" },
   homeContent: { backgroundColor: "transparent", minHeight: 780 },
   homeGreeting: { color: "#FFFFFF", fontSize: 27, fontWeight: "900", textShadowColor: "rgba(0,0,0,0.65)", textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 5 },
   homeSubtitle: { color: "#D8E8E1", fontSize: 13, lineHeight: 19, marginTop: 4, marginBottom: 18, textShadowColor: "rgba(0,0,0,0.7)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },

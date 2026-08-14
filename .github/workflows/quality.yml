@@ -24,17 +24,11 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.13.1
           cache: npm
 
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Type-check application
-        run: npm run typecheck
-
-      - name: Export production web bundle
-        run: npm run export:web
-
-      - name: Check tracked files for privileged secrets
-        run: npm run check:secrets
+      - name: Run production gate
+        run: npm run check:production

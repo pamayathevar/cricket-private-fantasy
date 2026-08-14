@@ -940,6 +940,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   const [editBusy, setEditBusy] = useState(false);
   const [editMessage, setEditMessage] = useState("");
   const [editOwnerDropdownOpen, setEditOwnerDropdownOpen] = useState(false);
+  const [discardPrompt, setDiscardPrompt] = useState<"ADD" | "EDIT" | "">("");
   const [loadVersion, setLoadVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [squadRoleFilter, setSquadRoleFilter] = useState<"ALL" | Player["role"]>("ALL");
@@ -964,6 +965,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setEditingPlayerId("");
     setEditMessage("");
     setEditOwnerDropdownOpen(false);
+    setDiscardPrompt("");
     setNewPlayerOwnerPickerOpen(false);
     setAddMessage("");
     setSquadRoleFilter("ALL");
@@ -1083,7 +1085,14 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setEditingPlayerId(player.leaguePlayerId);
     setEditName(player.name); setEditRole(player.role); setEditCost(String(player.price)); setEditOwnerId(player.ownerId || ""); setEditActive(player.active); setEditMessage(""); setEditOwnerDropdownOpen(false); setAvailabilityMessage("");
   };
-  const closeEditPlayer = () => { if (editBusy) return; setEditingPlayerId(""); setEditMessage(""); setEditOwnerDropdownOpen(false); };
+  const closeEditPlayer = () => { setEditingPlayerId(""); setEditMessage(""); setEditOwnerDropdownOpen(false); };
+  const requestCloseEditPlayer = () => {
+    if (editBusy) return;
+    const player = squadPlayers.find(candidate => candidate.leaguePlayerId === editingPlayerId);
+    const dirty = !!player && (editName.trim() !== player.name || editRole !== player.role || Number(editCost) !== player.price || editActive !== player.active || (ownershipEnabled && editOwnerId !== (player.ownerId || "")));
+    if (!dirty) { closeEditPlayer(); return; }
+    setDiscardPrompt("EDIT");
+  };
   const savePlayer = async (player: LeagueSquadPlayer) => {
     const cost = Number(editCost);
     if (!editName.trim()) { setEditMessage("Player name is required."); return; }
@@ -1112,7 +1121,13 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setAddingTeam(team);
     setNewPlayerName(""); setNewPlayerRole("BA"); setNewPlayerCost(minimumSelectionCostInput); setNewPlayerOwnerId(""); setNewPlayerOwnerPickerOpen(false); setAddMessage(""); setAvailabilityMessage("");
   };
-  const closeAddPlayer = () => { if (addBusy) return; setAddingTeam(""); setNewPlayerOwnerPickerOpen(false); setAddMessage(""); };
+  const closeAddPlayer = () => { setAddingTeam(""); setNewPlayerOwnerPickerOpen(false); setAddMessage(""); };
+  const requestCloseAddPlayer = () => {
+    if (addBusy) return;
+    const dirty = !!newPlayerName.trim() || newPlayerRole !== "BA" || newPlayerCost.trim() !== minimumSelectionCostInput || (ownershipEnabled && !!newPlayerOwnerId);
+    if (!dirty) { closeAddPlayer(); return; }
+    setDiscardPrompt("ADD");
+  };
   const addReplacementPlayer = async () => {
     const cost = Number(newPlayerCost);
     if (!newPlayerName.trim()) { setAddMessage("Player name is required."); return; }
@@ -1249,11 +1264,11 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
         }) : null}
       </View>;
     })}
-    <Modal visible={!!addingTeam} transparent animationType="fade" statusBarTranslucent onRequestClose={closeAddPlayer}>
+    <Modal visible={!!addingTeam} transparent animationType="fade" statusBarTranslucent onRequestClose={requestCloseAddPlayer}>
       <KeyboardAvoidingView style={x.playerEditModalOverlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close replacement player form" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={closeAddPlayer} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close replacement player form" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={requestCloseAddPlayer} />
         {addingTeam ? <View nativeID="player-pool-add-dialog" accessibilityViewIsModal accessibilityLabel={`Add replacement player to ${addingTeam}`} style={[x.playerEditModalCard, compact && x.playerEditModalCardCompact]} onStartShouldSetResponder={() => true}>
-          <View style={x.playerEditModalHeader}><View style={x.playerEditModalHeaderIdentity}><IplTeamBadge code={addingTeam} /><View style={x.grow}><Text style={x.playerEditModalEyebrow}>PLAYER POOL ADMIN</Text><Text numberOfLines={2} style={x.playerEditModalTitle}>Add replacement player</Text><Text style={x.playerAddModalTeam}>Assigning to {addingTeam} squad</Text></View></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close replacement player form" disabled={addBusy} style={x.playerEditModalClose} onPress={closeAddPlayer}><Text style={x.playerEditModalCloseText}>×</Text></TouchableOpacity></View>
+          <View style={x.playerEditModalHeader}><View style={x.playerEditModalHeaderIdentity}><IplTeamBadge code={addingTeam} /><View style={x.grow}><Text style={x.playerEditModalEyebrow}>PLAYER POOL ADMIN</Text><Text numberOfLines={2} style={x.playerEditModalTitle}>Add replacement player</Text><Text style={x.playerAddModalTeam}>Assigning to {addingTeam} squad</Text></View></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close replacement player form" disabled={addBusy} style={x.playerEditModalClose} onPress={requestCloseAddPlayer}><Text style={x.playerEditModalCloseText}>×</Text></TouchableOpacity></View>
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={x.playerEditModalBody}>
             <View style={x.playerAddNotice}><Text style={x.playerAddNoticeIcon}>＋</Text><View style={x.grow}><Text style={x.playerAddNoticeTitle}>New squad entry</Text><Text style={x.playerAddNoticeText}>Use this only when a replacement or newly registered IPL player must be added.</Text></View></View>
             <Text style={x.squadAddLabel}>Player name</Text>
@@ -1265,15 +1280,15 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
             {ownershipEnabled ? <><Text style={x.squadAddLabel}>Assigned owner</Text><View style={x.playerEditOwnerSelect}><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Assigned owner, ${selectedNewPlayerOwnerName}`} accessibilityHint="Opens the owner picker" accessibilityState={{ expanded: newPlayerOwnerPickerOpen }} style={[x.playerEditOwnerTrigger, newPlayerOwnerPickerOpen && x.playerEditOwnerTriggerOpen]} onPress={() => setNewPlayerOwnerPickerOpen(true)}><View style={x.playerEditOwnerTriggerIdentity}><OwnerBadge owner={selectedNewPlayerOwner?.display_name ?? "Available"} label={selectedNewPlayerOwnerName} /><Text style={x.playerEditOwnerTriggerHint}>Tap to change</Text></View><Text style={x.playerEditOwnerChevron}>⌄</Text></TouchableOpacity></View></> : <Text style={x.squadEditBidNote}>All-open-player league · this player remains open</Text>}
             {addMessage ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={x.playerEditModalError}><Text style={x.playerEditModalErrorText}>{addMessage}</Text></View> : null}
           </ScrollView>
-          <View style={x.playerEditModalFooter}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel adding replacement player" disabled={addBusy} style={x.playerEditModalCancel} onPress={closeAddPlayer}><Text style={x.playerEditModalCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Add player to ${addingTeam}`} accessibilityHint={!addFormValid ? "Enter a player name and valid selection cost first" : "Adds this player to the selected IPL squad"} accessibilityState={{ disabled: addSubmitDisabled, busy: addBusy }} disabled={addSubmitDisabled} style={[x.playerEditModalSave, addSubmitDisabled && x.playerEditModalSaveDisabled]} onPress={addReplacementPlayer}>{addBusy ? <ActivityIndicator color="#10251F" /> : <Text style={[x.playerEditModalSaveText, addSubmitDisabled && x.playerEditModalSaveTextDisabled]}>Add to {addingTeam}</Text>}</TouchableOpacity></View>
+          <View style={x.playerEditModalFooter}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel adding replacement player" accessibilityHint="Closes the form and warns before discarding entered details" disabled={addBusy} style={x.playerEditModalCancel} onPress={requestCloseAddPlayer}><Text style={x.playerEditModalCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Add player to ${addingTeam}`} accessibilityHint={!addFormValid ? "Enter a player name and valid selection cost first" : "Adds this player to the selected IPL squad"} accessibilityState={{ disabled: addSubmitDisabled, busy: addBusy }} disabled={addSubmitDisabled} style={[x.playerEditModalSave, addSubmitDisabled && x.playerEditModalSaveDisabled]} onPress={addReplacementPlayer}>{addBusy ? <ActivityIndicator color="#10251F" /> : <Text style={[x.playerEditModalSaveText, addSubmitDisabled && x.playerEditModalSaveTextDisabled]}>Add to {addingTeam}</Text>}</TouchableOpacity></View>
         </View> : null}
       </KeyboardAvoidingView>
     </Modal>
-    <Modal visible={!!editingPlayer} transparent animationType="fade" statusBarTranslucent onRequestClose={closeEditPlayer}>
+    <Modal visible={!!editingPlayer} transparent animationType="fade" statusBarTranslucent onRequestClose={requestCloseEditPlayer}>
       <KeyboardAvoidingView style={x.playerEditModalOverlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close player editor" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={closeEditPlayer} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close player editor" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={requestCloseEditPlayer} />
         {editingPlayer ? <View nativeID="player-pool-edit-dialog" accessibilityViewIsModal accessibilityLabel={`Edit ${editingPlayer.name}`} style={[x.playerEditModalCard, compact && x.playerEditModalCardCompact]} onStartShouldSetResponder={() => true}>
-          <View style={x.playerEditModalHeader}><View style={x.playerEditModalHeaderIdentity}><IplTeamBadge code={editingPlayer.team} /><View style={x.grow}><Text style={x.playerEditModalEyebrow}>PLAYER POOL ADMIN</Text><Text numberOfLines={2} style={x.playerEditModalTitle}>Edit {editingPlayer.name}</Text></View></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close player editor" disabled={editBusy} style={x.playerEditModalClose} onPress={closeEditPlayer}><Text style={x.playerEditModalCloseText}>×</Text></TouchableOpacity></View>
+          <View style={x.playerEditModalHeader}><View style={x.playerEditModalHeaderIdentity}><IplTeamBadge code={editingPlayer.team} /><View style={x.grow}><Text style={x.playerEditModalEyebrow}>PLAYER POOL ADMIN</Text><Text numberOfLines={2} style={x.playerEditModalTitle}>Edit {editingPlayer.name}</Text></View></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Close player editor" disabled={editBusy} style={x.playerEditModalClose} onPress={requestCloseEditPlayer}><Text style={x.playerEditModalCloseText}>×</Text></TouchableOpacity></View>
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={x.playerEditModalBody}>
             <Text style={x.squadAddLabel}>Player name</Text>
             <TextInput accessibilityLabel={`Player name for ${editingPlayer.name}`} style={x.squadAddInput} value={editName} onChangeText={value => { setEditName(value); if (editMessage) setEditMessage(""); }} placeholder="Player name" placeholderTextColor="#8B9893" />
@@ -1287,9 +1302,23 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
             {ownershipEnabled ? <View style={x.playerEditReadOnly}><Text style={x.playerEditReadOnlyLabel}>AUCTION BID · READ ONLY</Text><Text style={x.playerEditReadOnlyValue}>{editingPlayer.bidPrice == null ? "—" : `₹${editingPlayer.bidPrice.toFixed(1)}m`}</Text></View> : null}
             {editMessage ? <View accessibilityLiveRegion="polite" style={x.playerEditModalError}><Text style={x.playerEditModalErrorText}>{editMessage}</Text></View> : null}
           </ScrollView>
-          <View style={x.playerEditModalFooter}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel editing player" disabled={editBusy} style={x.playerEditModalCancel} onPress={closeEditPlayer}><Text style={x.playerEditModalCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Save changes to ${editingPlayer.name}`} accessibilityHint={!editFormDirty ? "Change a player detail first" : !editFormValid ? "Correct the invalid fields first" : "Saves these player details"} accessibilityState={{ disabled: editSubmitDisabled, busy: editBusy }} disabled={editSubmitDisabled} style={[x.playerEditModalSave, editSubmitDisabled && x.playerEditModalSaveDisabled]} onPress={() => savePlayer(editingPlayer)}>{editBusy ? <ActivityIndicator color="#10251F" /> : <Text style={[x.playerEditModalSaveText, editSubmitDisabled && x.playerEditModalSaveTextDisabled]}>Save changes</Text>}</TouchableOpacity></View>
+          <View style={x.playerEditModalFooter}><TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel editing player" accessibilityHint="Closes the editor and warns before discarding unsaved changes" disabled={editBusy} style={x.playerEditModalCancel} onPress={requestCloseEditPlayer}><Text style={x.playerEditModalCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Save changes to ${editingPlayer.name}`} accessibilityHint={!editFormDirty ? "Change a player detail first" : !editFormValid ? "Correct the invalid fields first" : "Saves these player details"} accessibilityState={{ disabled: editSubmitDisabled, busy: editBusy }} disabled={editSubmitDisabled} style={[x.playerEditModalSave, editSubmitDisabled && x.playerEditModalSaveDisabled]} onPress={() => savePlayer(editingPlayer)}>{editBusy ? <ActivityIndicator color="#10251F" /> : <Text style={[x.playerEditModalSaveText, editSubmitDisabled && x.playerEditModalSaveTextDisabled]}>Save changes</Text>}</TouchableOpacity></View>
         </View> : null}
       </KeyboardAvoidingView>
+    </Modal>
+    <Modal visible={!!discardPrompt} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setDiscardPrompt("")}>
+      <View style={x.discardPromptOverlay}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Dismiss discard confirmation" activeOpacity={1} style={StyleSheet.absoluteFill} onPress={() => setDiscardPrompt("")} />
+        <View accessibilityViewIsModal accessibilityLabel={discardPrompt === "ADD" ? "Discard new player confirmation" : "Discard player changes confirmation"} style={x.discardPromptCard} onStartShouldSetResponder={() => true}>
+          <View style={x.discardPromptIcon}><Text style={x.discardPromptIconText}>!</Text></View>
+          <Text accessibilityRole="header" style={x.discardPromptTitle}>{discardPrompt === "ADD" ? "Discard new player?" : "Discard player changes?"}</Text>
+          <Text style={x.discardPromptMessage}>{discardPrompt === "ADD" ? "The player details you entered will be lost." : "Your unsaved player details will be lost."}</Text>
+          <View style={x.discardPromptActions}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Keep editing" style={x.discardPromptKeep} onPress={() => setDiscardPrompt("")}><Text style={x.discardPromptKeepText}>Keep editing</Text></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Discard unsaved changes" style={x.discardPromptDiscard} onPress={() => { const prompt = discardPrompt; setDiscardPrompt(""); if (prompt === "ADD") closeAddPlayer(); else closeEditPlayer(); }}><Text style={x.discardPromptDiscardText}>Discard</Text></TouchableOpacity>
+          </View>
+        </View>
+      </View>
     </Modal>
     <OwnerPickerModal visible={!!editingPlayer && editOwnerDropdownOpen} compact={compact} playerName={editingPlayer?.name ?? "this player"} owners={owners} selectedOwnerId={editOwnerId} onSelect={ownerId => { setEditOwnerId(ownerId); setEditOwnerDropdownOpen(false); if (editMessage) setEditMessage(""); }} onClose={() => setEditOwnerDropdownOpen(false)} />
     <OwnerPickerModal visible={!!addingTeam && newPlayerOwnerPickerOpen} compact={compact} playerName={newPlayerName.trim() || `the new ${addingTeam} player`} owners={owners} selectedOwnerId={newPlayerOwnerId} onSelect={ownerId => { setNewPlayerOwnerId(ownerId); setNewPlayerOwnerPickerOpen(false); if (addMessage) setAddMessage(""); }} onClose={() => setNewPlayerOwnerPickerOpen(false)} />
@@ -2344,6 +2373,17 @@ const x = StyleSheet.create(normalizeUiStyles({
   playerEditModalSaveText: { color: "#10251F", fontSize: 9, fontWeight: "900" },
   playerEditModalSaveDisabled: { backgroundColor: "#DCE4DF" },
   playerEditModalSaveTextDisabled: { color: "#718079" },
+  discardPromptOverlay: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(2, 16, 13, 0.76)", padding: 20 },
+  discardPromptCard: { width: "100%", maxWidth: 390, alignItems: "center", backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: "#E0B9B2", borderRadius: 18, paddingHorizontal: 20, paddingTop: 22, paddingBottom: 16, ...CARD_SHADOW },
+  discardPromptIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center", backgroundColor: UI_TOKENS.status.dangerWash, borderRadius: 14 },
+  discardPromptIconText: { color: UI_TOKENS.status.danger, fontSize: 23, lineHeight: 25, fontWeight: "900" },
+  discardPromptTitle: { color: UI_TOKENS.colors.ink, fontSize: 17, lineHeight: 22, fontWeight: "900", textAlign: "center", marginTop: 13 },
+  discardPromptMessage: { color: UI_TOKENS.colors.muted, fontSize: 9, lineHeight: 14, textAlign: "center", marginTop: 6 },
+  discardPromptActions: { width: "100%", flexDirection: "row", gap: 8, marginTop: 20 },
+  discardPromptKeep: { flex: 1, minHeight: 46, alignItems: "center", justifyContent: "center", backgroundColor: UI_TOKENS.colors.card, borderWidth: 1, borderColor: UI_TOKENS.colors.borderStrong, borderRadius: 11, paddingHorizontal: 12 },
+  discardPromptKeepText: { color: UI_TOKENS.colors.primary, fontSize: 9, fontWeight: "900" },
+  discardPromptDiscard: { flex: 1, minHeight: 46, alignItems: "center", justifyContent: "center", backgroundColor: UI_TOKENS.status.danger, borderRadius: 11, paddingHorizontal: 12 },
+  discardPromptDiscardText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900" },
   squadPlayerRowInactive: { backgroundColor: "#F0F1EF", opacity: 0.75 }, squadPlayerNameInactive: { color: "#7F8985", textDecorationLine: "line-through" }, squadEditButton: { minWidth: 50, minHeight: 28, borderRadius: 7, borderWidth: 1, borderColor: "#A9BBB3", backgroundColor: "#F5F8F6", alignItems: "center", justifyContent: "center", paddingHorizontal: 7 }, squadEditButtonText: { color: "#315047", fontSize: 8, fontWeight: "900" }, squadEditAvailability: { flexDirection: "row", gap: 7, marginBottom: 9 }, squadEditStatus: { flex: 1, minHeight: 34, borderRadius: 8, borderWidth: 1, borderColor: "#CBD6D0", alignItems: "center", justifyContent: "center" }, squadEditStatusActive: { backgroundColor: "#EAF6E5", borderColor: "#9FC694" }, squadEditStatusInactive: { backgroundColor: "#FFF0EC", borderColor: "#E0AFA4" }, squadEditStatusText: { color: "#65766F", fontSize: 8, fontWeight: "900" }, squadEditStatusTextActive: { color: "#285F39" }, squadEditStatusTextInactive: { color: "#7A4036" }, squadEditBidNote: { color: "#7A6A31", fontSize: 8, fontWeight: "800", marginBottom: 9 }, squadAvailabilityMessage: { backgroundColor: "#EAF6E5", borderRadius: 10, padding: 10, marginBottom: 10 }, squadAvailabilityMessageText: { color: "#285F39", fontSize: 9, fontWeight: "800" },
   ownerBlock: { borderTopWidth: 1, borderTopColor: "#DCE4DF" }, ownerNameRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 }, ownerName: { color: "#10251F", fontFamily: OWNER_FONT, fontSize: 15, fontWeight: "700", letterSpacing: 0.25 }, historyBoosterBadge: { backgroundColor: "#6D44C5", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }, historyBoosterBadgeText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 }, ownerMeta: { color: "#5F6E68", fontSize: 10, lineHeight: 14, marginTop: 4 }, transferSummary: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, transferUsed: { color: "#254D42", backgroundColor: "#E4F0EB", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 9, fontWeight: "800" }, transferBalance: { color: "#5D4E13", backgroundColor: "#F5EFD2", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4, fontSize: 9, fontWeight: "900" }, historyPlayer: { flexDirection: "row", alignItems: "center", minHeight: 62, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "#FAFBF8", borderTopWidth: 1, borderTopColor: "#E4EAE6" }, playerName: { color: "#173028", fontSize: 13, lineHeight: 18, fontWeight: "800" }, playerMetaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 6 }, teamBadge: { overflow: "hidden", borderWidth: 1, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" }, roleText: { color: "#465A52", backgroundColor: "#E7EEE9", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 9, fontWeight: "700" }, ownershipText: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, fontSize: 9, fontWeight: "800" }, ownershipMine: { color: "#285F39", backgroundColor: "#DFF0DD" }, ownershipOpen: { color: "#465A52", backgroundColor: "#E7ECE9" }, ownershipOther: { color: "#74463D", backgroundColor: "#F8E6E1" }, baseText: { color: "#65746E", fontSize: 10, fontWeight: "600" }, playerValue: { color: "#174D3D", fontSize: 13, fontWeight: "900", marginHorizontal: 8 }, marker: { color: "#173028", backgroundColor: "#DDFB72", borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, fontSize: 9, fontWeight: "900" }, playerBreakdown: { backgroundColor: "#F0F4F1", paddingHorizontal: 34, paddingVertical: 8 }, breakdownLine: { flexDirection: "row", paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: "#E1E7E3" }, breakdownLabel: { flex: 1, color: "#53675F", fontSize: 10 }, breakdownValue: { color: "#334C43", fontSize: 10 }, breakdownStrong: { color: "#173028", fontWeight: "900" }, breakdownNegative: { color: UI_TOKENS.status.danger },
 }));

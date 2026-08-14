@@ -4,7 +4,7 @@ This checklist covers a small private release on iOS and Android. A checked item
 
 ## Current position
 
-The Expo client, Supabase authentication, league foundation, RLS, configurable rules/phases/transfers/boosters and score review/publish workflow exist. Production is **not yet approved**. Major remaining risks are automated score ingestion, full multi-league setup, tests, recovery and store delivery.
+The Expo 57 client, Supabase authentication, league foundation, RLS, configurable rules/phases/transfers/boosters and score review/publish workflow exist. Production is **not yet approved** until the remaining external/staging gates below are evidenced. The repository now has a reproducible Node 22 release gate, EAS profiles, native identity assets and verified web/iOS/Android bundles.
 
 ## P0 — release blockers
 
@@ -36,7 +36,7 @@ The Expo client, Supabase authentication, league foundation, RLS, configurable r
 ### App quality
 
 - [ ] Extract oversized screens/business rules into testable modules.
-- [ ] Unit-test scoring, transfers, boosters, markers, deductions and configurable league modes.
+- [x] Unit-test scoring, transfers, boosters, markers, deductions and configurable league modes.
 - [ ] Integration-test Supabase RLS/RPCs.
 - [ ] End-to-end test login, league choice, lineup submit/edit/lock, history and admin publishing.
 - [ ] Test physical small/large iPhones and Android phones.
@@ -49,9 +49,9 @@ The Expo client, Supabase authentication, league foundation, RLS, configurable r
 ### Environments and mobile release
 
 - [ ] Separate development, staging and production Supabase projects.
-- [ ] Configure EAS development, preview and production profiles.
+- [x] Configure EAS preview and production profiles.
 - [ ] Store environment-specific public configuration in EAS; configure bundle/application IDs.
-- [ ] Add final icons, splash, deep links, versions and build numbers.
+- [x] Add final icons, splash, versions and build numbers. Deep links remain out of scope until the app has an approved inbound-link flow.
 - [ ] Distribute signed internal builds to all nine testers.
 - [ ] Define OTA update compatibility, release, rollback and emergency-disable procedures.
 
@@ -112,11 +112,14 @@ Keep infrastructure simple for the closed group, but never place privileged cred
 ## Routine release commands
 
 ```sh
+nvm use
 npm ci
-npm run check
+npm run check:production
 git diff --check
 ```
 
-GitHub also runs these non-database checks for every pull request and push to `main`. Supabase migrations, RLS role checks, authenticated RPC tests and score reconciliation remain staging gates and are intentionally not run against a live project from CI yet.
+GitHub runs the same Node 22 production gate for every pull request and push to `main`. Supabase migrations, RLS role checks, authenticated RPC tests and score reconciliation remain staging gates and are intentionally not run against a live project from CI yet.
+
+`npm audit` currently reports high/moderate transitive advisories in Expo/Metro/Xcode build tooling, with no supported patched Expo 57 resolution; npm's proposed force fix downgrades to Expo 46 and is rejected. The release gate fails on critical findings. Build assets remain repository-controlled, and this exception must be reviewed when Expo publishes patched supported packages.
 
 Then deploy/verify staging, test a preview build, tag the approved commit, back up and migrate production, release the compatible build/update, smoke-test and monitor.

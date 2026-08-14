@@ -14,7 +14,9 @@ A private, 10-owner IPL fantasy league mobile app.
 
 ## Run the prototype
 
-Install Node.js 20.19 or newer, then run `npm install` and `npm start` in this directory. Use the Expo Go app or an iOS/Android simulator to open it. The prototype targets Expo SDK 54.
+Install Node.js 22.13 or newer (`nvm use` reads the checked-in version), then run `npm ci` and `npm start` in this directory. Use an Expo development build or an iOS/Android simulator to open it. The app targets Expo SDK 57.
+
+Before creating a release build, run `npm run check:production`. This validates Expo configuration, TypeScript, 36 rule tests, tracked-secret hygiene, web/iOS/Android bundles and the live critical-vulnerability audit. EAS preview and production profiles are defined in `eas.json`; configure `EXPO_PUBLIC_SUPABASE_URL` and the public/publishable `EXPO_PUBLIC_SUPABASE_KEY` in the matching EAS environments before building.
 
 ## Confirmed rules
 
@@ -26,7 +28,7 @@ Install Node.js 20.19 or newer, then run `npm install` and `npm start` in this d
 - 105 transfers during the league stage and 4 during the playoffs
 - Sheet-derived T20 scoring, configurable by the commissioner
 - Captain scores 2× and vice-captain scores 1.5×
-- Boosters are included; royalty points are excluded from the MVP
+- Boosters and configurable royalty scoring are included
 
 ## MVP modules
 
@@ -100,7 +102,7 @@ Run milestones (25/50/75/100 and above), wicket milestones, strike-rate adjustme
 - Super Impact (`SUP-IMP`): selects one Batting Impact or Bowling Impact player. Only the selected discipline scores and is doubled. It cannot be combined with another player-level booster.
 - Super Offer and Super User remain supported by the data model but default to zero availability, matching the sheet configuration.
 
-Royalty points are excluded. Using another owner's non-unique player remains permitted with a deduction equal to the greater of 30% of that player's match points or 15 points.
+Royalty points are configured independently from fantasy-performance points and are credited to the owning member under the published league rules. Using another owner's non-unique player remains permitted with a deduction equal to the greater of 30% of that player's match points or 15 points.
 
 ## Auction and roster constraints
 

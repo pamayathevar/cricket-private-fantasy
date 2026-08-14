@@ -2,27 +2,49 @@
   "expo": {
     "name": "Cricket Private Fantasy League",
     "slug": "cricket-private-fantasy-league",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "splash": {
-      "backgroundColor": "#071D17"
-    },
+    "icon": "./assets/app-icon.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.cpfl.mobile"
+      "bundleIdentifier": "com.cpfl.mobile",
+      "buildNumber": "1"
     },
     "android": {
-      "package": "com.cpfl.mobile"
+      "package": "com.cpfl.mobile",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/app-icon.png",
+        "backgroundColor": "#CFFF4D"
+      }
     },
     "androidStatusBar": {
       "backgroundColor": "#071D17",
       "barStyle": "light-content",
       "translucent": false
     },
-    "androidNavigationBar": {
-      "backgroundColor": "#FBFCFD",
-      "barStyle": "dark-content"
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#071D17",
+          "image": "./assets/app-icon.png",
+          "imageWidth": 128,
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": true,
+          "hidden": false,
+          "style": "light"
+        }
+      ]
+    ],
+    "web": {
+      "favicon": "./assets/app-icon.png"
     }
   }
 }
