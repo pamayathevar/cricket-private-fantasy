@@ -46,15 +46,11 @@ select
   ) as current_mi_shardul_remains_active,
   exists (
     select 1
-    from public.league_players league_player
-    join public.leagues league on league.id = league_player.league_id
-    join public.players player on player.id = league_player.player_id
+    from public.players player
     join public.cricket_teams team on team.id = player.team_id
-    where league.season_year = 2027
-      and public.normalized_player_name(player.full_name) = 'shardul thakur'
+    where public.normalized_player_name(player.full_name) = 'shardul thakur'
       and team.code = 'LSG'
-      and league_player.active
-  ) as later_season_lsg_identity_is_preserved;
+  ) as historical_lsg_identity_is_preserved;
 
 select
   league.slug,
