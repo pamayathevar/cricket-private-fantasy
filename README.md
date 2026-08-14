@@ -2,6 +2,20 @@
 
 A private, 10-owner IPL fantasy league mobile app.
 
+## Full system handbook
+
+The complete product, architecture, data, security, QA and Expo/EAS release documentation is available as a responsive HTML page:
+
+- [Open the System Handbook](docs/system-handbook.html)
+
+For the full visual layout, open `docs/system-handbook.html` directly in a browser. To serve it locally from this repository, run:
+
+```sh
+python3 -m http.server 8088
+```
+
+Then visit [http://127.0.0.1:8088/docs/system-handbook.html](http://127.0.0.1:8088/docs/system-handbook.html). The page includes search, expandable workflow details and a print/PDF layout suitable for developer, QA and BA review.
+
 ## Project documentation
 
 - [Product specification](SPEC.md)

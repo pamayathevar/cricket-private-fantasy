@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#071a2f">
+  <title>Cricket Rivalries League — System Handbook</title>
+  <style>
+    :root {
+      --navy: #071a2f;
+      --navy-2: #102a49;
+      --green: #075a43;
+      --green-2: #0d7859;
+      --lime: #ceff45;
+      --paper: #f5f6f1;
+      --card: #ffffff;
+      --ink: #10231e;
+      --muted: #61716b;
+      --line: #d8e1dc;
+      --soft: #eaf3ef;
+      --gold: #b8860b;
+      --warning: #9b5417;
+      --danger: #a33b3b;
+      --purple: #7041a8;
+      --blue: #2165a9;
+      --shadow: 0 14px 42px rgba(7, 26, 47, .09);
+      --radius: 22px;
+      --content: 1180px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 28px; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.58;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+    a { color: var(--green); text-underline-offset: 3px; }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code { padding: .12rem .35rem; border-radius: 6px; background: #eef2ef; font-size: .88em; }
+    pre {
+      overflow: auto;
+      margin: 16px 0 0;
+      padding: 17px 18px;
+      border-radius: 15px;
+      color: #e8f2ee;
+      background: #06172a;
+      line-height: 1.55;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.07);
+    }
+    pre code { padding: 0; color: inherit; background: transparent; }
+
+    .masthead {
+      position: relative;
+      overflow: hidden;
+      color: #fff;
+      background: linear-gradient(135deg, #071a2f 0%, #0b2f42 58%, #075a43 100%);
+      border-bottom: 5px solid var(--lime);
+    }
+    .masthead::before,
+    .masthead::after {
+      position: absolute;
+      width: 410px;
+      height: 410px;
+      content: "";
+      border-radius: 50%;
+      background: rgba(206,255,69,.07);
+    }
+    .masthead::before { right: -180px; top: -210px; }
+    .masthead::after { right: 160px; bottom: -370px; }
+    .masthead-inner {
+      position: relative;
+      z-index: 1;
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 58px 28px 54px;
+    }
+    .brand-row { display: flex; align-items: center; gap: 18px; }
+    .app-icon {
+      width: 76px;
+      height: 76px;
+      border: 1px solid rgba(255,255,255,.25);
+      border-radius: 22px;
+      box-shadow: 0 12px 28px rgba(0,0,0,.28);
+    }
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--green);
+      font-size: .75rem;
+      font-weight: 900;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .masthead .eyebrow { color: var(--lime); }
+    h1, h2, h3, h4, p { margin-top: 0; }
+    h1 { margin: 0; font-size: clamp(2.05rem, 5vw, 4.4rem); line-height: .98; letter-spacing: -.045em; }
+    .masthead-summary { max-width: 780px; margin: 22px 0 0; color: #d9e6e2; font-size: 1.08rem; }
+    .meta-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 26px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 31px;
+      padding: 5px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--soft);
+      font-size: .79rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .masthead .pill { border-color: rgba(255,255,255,.16); color: #fff; background: rgba(255,255,255,.09); }
+    .pill.live { color: var(--navy); background: var(--lime); border-color: var(--lime); }
+
+    .toolbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.94);
+      backdrop-filter: blur(16px);
+    }
+    .toolbar-inner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 11px 28px;
+    }
+    .search-wrap { position: relative; flex: 1; }
+    .search-wrap::before { position: absolute; left: 14px; top: 9px; content: "⌕"; color: var(--muted); font-size: 1.35rem; }
+    #doc-search {
+      width: 100%;
+      min-height: 44px;
+      padding: 9px 14px 9px 43px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      outline: none;
+      color: var(--ink);
+      background: #f8faf8;
+    }
+    #doc-search:focus { border-color: var(--green-2); box-shadow: 0 0 0 3px rgba(13,120,89,.12); }
+    .action-button {
+      min-height: 44px;
+      padding: 9px 14px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      color: var(--ink);
+      background: #fff;
+      cursor: pointer;
+      font-weight: 800;
+    }
+    .action-button:hover { border-color: var(--green); color: var(--green); }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 255px minmax(0, 1fr);
+      gap: 32px;
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 34px 28px 72px;
+    }
+    .side-nav { position: sticky; top: 82px; align-self: start; max-height: calc(100vh - 106px); overflow: auto; }
+    .side-nav-title { margin: 0 0 10px 11px; color: var(--muted); font-size: .72rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .side-nav a {
+      display: block;
+      padding: 8px 11px;
+      border-left: 3px solid transparent;
+      border-radius: 0 9px 9px 0;
+      color: #4c5e57;
+      font-size: .88rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .side-nav a:hover, .side-nav a.active { border-left-color: var(--lime); color: var(--green); background: #fff; }
+    main { min-width: 0; }
+    section.doc-section { margin-bottom: 30px; scroll-margin-top: 82px; }
+    .section-card {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
+    .section-heading h2 { margin: 0; color: var(--navy); font-size: clamp(1.55rem, 3vw, 2.25rem); line-height: 1.08; letter-spacing: -.025em; }
+    .section-index { color: #9aa8a2; font-size: .8rem; font-weight: 900; letter-spacing: .12em; }
+    h3 { margin: 25px 0 10px; color: var(--navy); font-size: 1.12rem; }
+    h4 { margin-bottom: 5px; color: var(--ink); }
+    .lede { max-width: 760px; color: var(--muted); font-size: 1.02rem; }
+    .muted { color: var(--muted); }
+    .small { font-size: .86rem; }
+
+    .grid { display: grid; gap: 14px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .mini-card {
+      min-width: 0;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fbfcfa;
+    }
+    .mini-card h3, .mini-card h4 { margin-top: 0; }
+    .mini-card p:last-child { margin-bottom: 0; }
+    .accent-green { border-top: 4px solid var(--green-2); }
+    .accent-gold { border-top: 4px solid #d7a61b; }
+    .accent-blue { border-top: 4px solid var(--blue); }
+    .accent-purple { border-top: 4px solid var(--purple); }
+    .status-box { padding: 18px; border-left: 5px solid var(--green-2); border-radius: 12px; background: var(--soft); }
+    .warning-box { padding: 18px; border-left: 5px solid #e0a019; border-radius: 12px; background: #fff7dc; }
+    .danger-box { padding: 18px; border-left: 5px solid var(--danger); border-radius: 12px; background: #fff0f0; }
+    .status-box p:last-child, .warning-box p:last-child, .danger-box p:last-child { margin-bottom: 0; }
+
+    .role-path {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .role-path a {
+      display: block;
+      min-height: 120px;
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      color: inherit;
+      background: #fbfcfa;
+      text-decoration: none;
+    }
+    .role-path a:hover { transform: translateY(-2px); border-color: var(--green-2); box-shadow: 0 9px 24px rgba(7,90,67,.08); }
+    .role-path strong { display: block; margin-bottom: 7px; color: var(--navy); }
+    .role-path span { color: var(--muted); font-size: .86rem; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 42px 1.2fr 42px 1.35fr;
+      align-items: stretch;
+      gap: 8px;
+      margin: 22px 0;
+    }
+    .arch-node { display: flex; flex-direction: column; justify-content: center; min-height: 150px; padding: 18px; border: 1px solid var(--line); border-radius: 17px; background: #fbfcfa; }
+    .arch-node.primary { color: white; border-color: var(--navy); background: var(--navy); }
+    .arch-node.server { color: white; border-color: var(--green); background: var(--green); }
+    .arch-node strong { font-size: 1.05rem; }
+    .arch-node span { margin-top: 7px; color: var(--muted); font-size: .84rem; }
+    .arch-node.primary span, .arch-node.server span { color: #d6e4df; }
+    .arch-arrow { display: grid; place-items: center; color: var(--green); font-size: 1.8rem; font-weight: 900; }
+    .boundary-note { margin-top: 10px; color: var(--muted); font-size: .85rem; text-align: center; }
+
+    .flow { counter-reset: step; display: grid; gap: 10px; margin-top: 15px; }
+    .flow-step { position: relative; min-height: 62px; padding: 14px 16px 14px 60px; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfa; }
+    .flow-step::before {
+      counter-increment: step;
+      position: absolute;
+      left: 14px;
+      top: 13px;
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      content: counter(step);
+      border-radius: 10px;
+      color: var(--navy);
+      background: var(--lime);
+      font-weight: 900;
+    }
+    .flow-step strong { display: block; color: var(--navy); }
+    .flow-step span { color: var(--muted); font-size: .88rem; }
+
+    .table-wrap { width: 100%; overflow-x: auto; margin-top: 14px; border: 1px solid var(--line); border-radius: 15px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; font-size: .89rem; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    th { color: #52635d; background: #eef3f0; font-size: .72rem; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+    td:first-child { font-weight: 750; color: var(--navy); }
+    .check { color: var(--green-2); font-weight: 900; }
+    .deferred { color: var(--warning); font-weight: 900; }
+
+    .tag-list { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tag { padding: 5px 9px; border-radius: 8px; color: #375048; background: #edf3f0; font-size: .77rem; font-weight: 800; }
+    .data-domain { padding: 17px; border: 1px solid var(--line); border-radius: 16px; background: #fbfcfa; }
+    .data-domain h3 { margin: 0 0 5px; }
+    .data-domain p { color: var(--muted); font-size: .86rem; }
+    .data-domain code { display: inline-block; margin: 3px 3px 0 0; }
+
+    details { margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfa; }
+    details[open] { background: #fff; }
+    summary { padding: 14px 16px; cursor: pointer; color: var(--navy); font-weight: 850; }
+    details > div { padding: 0 16px 16px; }
+
+    .release-lanes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+    .release-lane { padding: 17px; border: 1px solid var(--line); border-radius: 16px; background: #fbfcfa; }
+    .release-lane strong { display: block; margin-bottom: 7px; color: var(--navy); }
+    .release-lane .lane-number { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-bottom: 11px; border-radius: 9px; color: var(--navy); background: var(--lime); font-weight: 900; }
+
+    .document-footer { padding: 34px 28px calc(34px + env(safe-area-inset-bottom)); color: #cbd9d4; background: var(--navy); text-align: center; }
+    .document-footer strong { color: #fff; }
+    .document-footer a { color: var(--lime); }
+    .no-results { display: none; padding: 42px; border: 1px dashed var(--line); border-radius: 18px; text-align: center; background: #fff; }
+    mark { padding: 1px 2px; border-radius: 4px; background: #f2dc6f; }
+
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; padding-top: 22px; }
+      .side-nav { display: none; }
+      .grid.four, .role-path { grid-template-columns: repeat(2, 1fr); }
+      .architecture { grid-template-columns: 1fr; }
+      .arch-arrow { min-height: 26px; transform: rotate(90deg); }
+    }
+    @media (max-width: 700px) {
+      .masthead-inner { padding: 40px 20px 38px; }
+      .brand-row { align-items: flex-start; }
+      .app-icon { width: 58px; height: 58px; border-radius: 17px; }
+      .toolbar-inner { padding: 9px 15px; }
+      .action-button .wide-label { display: none; }
+      .shell { padding: 20px 15px 54px; }
+      .section-card { padding: 21px 18px; border-radius: 18px; }
+      .grid.two, .grid.three, .grid.four, .role-path, .release-lanes { grid-template-columns: 1fr; }
+      .section-heading { align-items: flex-start; }
+      .section-index { display: none; }
+      th, td { padding: 10px 11px; }
+      .masthead-summary { font-size: .98rem; }
+    }
+    @media print {
+      @page { margin: 15mm; }
+      body { color: #000; background: #fff; font-size: 10.5pt; }
+      .toolbar, .side-nav { display: none !important; }
+      .masthead { color: #000; border-bottom: 2px solid #000; background: #fff; }
+      .masthead::before, .masthead::after { display: none; }
+      .masthead-inner { padding: 0 0 20px; }
+      .masthead .eyebrow, .masthead-summary { color: #333; }
+      .masthead .pill { color: #000; border-color: #999; background: #fff; }
+      .app-icon { box-shadow: none; }
+      .shell { display: block; max-width: none; padding: 18px 0 0; }
+      .section-card { border: 0; padding: 0; box-shadow: none; }
+      section.doc-section { break-before: page; }
+      section.doc-section:first-child { break-before: auto; }
+      .mini-card, .data-domain, details, .table-wrap { break-inside: avoid; }
+      details > div { display: block !important; }
+      a { color: #000; text-decoration: none; }
+      pre { color: #000; border: 1px solid #aaa; background: #fff; }
+      .document-footer { color: #000; background: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="brand-row">
+        <img class="app-icon" src="../assets/app-icon.png" alt="Cricket Rivalries League app icon">
+        <div>
+          <p class="eyebrow">Technical · Product · Quality · Release</p>
+          <h1>System Handbook</h1>
+        </div>
+      </div>
+      <p class="masthead-summary">A single review guide for the Cricket Rivalries League product: current behavior, business rules, architecture, data model, security boundaries, QA coverage and the Expo/EAS path from local development to Google Play.</p>
+      <div class="meta-row">
+        <span class="pill live">Current baseline</span>
+        <span class="pill">Version 1.0</span>
+        <span class="pill">Updated 13 Aug 2026</span>
+        <span class="pill">Expo SDK 57</span>
+        <span class="pill">Supabase/Postgres</span>
+        <span class="pill">Android · iOS · Web</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="toolbar-inner">
+      <div class="search-wrap"><input id="doc-search" type="search" placeholder="Search rules, tables, workflows or release steps" aria-label="Search handbook"></div>
+      <button class="action-button" type="button" id="expand-button" aria-pressed="false">Expand <span class="wide-label">details</span></button>
+      <button class="action-button" type="button" onclick="window.print()">Print <span class="wide-label">/ PDF</span></button>
+    </div>
+  </div>
+
+  <div class="shell">
+    <nav class="side-nav" aria-label="Handbook sections">
+      <p class="side-nav-title">Contents</p>
+      <a href="#start">Start here</a>
+      <a href="#scope">Product scope</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#screens">Screens &amp; navigation</a>
+      <a href="#rules">Business rules</a>
+      <a href="#workflows">Critical workflows</a>
+      <a href="#scoring">Scoring &amp; special rules</a>
+      <a href="#data">Data design</a>
+      <a href="#security">Security &amp; permissions</a>
+      <a href="#interfaces">RPC contracts</a>
+      <a href="#codebase">Codebase map</a>
+      <a href="#qa">QA strategy</a>
+      <a href="#release">Expo &amp; EAS release</a>
+      <a href="#operations">Operations</a>
+      <a href="#risks">Gaps &amp; risks</a>
+      <a href="#glossary">Glossary &amp; sources</a>
+    </nav>
+
+    <main id="handbook">
+      <div class="no-results" id="no-results"><strong>No handbook section matched that search.</strong><br><span class="muted">Try a rule name, table, screen, role or release term.</span></div>
+
+      <section class="doc-section" id="start" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Orientation</p><h2>Start here</h2></div><span class="section-index">01</span></div>
+          <p class="lede">This page describes the implemented baseline. When a historical planning document conflicts with production migrations or executable rules, the migration-backed behavior is treated as current and the mismatch must be reviewed explicitly.</p>
+          <div class="status-box"><strong>Document authority</strong><p>Use this handbook as the review index. Confirm behavior against <code>confirmed-rules.md</code>, the latest versioned Supabase migrations, current RPC grants, rule unit tests and the running application. Never infer production behavior from an old mockup alone.</p></div>
+          <div class="role-path">
+            <a href="#scope"><strong>Business analyst</strong><span>Review scope, terminology, rule matrices, exceptions and deferred decisions.</span></a>
+            <a href="#architecture"><strong>Developer</strong><span>Review boundaries, data domains, RPC contracts, migrations and release configuration.</span></a>
+            <a href="#qa"><strong>QA reviewer</strong><span>Review the device matrix, risk scenarios, data assertions and release acceptance gates.</span></a>
+            <a href="#release"><strong>Release / operations</strong><span>Review EAS environments, build types, signing, deployment and rollback steps.</span></a>
+          </div>
+          <h3>System at a glance</h3>
+          <div class="grid four">
+            <div class="mini-card accent-green"><p class="eyebrow">Product</p><h4>Private fantasy leagues</h4><p class="small muted">Configurable league formats, owned/open players, per-fixture XIs, transfers, boosters and rankings.</p></div>
+            <div class="mini-card accent-blue"><p class="eyebrow">Client</p><h4>Expo + React Native</h4><p class="small muted">One TypeScript application targeting Android, iOS and responsive web.</p></div>
+            <div class="mini-card accent-purple"><p class="eyebrow">Backend</p><h4>Supabase</h4><p class="small muted">Postgres, email OTP authentication, row-level security, transactional RPCs and audit history.</p></div>
+            <div class="mini-card accent-gold"><p class="eyebrow">Release</p><h4>EAS Build</h4><p class="small muted">Signed preview APKs for device testing and production AABs for Google Play.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="scope" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Product definition</p><h2>Scope and current status</h2></div><span class="section-index">02</span></div>
+          <p class="lede">A member joins a private league, manages a fixture-specific XI, follows match results and competes on configurable fantasy rules. Every record and permission is scoped to a league.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Capability</th><th>Current baseline</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr><td>League membership</td><td class="check">Implemented</td><td>Invite, accept/decline, participation status, owner display names and template cloning.</td></tr>
+                <tr><td>Player ownership</td><td class="check">Implemented</td><td>Auction results can be imported/administered; open-player and owned-player formats are supported.</td></tr>
+                <tr><td>Live auction room</td><td class="deferred">Deferred</td><td>The ownership foundation exists, but real-time nomination, bid countdown and settlement are not a production module.</td></tr>
+                <tr><td>Fixture lineup selection</td><td class="check">Implemented</td><td>Server-validated XI, match roles, locks, carry-forward, resubmission and transfer accounting.</td></tr>
+                <tr><td>Scoring and rankings</td><td class="check">Implemented</td><td>Staging/review/publication, fantasy breakdown, scorecards, result archive and standings.</td></tr>
+                <tr><td>No Result settlement</td><td class="check">Implemented</td><td>Refunds transfers/boosters, resets later unlocked XIs and rebases later locked transfer chains.</td></tr>
+                <tr><td>Royalty and automatic Unique</td><td class="check">Implemented</td><td>Fixture/team-scoped qualifying usage and threshold-driven labels.</td></tr>
+                <tr><td>Licensed live score feed</td><td class="deferred">Not integrated</td><td>Scores currently rely on trusted commissioner import/manual workflows. A licensed provider is a production dependency for automation.</td></tr>
+                <tr><td>Public multi-tenant launch</td><td class="deferred">Not yet approved</td><td>Staging, physical-device acceptance and operational readiness must complete before broader launch.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Supported league formats</h3>
+          <div class="grid three">
+            <div class="mini-card"><h4>Owned / auction</h4><p class="small muted">League players may have one league owner. Other owners can borrow them subject to the configured deductions and special-player rules.</p></div>
+            <div class="mini-card"><h4>All-open</h4><p class="small muted">Ownership, bids and other-owner deductions are disabled. All eligible league players are available to every owner.</p></div>
+            <div class="mini-card"><h4>Royalty / Unique variants</h4><p class="small muted">Royalty and Unique restrictions are independent switches with versioned formulas, scope and effective fixtures.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="architecture" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Technical design</p><h2>System architecture</h2></div><span class="section-index">03</span></div>
+          <div class="architecture" aria-label="System architecture flow">
+            <div class="arch-node"><strong>Users &amp; league admins</strong><span>Android, iOS or browser. Owners submit XIs; admins manage rules, players and scoring.</span></div>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <div class="arch-node primary"><strong>Expo React Native client</strong><span>TypeScript UI, responsive navigation, local auth session persistence and public Supabase client.</span></div>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <div class="arch-node server"><strong>Supabase control plane</strong><span>Auth → RLS → transactional RPCs → Postgres tables/views → audit trail.</span></div>
+          </div>
+          <p class="boundary-note">The mobile/web client is untrusted. Competition rules, permissions, locks, transfer balances and publication are authoritative only after server validation.</p>
+          <div class="grid two">
+            <div class="mini-card">
+              <h3>Runtime data path</h3>
+              <div class="flow">
+                <div class="flow-step"><strong>Authenticate</strong><span>Supabase email OTP establishes a user session.</span></div>
+                <div class="flow-step"><strong>Resolve membership</strong><span>The user sees only leagues allowed by RLS and membership state.</span></div>
+                <div class="flow-step"><strong>Read scoped state</strong><span>Client queries fixtures, owners, players, XIs, scores and configuration by <code>league_id</code>.</span></div>
+                <div class="flow-step"><strong>Mutate through RPC</strong><span>Security-definer functions verify membership, role, fixture lock and rule version.</span></div>
+                <div class="flow-step"><strong>Persist and audit</strong><span>Postgres transactions update canonical records and write audit events.</span></div>
+              </div>
+            </div>
+            <div class="mini-card">
+              <h3>Delivery path</h3>
+              <div class="flow">
+                <div class="flow-step"><strong>Source control</strong><span>Application, migrations, verifiers, tests and EAS config live together.</span></div>
+                <div class="flow-step"><strong>Release gate</strong><span>Doctor, types, 36 rule tests, secret scan, all-platform export and critical audit.</span></div>
+                <div class="flow-step"><strong>EAS preview</strong><span>Cloud build creates a signed internal APK for physical Android testing.</span></div>
+                <div class="flow-step"><strong>Acceptance</strong><span>QA validates current migrations, device behavior and critical business workflows.</span></div>
+                <div class="flow-step"><strong>EAS production</strong><span>A signed AAB is submitted to a Google Play testing track, then promoted.</span></div>
+              </div>
+            </div>
+          </div>
+          <h3>Design principles</h3>
+          <div class="tag-list">
+            <span class="tag">League-scoped by default</span><span class="tag">Server-authoritative rules</span><span class="tag">Effective-from-match versions</span><span class="tag">Historical reproducibility</span><span class="tag">Audited admin actions</span><span class="tag">Atomic publication</span><span class="tag">Responsive UI</span><span class="tag">No privileged key in client</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="screens" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Experience map</p><h2>Screens and navigation</h2></div><span class="section-index">04</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Navigation label</th><th>Primary job</th><th>Notable behavior</th></tr></thead>
+              <tbody>
+                <tr><td>League</td><td>Plan and submit the selected fixture XI.</td><td>Fixture picker, rules/notices, rich selected XI, transfer summary, search/filter/sort and carry-forward status.</td></tr>
+                <tr><td>Ranking</td><td>Follow overall or phase standings.</td><td>Podium, leader gaps, chasers, trends, owner selection, league records and fun facts.</td></tr>
+                <tr><td>Results</td><td>Review submitted XIs and published match outcomes.</td><td>Match/owner filters, clear match and owner boundaries, scorecard link, fantasy and ROY breakdowns.</td></tr>
+                <tr><td>Fixtures</td><td>View schedule, lock state and result status.</td><td>Match grouping, team badges, status hierarchy and responsive cards.</td></tr>
+                <tr><td>Player Pool</td><td>Search every league player.</td><td>Role/owner/availability filters, admin edit modal, replacement entry and per-match player history.</td></tr>
+                <tr><td>Owner Squads</td><td>Inspect auction rosters and owner totals.</td><td>Responsive score columns, marquee state, per-player expansion and match-by-match point rows.</td></tr>
+                <tr><td>Help</td><td>Explain the application and complex league rules.</td><td>User guide, submission behavior, transfer resets, No Result examples and terminology.</td></tr>
+                <tr><td>Rules</td><td>Administer versioned competition configuration.</td><td>Admin-only publishing for playing, scoring, phases, transfer periods, formats and special-player rules.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="status-box" style="margin-top:16px"><strong>Responsive navigation</strong><p>Desktop uses the full horizontal navigation. Mobile keeps five high-frequency tabs — League, Ranking, Results, Fixtures and More — above the system navigation safe area. More exposes Player Pool, Owner Squads, Help and Rules.</p></div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="rules" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Business logic</p><h2>Core league rules</h2></div><span class="section-index">05</span></div>
+          <h3>Playing XI</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Rule</th><th>Default IPL 2026 value</th><th>Enforcement</th></tr></thead>
+              <tbody>
+                <tr><td>Squad size</td><td>Exactly 11 players</td><td>UI guidance and server rejection.</td></tr>
+                <tr><td>Role minimums</td><td>BA 2 · BO 2 · WK 1 · AL 1</td><td>Versioned lineup rule set selected for the fixture.</td></tr>
+                <tr><td>IPL team maximum</td><td>7 players</td><td>Calculated from current player/team membership.</td></tr>
+                <tr><td>Budget</td><td>₹100m</td><td>Sum of selection costs; bid price is informational and separate.</td></tr>
+                <tr><td>Captain</td><td>2×</td><td>Optional only when league rules permit; one player maximum.</td></tr>
+                <tr><td>Vice-captain</td><td>1.5×</td><td>Cannot be the captain.</td></tr>
+                <tr><td>Batting/Bowling Impact</td><td>BAI or BOI = 2× discipline</td><td>Cannot combine with C/VC on the same player.</td></tr>
+                <tr><td>Lock</td><td>Fixture-specific time</td><td>Server clock and fixture state decide whether submission is accepted.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Transfers</h3>
+          <div class="grid two">
+            <div class="mini-card accent-gold"><h4>Configured periods</h4><p class="small muted">IPL 2026 uses 105 league-stage transfers for M1–70 and 4 playoff transfers for M71–74. The first actual submission in each configured period is free.</p></div>
+            <div class="mini-card accent-green"><h4>What counts</h4><p class="small muted">The current submitted player IDs are compared with the latest prior valid submitted XI. Adding a different player counts; changing C/VC/BAI/BOI alone does not.</p></div>
+            <div class="mini-card accent-blue"><h4>Own players</h4><p class="small muted">Using or carrying an unchanged player does not create an extra transfer. Transfer accounting is lineup-difference based, not ownership-fee based.</p></div>
+            <div class="mini-card accent-purple"><h4>Authoritative result</h4><p class="small muted">The submission RPC serializes the chain and returns the server-calculated transfer count; the UI never supplies the final charge.</p></div>
+          </div>
+          <h3>Acquisition and roster</h3>
+          <ul>
+            <li>One player can have at most one owner inside a league; an open player has no league owner.</li>
+            <li>Selection cost drives XI budget. Auction bid price is stored separately and must not replace selection cost.</li>
+            <li>New or edited player selection cost cannot be lower than the current minimum selection cost already used by that IPL league pool.</li>
+            <li>Inactive players remain in history but cannot enter a new valid XI.</li>
+            <li>League format and competition-defining settings lock after play begins unless an explicit versioned workflow permits a future effective fixture.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="doc-section" id="workflows" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Behavior under change</p><h2>Critical workflows and edge cases</h2></div><span class="section-index">06</span></div>
+          <details open>
+            <summary>Submit or resubmit an unlocked XI</summary>
+            <div class="flow">
+              <div class="flow-step"><strong>Load the editing fixture</strong><span>The screen derives the carried XI, the latest saved submission and its valid baseline.</span></div>
+              <div class="flow-step"><strong>Edit and validate</strong><span>Eleven players, budget, roles, team cap, special restrictions and booster target are checked.</span></div>
+              <div class="flow-step"><strong>Warn about cascade</strong><span>If later unlocked XIs are submitted, the owner is told that resubmitting an earlier match will reset those saved teams.</span></div>
+              <div class="flow-step"><strong>Submit transactionally</strong><span><code>submit_lineup_with_transfer_result</code> locks the relevant chain, persists the XI and returns its authoritative transfer count.</span></div>
+              <div class="flow-step"><strong>Reset later unlocked submissions</strong><span>They are removed/refunded and will carry forward from the newly resubmitted XI. Locked submissions are never silently rewritten.</span></div>
+            </div>
+          </details>
+          <details>
+            <summary>Fixture lock and lineup reveal</summary>
+            <div><p>At the lock, no new client mutation can change the XI. Submitted teams become eligible for league-wide reveal. A skipped owner carries the rules-defined prior state but does not create a submission or consume a free submission benefit. Scores and standings remain pending until publication.</p></div>
+          </details>
+          <details>
+            <summary>No Result / abandoned match</summary>
+            <div>
+              <p>An administrator settles the fixture using <code>settle_no_result_match</code>. The match contributes zero fantasy points and no match ranking. Transfers and a consumed booster for that fixture are refunded, and that XI is removed from the carry-forward chain.</p>
+              <div class="warning-box"><strong>Two-match-day edge case</strong><p>If M4 becomes No Result after M5 has already locked, M5 remains fixed. Its transfer charge is recalculated against the latest prior valid XI — M3 in this example. If M5 is still unlocked, it is reset and carries M3 instead.</p></div>
+            </div>
+          </details>
+          <details>
+            <summary>Score calculation, review and publication</summary>
+            <div class="flow">
+              <div class="flow-step"><strong>Ingest trusted match facts</strong><span>Batting, bowling, fielding and result inputs are staged; source facts are not fantasy totals.</span></div>
+              <div class="flow-step"><strong>Resolve players and rule version</strong><span>Every fact maps to a canonical league player and the fixture's scoring rule set.</span></div>
+              <div class="flow-step"><strong>Calculate component points</strong><span>Batting, bowling, fielding, bonus and base totals remain explainable.</span></div>
+              <div class="flow-step"><strong>Apply XI markers and special rules</strong><span>C/VC, BAI/BOI, booster, ownership, Unique and royalty adjustments are applied from locked lineups.</span></div>
+              <div class="flow-step"><strong>Publish atomically</strong><span><code>publish_match_scores_safe</code> checks completeness, persists member totals, exposes results and updates standings.</span></div>
+              <div class="flow-step"><strong>Correct by explicit republish</strong><span>Corrections are versioned/audited; published history is not silently overwritten by client edits.</span></div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section class="doc-section" id="scoring" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Points engine</p><h2>Scoring, boosters, royalty and Unique</h2></div><span class="section-index">07</span></div>
+          <p class="lede">Scoring values are configuration, not universal constants. A published fixture resolves an effective scoring version so historical totals stay reproducible.</p>
+          <div class="grid two">
+            <div class="mini-card">
+              <h3>Explainable point components</h3>
+              <ul class="small">
+                <li>Batting: runs, boundaries, milestone, strike-rate and duck adjustments.</li>
+                <li>Bowling: wickets, wicket type/bonus, maiden and economy adjustments.</li>
+                <li>Fielding: catches, stumpings and run-out participation.</li>
+                <li>Bonus: configured match/participation awards.</li>
+                <li>Lineup multipliers: C, VC, BAI, BOI and 3X target.</li>
+                <li>Special adjustments: Unique deductions and separately credited ROY.</li>
+              </ul>
+            </div>
+            <div class="mini-card">
+              <h3>Booster inventory</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Code</th><th>Effect</th><th>Default use</th></tr></thead>
+                  <tbody>
+                    <tr><td>3X</td><td>Triple one targeted player.</td><td>Once across all phases.</td></tr>
+                    <tr><td>2UP</td><td>Double the submitted XI total.</td><td>Once in Phase 1 and once in Phase 2.</td></tr>
+                    <tr><td>SUP-TR</td><td>Super Transfer treatment for the fixture.</td><td>Once across all phases; hidden/rejected on a free lineup.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="small muted">Only one booster can be selected per match. It never carries automatically.</p>
+            </div>
+          </div>
+          <h3>Royalty</h3>
+          <div class="status-box"><p>When a borrower uses another owner's player, the owning member receives ROY only when the owner also submitted that same player in their own XI for the fixture. The borrower keeps the player's full fantasy contribution. Regular royalty is the greater of 5% or 5 points; marquee royalty is the greater of 15% or 15 points. Each borrower credit is rounded to a whole point, is non-negative and is stored separately from fantasy performance.</p></div>
+          <h3>Automatic Unique qualification</h3>
+          <div class="grid three">
+            <div class="mini-card accent-blue"><h4>Counted</h4><p class="small muted">Borrowed appearances in locked, scored XIs where that player's current IPL team is playing in the fixture.</p></div>
+            <div class="mini-card accent-gold"><h4>Excluded</h4><p class="small muted">Use by the owner, fixtures not involving the IPL team, No Result fixtures, unlocked drafts and unscored submissions.</p></div>
+            <div class="mini-card accent-purple"><h4>Threshold</h4><p class="small muted">Default limit is 56 qualifying uses. The player becomes Automatic Unique on the 57th use, effective from the next match.</p></div>
+          </div>
+          <p class="small muted">A borrower cannot assign restricted power roles to a Unique player; the owner may. Marquee status remains a separate label and rule path.</p>
+        </div>
+      </section>
+
+      <section class="doc-section" id="data" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Persistence</p><h2>Data design</h2></div><span class="section-index">08</span></div>
+          <p class="lede">The schema separates identity, competition configuration, fixture transactions and calculated outputs. IDs and foreign keys carry relationships; display names and totals are not used as identities.</p>
+          <div class="grid two">
+            <div class="data-domain"><h3>League identity</h3><p>Tenant and participation boundary.</p><code>leagues</code> <code>league_members</code> <code>league_templates</code> <code>league_format_configs</code></div>
+            <div class="data-domain"><h3>Cricket catalogue</h3><p>Shared player/team identity plus league-specific ownership and availability.</p><code>cricket_teams</code> <code>players</code> <code>league_players</code></div>
+            <div class="data-domain"><h3>Competition calendar</h3><p>Fixtures, phases and transfer-period definitions.</p><code>fixtures</code> <code>league_phases</code> <code>league_transfer_periods</code></div>
+            <div class="data-domain"><h3>Lineup transaction</h3><p>Submitted XI, selected players, transfer ledger and booster usage.</p><code>lineup_submissions</code> <code>lineup_players</code> <code>transfer_events</code> <code>lineup_boosters</code></div>
+            <div class="data-domain"><h3>Versioned rules</h3><p>Playing, scoring, booster and special-player behavior resolved for a fixture.</p><code>lineup_rule_sets</code> <code>scoring_rule_sets</code> <code>booster_rules</code> <code>special_player_rule_sets</code> <code>phase_special_players</code></div>
+            <div class="data-domain"><h3>Calculated results</h3><p>Per-player components, special adjustments and per-member fixture totals.</p><code>player_match_points</code> <code>special_player_score_adjustments</code> <code>member_match_scores</code></div>
+            <div class="data-domain"><h3>Read models</h3><p>Security-invoker views aggregate published totals without bypassing caller RLS.</p><code>league_standings</code> <code>league_phase_standings</code></div>
+            <div class="data-domain"><h3>Governance</h3><p>Append-oriented record of sensitive administrative and publication events.</p><code>audit_events</code></div>
+          </div>
+          <h3>Relationship summary</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Parent</th><th>Children / relationship</th><th>Integrity intent</th></tr></thead>
+              <tbody>
+                <tr><td>League</td><td>Members, players, fixtures, rules, phases, transfer periods</td><td>No cross-league access or calculation.</td></tr>
+                <tr><td>Fixture</td><td>Lineup submissions, player points, member scores</td><td>Own lock/state and effective rule versions.</td></tr>
+                <tr><td>Lineup submission</td><td>Exactly its selected lineup players and optional booster</td><td>Immutable after lock except explicit settlement/admin correction path.</td></tr>
+                <tr><td>League player</td><td>Shared player identity + league team/owner/cost/status</td><td>Ownership is league-local; history survives deactivation.</td></tr>
+                <tr><td>Published rule set</td><td>Applies from an explicit match number</td><td>New rules do not silently rewrite prior fixtures.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="warning-box" style="margin-top:16px"><strong>Migration rule</strong><p>Every production schema or function change must be a new file under <code>supabase/migrations</code>, paired with a read-only verifier when applicable. Never leave an untracked dashboard-only database change as the production source of truth.</p></div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="security" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Trust boundaries</p><h2>Security and permissions</h2></div><span class="section-index">09</span></div>
+          <div class="grid three">
+            <div class="mini-card accent-green"><h4>Authentication</h4><p class="small muted">Supabase email OTP. The Expo client persists only the authenticated session using AsyncStorage and a process lock.</p></div>
+            <div class="mini-card accent-blue"><h4>Authorization</h4><p class="small muted">RLS policies scope reads/writes to active league memberships. Admin RPCs verify <code>league_admin</code> server-side.</p></div>
+            <div class="mini-card accent-purple"><h4>Secrets</h4><p class="small muted"><code>EXPO_PUBLIC_*</code> variables are public. The client uses only the Supabase public/publishable key; never a service-role key.</p></div>
+          </div>
+          <h3>Role matrix</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Operation</th><th>Owner</th><th>League admin</th><th>Server / trusted operation</th></tr></thead>
+              <tbody>
+                <tr><td>Read own league state</td><td>Allowed by membership</td><td>Allowed</td><td>—</td></tr>
+                <tr><td>Submit own unlocked XI</td><td>Allowed via wrapper RPC</td><td>Allowed for own owner entry</td><td>Validates all rules and transfer chain</td></tr>
+                <tr><td>Edit league player / replacement</td><td>Denied</td><td>Allowed via audited RPC</td><td>Enforces current minimum cost</td></tr>
+                <tr><td>Publish league rules</td><td>Denied</td><td>Allowed before lock/effective boundary</td><td>Creates versioned configuration</td></tr>
+                <tr><td>Publish match scores</td><td>Denied</td><td>Allowed through safe wrapper</td><td>Completeness checks and atomic totals</td></tr>
+                <tr><td>Settle No Result</td><td>Denied</td><td>Allowed through settlement RPC</td><td>Refund/rebase/reset transaction</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Security controls to retain</h3>
+          <ul>
+            <li>RLS on every API-exposed table and security-invoker standings views.</li>
+            <li>Direct grants removed from lower-level submission/publication functions; client calls safe wrapper RPCs.</li>
+            <li>Tracked-secret scan in the release gate; signing credentials and provider secrets never enter Git.</li>
+            <li>Audit events for member, rule, ownership, player and score-publication changes.</li>
+            <li>Parameterized Supabase queries/RPCs; do not construct SQL in the client.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="doc-section" id="interfaces" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Server contracts</p><h2>Important RPC interfaces</h2></div><span class="section-index">10</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>RPC</th><th>Caller</th><th>Contract</th></tr></thead>
+              <tbody>
+                <tr><td><code>submit_lineup_with_transfer_result</code></td><td>Owner client</td><td>Validates and saves XI/roles/booster, serializes chain, handles future reset and returns authoritative transfer count.</td></tr>
+                <tr><td><code>publish_match_scores_safe</code></td><td>League admin</td><td>Completeness-gated, auditable scoring publication wrapper.</td></tr>
+                <tr><td><code>settle_no_result_match</code></td><td>League admin</td><td>Sets zero-result status, refunds, removes carry-forward effect and rebases later locked transfers.</td></tr>
+                <tr><td><code>publish_league_rules_effective</code></td><td>League admin</td><td>Publishes lineup/scoring versions from explicit effective match numbers.</td></tr>
+                <tr><td><code>publish_league_transfer_periods</code></td><td>League admin</td><td>Validates contiguous, non-overlapping periods and their limits/free-first flags.</td></tr>
+                <tr><td><code>publish_special_player_rules_v2</code></td><td>League admin</td><td>Versions Unique/royalty formulas, thresholds and minimum points.</td></tr>
+                <tr><td><code>special_player_labels_for_fixture</code></td><td>Authenticated client</td><td>Returns fixture-effective labels, including team-scoped Automatic Unique status.</td></tr>
+                <tr><td><code>add_league_replacement_player</code></td><td>League admin</td><td>Adds audited league-specific player while enforcing role, team, owner mode and minimum cost.</td></tr>
+                <tr><td><code>edit_league_player</code></td><td>League admin</td><td>Edits league player metadata/status without overwriting completed-auction bid history.</td></tr>
+                <tr><td><code>invite_league_member</code></td><td>League admin</td><td>Creates/updates a league-scoped invitation and later links it to the authenticated user.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small muted">Function definitions are versioned by migrations. A later migration may replace the body of an earlier function while preserving its public contract.</p>
+        </div>
+      </section>
+
+      <section class="doc-section" id="codebase" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Developer orientation</p><h2>Codebase map</h2></div><span class="section-index">11</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td><code>App.tsx</code></td><td>App shell, authentication, league picker, admin rules, team selection and responsive primary navigation.</td></tr>
+                <tr><td><code>SupabaseScreens.tsx</code></td><td>Production dashboard, rankings, fixtures, results, scorecard, player pool and owner squads.</td></tr>
+                <tr><td><code>supabase.ts</code></td><td>Environment validation and Supabase client/session configuration.</td></tr>
+                <tr><td><code>lineupWorkflowRules.ts</code></td><td>Pure client rule helpers for fixture editing/submission presentation.</td></tr>
+                <tr><td><code>scoringRules.ts</code></td><td>Pure scoring calculation utilities covered by unit tests.</td></tr>
+                <tr><td><code>scorecardData.ts</code> / <code>scorecardRules.ts</code></td><td>Scorecard shaping and cricket-specific display/calculation helpers.</td></tr>
+                <tr><td><code>uiTokens.ts</code> / <code>ownerTheme.ts</code></td><td>Visual tokens, responsive sizing and stable owner presentation colors.</td></tr>
+                <tr><td><code>supabase/migrations/</code></td><td>Canonical schema, policies, grants, functions, repair operations and version history.</td></tr>
+                <tr><td><code>supabase/verify_migration_*.sql</code></td><td>Read-only post-deployment assertions for specific migrations.</td></tr>
+                <tr><td><code>supabase/tests/</code></td><td>SQL integration/regression scenarios that require a migrated test database.</td></tr>
+                <tr><td><code>scripts/run-unit-tests.mjs</code></td><td>Executes the 36 pure rule tests without a browser/device.</td></tr>
+                <tr><td><code>app.json</code> / <code>eas.json</code></td><td>Expo identity, native package IDs, EAS project link, environments, Node runtime and versioning.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="warning-box" style="margin-top:16px"><strong>Known maintainability debt</strong><p><code>App.tsx</code> and <code>SupabaseScreens.tsx</code> remain large responsibility clusters. New work should prefer extracting cohesive screen modules, hooks and data adapters without changing the server-authoritative boundaries.</p></div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="qa" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Quality assurance</p><h2>QA strategy and acceptance matrix</h2></div><span class="section-index">12</span></div>
+          <h3>Automated release gate</h3>
+          <pre><code>nvm use
+npm ci
+npm run check:production</code></pre>
+          <p class="small muted">The production gate runs Expo Doctor, TypeScript, 36 unit rule tests, tracked-secret hygiene, web export, iOS/Android/web production exports and a critical production dependency audit.</p>
+          <h3>Critical scenario matrix</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Area</th><th>Scenario</th><th>Expected evidence</th></tr></thead>
+              <tbody>
+                <tr><td>Authentication</td><td>Invite accepted by correct email; non-member tries league URL.</td><td>Member can enter; non-member gets no league data.</td></tr>
+                <tr><td>XI rules</td><td>Invalid budget, count, role mix, team cap or restricted role.</td><td>Specific reason in UI and server rejection if UI is bypassed.</td></tr>
+                <tr><td>Transfers</td><td>Submit M3, M4, M5; resubmit unlocked M3.</td><td>Later unlocked submissions reset/refund and carry the new M3 XI.</td></tr>
+                <tr><td>Locked chain</td><td>M4 becomes No Result after M5 locks.</td><td>M4 refunded; M5 unchanged; M5 transfer count recomputed against M3.</td></tr>
+                <tr><td>Boosters</td><td>Reuse exhausted booster; choose 3X target outside XI; use SUP-TR on free lineup.</td><td>Rejected server-side with no inventory loss.</td></tr>
+                <tr><td>Scoring</td><td>Publish incomplete/mismatched score set.</td><td>Safe publisher blocks publication; standings remain unchanged.</td></tr>
+                <tr><td>Royalty</td><td>Borrower selects owned player; owner does/does not select same player.</td><td>ROY credited only when owner submitted the same player.</td></tr>
+                <tr><td>Automatic Unique</td><td>Use player outside their IPL team's fixtures or by owner.</td><td>Usage excluded; 57th qualifying borrowed usage activates next match.</td></tr>
+                <tr><td>Admin player</td><td>Add/edit cost below current pool minimum.</td><td>UI defaults to minimum and RPC refuses a lower value.</td></tr>
+                <tr><td>RLS</td><td>Owner attempts another owner's mutation or admin RPC.</td><td>Denied with no database change or leaked privileged data.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Device and layout matrix</h3>
+          <div class="grid three">
+            <div class="mini-card"><h4>Android physical</h4><p class="small muted">Samsung gesture and three-button navigation, safe-area bottom bar, keyboard/modal, More menu, offline recovery and APK upgrade.</p></div>
+            <div class="mini-card"><h4>iOS physical/simulator</h4><p class="small muted">Safe areas, OTP link handoff, keyboard/modal scrolling, notches, rotation policy and touch targets.</p></div>
+            <div class="mini-card"><h4>Responsive web</h4><p class="small muted">360, 768, 1024 and wide desktop widths; no truncated labels, hidden controls or unintended horizontal page scroll.</p></div>
+          </div>
+          <h3>Database deployment verification</h3>
+          <ol>
+            <li>Apply pending migrations in numeric order to a non-production environment.</li>
+            <li>Run each matching <code>supabase/verify_migration_*.sql</code> query and preserve its output.</li>
+            <li>Run SQL integration/regression scripts with admin and owner identities.</li>
+            <li>Confirm grants/RLS for both allowed and denied cases.</li>
+            <li>Exercise affected workflows in preview against the migrated environment.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="doc-section" id="release" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Mobile delivery</p><h2>Expo and EAS release model</h2></div><span class="section-index">13</span></div>
+          <p class="lede">Expo is the application runtime/toolchain. EAS is Expo's cloud build and release service: it compiles the JavaScript/TypeScript project into signed native Android/iOS artifacts without requiring the final build to happen on this Mac.</p>
+          <div class="release-lanes">
+            <div class="release-lane"><span class="lane-number">1</span><strong>Development</strong><p class="small muted"><code>npm start</code> runs Metro for rapid iteration. A simulator, Expo-compatible client or web browser connects to the local bundle.</p></div>
+            <div class="release-lane"><span class="lane-number">2</span><strong>Preview</strong><p class="small muted">EAS creates a signed internal-distribution APK. Install it directly on Android devices for QA; it is not a Play Store release.</p></div>
+            <div class="release-lane"><span class="lane-number">3</span><strong>Production</strong><p class="small muted">EAS creates a signed AAB. Upload/submit it to Google Play internal testing, then promote through closed/open/production tracks.</p></div>
+          </div>
+          <h3>Project identity</h3>
+          <div class="table-wrap">
+            <table>
+              <tbody>
+                <tr><td>EAS owner / project</td><td><code>haran-pandiyan-info-tech/cricketrivalriesleague</code></td></tr>
+                <tr><td>EAS project ID</td><td><code>c381c524-3edb-47c6-a37c-74ee2183080f</code></td></tr>
+                <tr><td>Android application ID</td><td><code>com.cpfl.mobile</code></td></tr>
+                <tr><td>iOS bundle identifier</td><td><code>com.cpfl.mobile</code></td></tr>
+                <tr><td>Version source</td><td>Remote EAS versioning with automatic build-number increments.</td></tr>
+                <tr><td>Runtime</td><td>Node 22.13.1; Expo <code>~57.0.12</code>; React Native 0.86.2.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>Environment variables</h3>
+          <p>Both EAS <strong>preview</strong> and <strong>production</strong> environments require:</p>
+          <pre><code>EXPO_PUBLIC_SUPABASE_URL=https://&lt;project&gt;.supabase.co
+EXPO_PUBLIC_SUPABASE_KEY=&lt;public-or-publishable-key&gt;</code></pre>
+          <div class="danger-box" style="margin-top:16px"><strong>Never put privileged secrets in EXPO_PUBLIC variables</strong><p>These values are compiled into the app and can be inspected by users. A Supabase <code>service_role</code> key, database password, Android keystore or provider credential must not be placed there or committed.</p></div>
+          <h3>Build commands</h3>
+          <pre><code># Signed APK for direct Android device testing
+npx eas-cli@latest build --profile preview --platform android
+
+# Signed production AAB for Google Play
+npx eas-cli@latest build --profile production --platform android
+
+# View recent cloud builds
+npx eas-cli@latest build:list --limit 5</code></pre>
+          <h3>Release sequence</h3>
+          <ol>
+            <li>Pull the intended commit and confirm the worktree is clean.</li>
+            <li>Run <code>npm ci</code> and <code>npm run check:production</code>.</li>
+            <li>Confirm EAS preview/production variables point to the intended Supabase environment.</li>
+            <li>Build preview APK, install on physical Android devices and complete QA acceptance.</li>
+            <li>Tag/record the accepted commit and create a production AAB.</li>
+            <li>Submit to Google Play internal testing; verify install, sign-in and production backend connectivity.</li>
+            <li>Promote gradually. Monitor authentication, Supabase errors, score publication and crash reports.</li>
+          </ol>
+          <div class="warning-box"><strong>APK versus AAB</strong><p>An APK is convenient for direct installation and QA. An AAB is the Google Play publishing format; Play generates optimized APKs for each device. A successful EAS build does not by itself publish the app.</p></div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="operations" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Runbook</p><h2>Operations, incident handling and rollback</h2></div><span class="section-index">14</span></div>
+          <div class="grid two">
+            <div class="mini-card"><h3>Before a match</h3><ul class="small"><li>Fixture teams, time and lock state verified.</li><li>Current playing/scoring/special rule versions published.</li><li>Admin and owner access tested.</li><li>Score import template/provider mapping ready.</li></ul></div>
+            <div class="mini-card"><h3>After a match</h3><ul class="small"><li>Score facts and player mappings complete.</li><li>Point breakdown reviewed against source.</li><li>Safe publication succeeds atomically.</li><li>Winner, standings, ROY and player history spot-checked.</li></ul></div>
+            <div class="mini-card"><h3>No Result</h3><ul class="small"><li>Confirm official cancellation/abandonment.</li><li>Settle once through the dedicated RPC.</li><li>Verify refunds, future unlocked resets and locked rebase.</li><li>Communicate affected owner changes.</li></ul></div>
+            <div class="mini-card"><h3>Scoring correction</h3><ul class="small"><li>Record source/evidence and affected fixture.</li><li>Correct staged facts, not ad-hoc totals.</li><li>Republish through the safe workflow.</li><li>Confirm audit record and downstream standings.</li></ul></div>
+          </div>
+          <h3>Rollback model</h3>
+          <ul>
+            <li><strong>Client:</strong> stop promotion and restore the previous accepted Play release. Native rollback does not roll back the database.</li>
+            <li><strong>Database:</strong> prefer forward-fix migrations. Destructive schema rollback requires explicit impact analysis because historical XIs/scores must remain reproducible.</li>
+            <li><strong>Rules:</strong> publish a future effective version; do not mutate the rule version already used by a completed fixture.</li>
+            <li><strong>Scores:</strong> use the correction/republish path with audit evidence; never directly edit visible standings.</li>
+          </ul>
+          <h3>Observability baseline</h3>
+          <p>Retain EAS build logs, Supabase database/auth logs, <code>audit_events</code>, score-publication evidence and QA artifacts for every release. Before a wider public launch, add centralized crash/error reporting and product telemetry with privacy review.</p>
+        </div>
+      </section>
+
+      <section class="doc-section" id="risks" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Readiness</p><h2>Known gaps, risks and next gates</h2></div><span class="section-index">15</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Risk / gap</th><th>Impact</th><th>Required treatment</th></tr></thead>
+              <tbody>
+                <tr><td>No licensed automated score feed</td><td>Manual effort and mapping/error risk.</td><td>Select authorized provider; preserve staged facts/review/publish boundary.</td></tr>
+                <tr><td>Production and preview share wrong backend accidentally</td><td>Test data or unreviewed changes may affect live league.</td><td>Use explicit EAS environments, inspect build logs and establish a staging Supabase project.</td></tr>
+                <tr><td>Large UI source files</td><td>Regression and review complexity.</td><td>Incrementally extract screens/hooks/adapters with automated coverage.</td></tr>
+                <tr><td>Transitive Expo/Metro audit findings</td><td>Build-tool dependency advisories.</td><td>Track compatible Expo upgrades; do not force an unsupported breaking downgrade. Critical audit remains the release gate.</td></tr>
+                <tr><td>Limited device coverage</td><td>Safe-area, modal, keyboard or label defects may escape.</td><td>Complete Android/iOS physical-device matrix before production promotion.</td></tr>
+                <tr><td>Live auction deferred</td><td>Auction cannot be run end-to-end in the app.</td><td>Continue trusted import/admin ownership or implement a separately reviewed realtime auction service.</td></tr>
+                <tr><td>Monitoring not centralized</td><td>Slower detection of client/runtime errors.</td><td>Add crash reporting and alerting with environment/release tags before broad use.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="status-box" style="margin-top:16px"><strong>Production decision</strong><p>A green EAS build means the native artifact compiled and was signed. Production readiness additionally requires a migrated/verified backend, correct environment variables, device acceptance, data-import rehearsal, operational ownership and a controlled Play testing rollout.</p></div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="glossary" data-searchable>
+        <div class="section-card">
+          <div class="section-heading"><div><p class="eyebrow">Reference</p><h2>Glossary and source documents</h2></div><span class="section-index">16</span></div>
+          <div class="grid two">
+            <div>
+              <h3>Glossary</h3>
+              <div class="table-wrap">
+                <table>
+                  <tbody>
+                    <tr><td>Owner</td><td>A participating league member/franchise, not merely an authenticated account.</td></tr>
+                    <tr><td>Owned player</td><td>A league player assigned to one owner in that league.</td></tr>
+                    <tr><td>Open player</td><td>A league player with no owner assignment.</td></tr>
+                    <tr><td>Marquee</td><td>A special player label with its own royalty/rule treatment.</td></tr>
+                    <tr><td>Unique</td><td>A player subject to configured borrower fees and power-role restrictions.</td></tr>
+                    <tr><td>Automatic Unique</td><td>A label activated after the configured number of qualifying borrowed uses.</td></tr>
+                    <tr><td>ROY</td><td>Royalty credited separately to a player's owning member.</td></tr>
+                    <tr><td>BAI / BOI</td><td>Batting Impact / Bowling Impact lineup role.</td></tr>
+                    <tr><td>No Result</td><td>Cancelled/abandoned fixture settled without fantasy ranking or carried XI effect.</td></tr>
+                    <tr><td>EAS</td><td>Expo Application Services: cloud builds, signing, submission and release infrastructure.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <h3>Repository references</h3>
+              <ul>
+                <li><a href="../SPEC.md">Product specification</a></li>
+                <li><a href="../confirmed-rules.md">Confirmed detailed rules</a></li>
+                <li><a href="../DATA_MODEL.md">Configurable data model</a></li>
+                <li><a href="../team-selection-flow.md">Team selection workflow</a></li>
+                <li><a href="../points-calculation.md">Points calculation</a></li>
+                <li><a href="USER_GUIDE.md">User guide</a></li>
+                <li><a href="no-result-settlement.md">No Result settlement</a></li>
+                <li><a href="../PRODUCTION_READINESS.md">Production readiness</a></li>
+                <li><a href="../AGENTS.md">Development guardrails</a></li>
+                <li><a href="../supabase/README.md">Supabase deployment notes</a></li>
+                <li><a href="../supabase/tests/README.md">Database test guide</a></li>
+              </ul>
+              <h3>Review ownership</h3>
+              <p class="small muted">Product/BA owns rule intent and terminology. Engineering owns technical accuracy, migrations and interface contracts. QA owns evidence and acceptance coverage. League operations owns match data, score review, No Result settlement and publication readiness.</p>
+            </div>
+          </div>
+          <p class="small muted" style="margin-top:24px">Handbook baseline: repository state on 13 August 2026. Update this page whenever a release changes a user-visible rule, schema domain, trust boundary, release command or operational workflow.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="document-footer"><strong>Cricket Rivalries League System Handbook</strong><br>Self-contained repository documentation for product, development, QA and release review.</footer>
+
+  <script>
+    (() => {
+      const search = document.getElementById('doc-search');
+      const sections = Array.from(document.querySelectorAll('[data-searchable]'));
+      const noResults = document.getElementById('no-results');
+      const expandButton = document.getElementById('expand-button');
+      const details = Array.from(document.querySelectorAll('details'));
+      const navLinks = Array.from(document.querySelectorAll('.side-nav a'));
+
+      const normalize = value => value.toLowerCase().replace(/\s+/g, ' ').trim();
+      search.addEventListener('input', () => {
+        const query = normalize(search.value);
+        let shown = 0;
+        sections.forEach(section => {
+          const matches = !query || normalize(section.textContent).includes(query);
+          section.hidden = !matches;
+          if (matches) shown += 1;
+        });
+        noResults.style.display = shown ? 'none' : 'block';
+      });
+
+      expandButton.addEventListener('click', () => {
+        const next = expandButton.getAttribute('aria-pressed') !== 'true';
+        expandButton.setAttribute('aria-pressed', String(next));
+        expandButton.firstChild.textContent = next ? 'Collapse ' : 'Expand ';
+        details.forEach(item => { item.open = next; });
+      });
+
+      const observer = new IntersectionObserver(entries => {
+        const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        navLinks.forEach(link => link.classList.toggle('active', link.getAttribute('href') === `#${visible.target.id}`));
+      }, { rootMargin: '-15% 0px -70% 0px', threshold: [0, .25, .5] });
+      sections.forEach(section => observer.observe(section));
+    })();
+  </script>
+</body>
+</html>
