@@ -13,8 +13,10 @@ import { userActionError } from "./errorMessages";
 import { boosterForFixture, countLineupChanges, firstMissingOpenPriorMatch, fixtureStripStatusLabel, hasSubmittedInTransferPeriod, isFreeTransferSubmission, isLineupLocked, isNoResultFixture, isPowerRoleRestricted, isSuperTransferAvailable, lineupSubmitActionLabel, selectSingleMatchBooster } from "./lineupWorkflowRules";
 import { CARD_SHADOW, UI_TOKENS, normalizeUiStyles } from "./uiTokens";
 import { previousNavigation, recordNavigation } from "./navigationHistory";
+import { CommunityScreen, useLeagueChatUnread, useLeagueHeartbeat } from "./CommunityScreen";
+import { useChatNotificationRouter } from "./chatNotifications";
 
-type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Help" | "Admin";
+type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Community" | "Help" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
 type BoosterCode = "3X" | "2UP" | "SUP-TR" | "";
 type PlayerRoleFilter = "ALL" | Role;
@@ -32,10 +34,10 @@ type DatabaseMembership = {
 };
 type SelectionRules = { version: number; effective_from_match_number: number; lineup_size: number; lineup_budget: number; min_batters: number; min_bowlers: number; min_wicketkeepers: number; min_all_rounders: number; max_from_one_team: number; captain_multiplier: number; vice_captain_multiplier: number };
 
-const standardTabs: Tab[] = ["Team", "Ranking", "History", "Matches", "PlayerSquad", "Squads", "Help", "Admin"];
+const standardTabs: Tab[] = ["Team", "Ranking", "History", "Matches", "PlayerSquad", "Squads", "Community", "Help", "Admin"];
 const mobilePrimaryTabs: Tab[] = ["Team", "Ranking", "History", "Matches"];
-const mobileMoreTabs: Tab[] = ["PlayerSquad", "Squads", "Help", "Admin"];
-const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Matches: "Fixtures", Ranking: "Ranking", History: "Results", PlayerSquad: "Player Pool", Squads: "Owner Squads", Help: "Help", Admin: "Rules" };
+const mobileMoreTabs: Tab[] = ["PlayerSquad", "Squads", "Community", "Help", "Admin"];
+const tabLabels: Partial<Record<Tab, string>> = { Team: "League", Matches: "Fixtures", Ranking: "Ranking", History: "Results", PlayerSquad: "Player Pool", Squads: "Owner Squads", Community: "Chatroom", Help: "Help", Admin: "Rules" };
 const IPL_2026_DATABASE_ID = "10000000-0000-4000-8000-000000002026";
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
 const useActionGuard = () => {
@@ -136,7 +138,19 @@ function LeagueEmblem({ league }: { league: DatabaseMembership["league"] }) {
   </View>;
 }
 
-function CricketTabIcon({ item, active }: { item: Tab; active: boolean }) {
+function ChatroomTabIcon({ active }: { active: boolean }) {
+  const color = active ? UI.accent : UI.primary;
+  return <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={s.chatroomTabIcon}>
+    <View style={[s.chatroomTabBodySide, s.chatroomTabBodyLeft, { borderColor: color }]} />
+    <View style={[s.chatroomTabBodySide, s.chatroomTabBodyRight, { borderColor: color }]} />
+    <View style={[s.chatroomTabBodyCenter, { borderColor: color }]} />
+    <View style={[s.chatroomTabHeadSide, s.chatroomTabHeadLeft, { borderColor: color }]} />
+    <View style={[s.chatroomTabHeadSide, s.chatroomTabHeadRight, { borderColor: color }]} />
+    <View style={[s.chatroomTabHeadCenter, { borderColor: color }]} />
+  </View>;
+}
+
+function CricketTabIcon({ item, active, badgeCount = 0 }: { item: Tab; active: boolean; badgeCount?: number }) {
   const identity: Record<Tab, { glyph: string }> = {
     Home: { glyph: "⌂" },
     Ranking: { glyph: "1·2" },
@@ -145,14 +159,16 @@ function CricketTabIcon({ item, active }: { item: Tab; active: boolean }) {
     PlayerSquad: { glyph: "◎" },
     Squads: { glyph: "◉" },
     History: { glyph: "✓" },
+    Community: { glyph: "" },
     Help: { glyph: "?" },
     Admin: { glyph: "≡" },
     Auction: { glyph: "◆" },
   };
   const icon = identity[item];
   return <View style={[s.navIconShell, { backgroundColor: active ? UI.primary : UI.primarySoft }, active && s.navIconShellActive]}>
-    <Text style={[s.navIconGlyph, { color: active ? UI.accent : UI.primary }, (item === "Team" || item === "Ranking") && s.navIconGlyphSmall]}>{icon.glyph}</Text>
+    {item === "Community" ? <ChatroomTabIcon active={active} /> : <Text style={[s.navIconGlyph, { color: active ? UI.accent : UI.primary }, (item === "Team" || item === "Ranking") && s.navIconGlyphSmall]}>{icon.glyph}</Text>}
     {item === "Matches" ? <View style={[s.navIconCalendarTop, { backgroundColor: active ? UI.accent : UI.primary }]} /> : null}
+    {badgeCount > 0 ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={s.navUnreadBadge}><Text style={s.navUnreadBadgeText}>{badgeCount > 99 ? "99+" : badgeCount}</Text></View> : null}
   </View>;
 }
 
@@ -276,6 +292,8 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const activeLeague = activeMembership?.league;
   const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
   const leagueDatabaseId = activeLeague?.id ?? "";
+  useLeagueHeartbeat(leagueDatabaseId, activeMembership?.id ?? "");
+  const chatUnread = useLeagueChatUnread(leagueDatabaseId, activeMembership?.id ?? "");
   const tabs = ownershipEnabled === false ? standardTabs.filter(item => item !== "Squads") : standardTabs;
   const showMobileNavigation = Boolean(activeLeague && tab !== "Home" && useMobileNavigation);
   const allowedBackTabs: Tab[] = ["Home", ...tabs];
@@ -289,6 +307,20 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     setTabHistory(history => recordNavigation(history, tab, destination));
     setTab(destination);
   };
+  useChatNotificationRouter((route) => {
+    const destinationMembership = memberships.find(item => item.league_id === route.leagueId && item.status === "active");
+    if (!destinationMembership) return;
+    setShowMobileMore(false);
+    setActiveLeagueId(route.leagueId);
+    if (route.type === "match") {
+      setRequestedTeamFixtureId(route.fixtureId);
+      setTabHistory(history => recordNavigation(history, tab, "Team"));
+      setTab("Team");
+    } else {
+      setTabHistory(history => recordNavigation(history, tab, "Community"));
+      setTab("Community");
+    }
+  });
   const replaceTab = (destination: Tab) => {
     if (destination === tab) return;
     setTab(destination);
@@ -378,7 +410,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
       else if (data?.length) setSelectionRuleVersions(data as SelectionRules[]);
     });
   }, [tab, leagueDatabaseId]);
-  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); navigateToTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(""); navigateToTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} requestedScorecardFixtureId={requestedScorecardFixtureId} scorecardBackRequest={historyScorecardBackRequest} onScorecardStateChange={setHistoryScorecardOpen} onCloseRequestedScorecard={() => setRequestedScorecardFixtureId("")} /> : tab === "Help" ? <HelpScreen openTeam={() => navigateToTab("Team")} openFixtures={() => navigateToTab("Matches")} openHistory={() => navigateToTab("History")} openRules={() => navigateToTab("Admin")} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView key={`ranking:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView key={`players:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} openScorecard={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(fixtureId); navigateToTab("History"); }} /></ScrollView> : tab === "Squads" ? <ScrollView key={`squads:${leagueDatabaseId}`} contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView key={`rules:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => navigateToTab("Team")} /></ScrollView>;
+  const leagueContent = tab === "Home" || !activeLeague ? <LeaguePicker memberships={memberships} activeLeagueId={activeLeagueId} onSelect={selectLeague} onChanged={refreshMemberships} /> : tab === "Team" ? <TeamSelection key={leagueDatabaseId} requestedFixtureId={requestedTeamFixtureId} leagueId={leagueDatabaseId} memberId={activeMembership.id} ownershipEnabled={ownershipEnabled !== false} ownerName={memberName} roster={leagueRoster} fixtures={teamFixtures} ruleVersions={selectionRuleVersions} rulesLoadMessage={rulesLoadMessage} selected={selected} setSelected={setSelected} captain={captain} setCaptain={setCaptain} vice={vice} setVice={setVice} submitted={lineupSubmitted} setSubmitted={setLineupSubmitted} impactPlayer={impactPlayer} setImpactPlayer={setImpactPlayer} impactType={impactType} setImpactType={setImpactType} boosterCode={boosterCode} setBoosterCode={setBoosterCode} boosterPlayer={boosterPlayer} setBoosterPlayer={setBoosterPlayer} /> : tab === "Matches" ? <ProductionMatches leagueId={leagueDatabaseId} memberId={activeMembership.id} roster={leagueRoster} availableFixtureIds={teamFixtures.map(match => match.databaseId)} openTeam={(fixtureId) => { setRequestedTeamFixtureId(fixtureId); navigateToTab("Team"); }} openHistory={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(""); navigateToTab("History"); }} /> : tab === "History" ? <ProductionHistory leagueId={leagueDatabaseId} currentOwner={memberName} requestedFixtureId={requestedHistoryFixtureId} requestedScorecardFixtureId={requestedScorecardFixtureId} scorecardBackRequest={historyScorecardBackRequest} onScorecardStateChange={setHistoryScorecardOpen} onCloseRequestedScorecard={() => setRequestedScorecardFixtureId("")} /> : tab === "Community" ? <CommunityScreen leagueId={leagueDatabaseId} currentMemberId={activeMembership.id} currentMemberName={memberName} canModerate={activeMembership.role === "league_admin"} unreadMessages={chatUnread.unreadMessages} unreadMentions={chatUnread.unreadMentions} pushMentionsEnabled={chatUnread.pushMentionsEnabled} onUnreadRefresh={chatUnread.refresh} /> : tab === "Help" ? <HelpScreen openTeam={() => navigateToTab("Team")} openFixtures={() => navigateToTab("Matches")} openHistory={() => navigateToTab("History")} openRules={() => navigateToTab("Admin")} /> : tab === "Admin" ? <LeagueAdminScreen leagueId={leagueDatabaseId} leagueName={activeLeague.name} canEdit={activeMembership.role === "league_admin"} onLeaguesChanged={refreshMemberships} /> : tab === "Ranking" ? <ScrollView key={`ranking:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionRanking leagueId={leagueDatabaseId} currentOwner={memberName} /></ScrollView> : tab === "PlayerSquad" ? <ScrollView key={`players:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionPlayerSquad leagueId={leagueDatabaseId} canEdit={activeMembership.role === "league_admin"} onAvailabilityChanged={() => setRosterRefreshVersion(version => version + 1)} openScorecard={(fixtureId) => { setRequestedHistoryFixtureId(fixtureId); setRequestedScorecardFixtureId(fixtureId); navigateToTab("History"); }} /></ScrollView> : tab === "Squads" ? <ScrollView key={`squads:${leagueDatabaseId}`} contentContainerStyle={s.content}><OwnerTabContent leagueId={leagueDatabaseId} currentOwner={memberName} roster={leagueRoster} /></ScrollView> : <ScrollView key={`rules:${leagueDatabaseId}`} contentContainerStyle={s.content}><ProductionDashboard leagueId={leagueDatabaseId} leagueName={activeLeague.name} memberName={memberName} openTeam={() => navigateToTab("Team")} /></ScrollView>;
   return <SafeAreaView edges={showMobileNavigation ? ["top", "left", "right"] : ["top", "bottom", "left", "right"]} style={s.safe}>
     <StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} />
     <View style={s.appShell}>
@@ -387,8 +419,9 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
         const active = tab === item;
         const accent = tabAccent(item);
         const label = tabLabels[item] ?? item;
-        return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.topNavigationItem, active && { backgroundColor: `${accent}16`, borderColor: accent }]} onPress={() => navigateToTab(item)}>
-          <CricketTabIcon item={item} active={active} />
+        const unreadLabel = item === "Community" && chatUnread.unreadMentions ? `, ${chatUnread.unreadMentions} unread mentions` : "";
+        return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${unreadLabel}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.topNavigationItem, active && { backgroundColor: `${accent}16`, borderColor: accent }]} onPress={() => navigateToTab(item)}>
+          <CricketTabIcon item={item} active={active} badgeCount={item === "Community" ? chatUnread.unreadMentions : 0} />
           <Text style={[s.topNavigationLabel, active && { color: tabTextAccent(item) }]}>{label}</Text>
           {active ? <View pointerEvents="none" style={[s.topNavigationIndicator, { backgroundColor: accent }]} /> : null}
         </TouchableOpacity>;
@@ -400,13 +433,13 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
           const accent = tabAccent(item);
           const label = tabLabels[item] ?? item;
           return <TouchableOpacity key={item} accessibilityRole="tab" accessibilityLabel={`${label}${active ? ", selected" : ""}`} accessibilityState={{ selected: active }} style={[s.mobilePrimaryTab, active && s.mobilePrimaryTabActive]} onPress={() => navigateToTab(item)}>
-            <CricketTabIcon item={item} active={active} />
+            <CricketTabIcon item={item} active={active} badgeCount={item === "Community" ? chatUnread.unreadMentions : 0} />
             <Text style={[s.mobilePrimaryTabLabel, active && { color: tabTextAccent(item) }]}>{label}</Text>
             {active ? <View pointerEvents="none" style={[s.mobilePrimaryIndicator, { backgroundColor: accent }]} /> : null}
           </TouchableOpacity>;
         })}
-        <TouchableOpacity accessibilityRole="tab" accessibilityLabel={`More${mobileMoreTabs.includes(tab) ? ", selected" : ""}`} accessibilityState={{ selected: mobileMoreTabs.includes(tab) }} style={[s.mobilePrimaryTab, mobileMoreTabs.includes(tab) && s.mobilePrimaryTabActive]} onPress={() => setShowMobileMore(true)}>
-          <View style={[s.navIconShell, { backgroundColor: mobileMoreTabs.includes(tab) ? tabAccent(tab) : "#EDF1F5" }]}><Text style={[s.mobileMoreGlyph, mobileMoreTabs.includes(tab) && s.mobileMoreGlyphActive]}>•••</Text></View>
+        <TouchableOpacity accessibilityRole="tab" accessibilityLabel={`More${chatUnread.unreadMentions ? `, ${chatUnread.unreadMentions} unread chat mentions` : ""}${mobileMoreTabs.includes(tab) ? ", selected" : ""}`} accessibilityState={{ selected: mobileMoreTabs.includes(tab) }} style={[s.mobilePrimaryTab, mobileMoreTabs.includes(tab) && s.mobilePrimaryTabActive]} onPress={() => setShowMobileMore(true)}>
+          <View style={[s.navIconShell, { backgroundColor: mobileMoreTabs.includes(tab) ? tabAccent(tab) : "#EDF1F5" }]}><Text style={[s.mobileMoreGlyph, mobileMoreTabs.includes(tab) && s.mobileMoreGlyphActive]}>•••</Text>{chatUnread.unreadMentions > 0 ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={s.navUnreadBadge}><Text style={s.navUnreadBadgeText}>{chatUnread.unreadMentions > 99 ? "99+" : chatUnread.unreadMentions}</Text></View> : null}</View>
           <Text style={[s.mobilePrimaryTabLabel, mobileMoreTabs.includes(tab) && { color: tabTextAccent(tab) }]}>More</Text>
           {mobileMoreTabs.includes(tab) ? <View pointerEvents="none" style={[s.mobilePrimaryIndicator, { backgroundColor: tabAccent(tab) }]} /> : null}
         </TouchableOpacity>
@@ -420,7 +453,8 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
               const active = tab === item;
               const accent = tabAccent(item);
               const label = tabLabels[item] ?? item;
-              return <TouchableOpacity key={item} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} style={[s.mobileMoreItem, active && { backgroundColor: `${accent}16`, borderColor: `${accent}55` }]} onPress={() => navigateToTab(item)}><CricketTabIcon item={item} active={active} /><Text style={[s.mobileMoreItemLabel, active && { color: tabTextAccent(item) }]}>{label}</Text><Text style={[s.mobileMoreArrow, active && { color: tabTextAccent(item) }]}>{active ? "✓" : "›"}</Text></TouchableOpacity>;
+              const badgeCount = item === "Community" ? chatUnread.unreadMentions : 0;
+              return <TouchableOpacity key={item} accessibilityRole="button" accessibilityLabel={`${label}${badgeCount ? `, ${badgeCount} unread mentions` : ""}`} accessibilityState={{ selected: active }} style={[s.mobileMoreItem, active && { backgroundColor: `${accent}16`, borderColor: `${accent}55` }]} onPress={() => navigateToTab(item)}><CricketTabIcon item={item} active={active} badgeCount={badgeCount} /><Text style={[s.mobileMoreItemLabel, active && { color: tabTextAccent(item) }]}>{label}</Text>{badgeCount ? <View style={s.mobileMoreUnreadPill}><Text style={s.mobileMoreUnreadText}>{badgeCount > 99 ? "99+" : badgeCount}</Text></View> : null}<Text style={[s.mobileMoreArrow, active && { color: tabTextAccent(item) }]}>{active ? "✓" : "›"}</Text></TouchableOpacity>;
             })}
             <View style={s.mobileMoreDivider} />
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Sign out" style={s.mobileMoreSignOut} onPress={() => supabase.auth.signOut()}><Text style={s.mobileMoreSignOutText}>Sign out</Text></TouchableOpacity>
@@ -738,7 +772,7 @@ function OwnerTabContent({ leagueId, currentOwner, roster }: { leagueId: string;
   </>;
 }
 
-type HelpTopicId = "navigation" | "lineup" | "ownership" | "transfers" | "submission" | "roles" | "boosters" | "special" | "scoring" | "results" | "noresult" | "defaults" | "administration";
+type HelpTopicId = "navigation" | "community" | "lineup" | "ownership" | "transfers" | "submission" | "roles" | "boosters" | "special" | "scoring" | "results" | "noresult" | "defaults" | "administration";
 type HelpTopic = { id: HelpTopicId; icon: string; title: string; summary: string; bullets: string[] };
 
 const helpTopics: HelpTopic[] = [
@@ -748,7 +782,21 @@ const helpTopics: HelpTopic[] = [
       "League is the main match sheet: choose a fixture, build the Selected XI, review transfers and submit.",
       "Ranking shows Overall and phase tables. Results contains match records, revealed owner XIs and published point breakdowns.",
       "Fixtures shows match time, lock/status and your submission state. Player Pool shows eligibility; Owner Squads shows auction ownership.",
-      "Rules is the live, league-specific configuration. On mobile, Player Pool, Owner Squads, Help and Rules are under More.",
+      "Rules is the live, league-specific configuration. On mobile, Player Pool, Owner Squads, Chatroom, Help and Rules are under More.",
+    ],
+  },
+  {
+    id: "community", icon: "👥", title: "Chatroom", summary: "See who is active and talk privately with your league.",
+    bullets: [
+      "The member board lists active members of the selected league. Online status is approximate and refreshes while a member has the app open.",
+      "Chatroom messages are private to the selected league. A member of another league cannot read or post in this room.",
+      "Type @ and choose a member to tag them. Exact tags are highlighted and create an unread mention badge on Chatroom (and More on mobile).",
+      "Choose Everyone after typing @ to notify every other active member in this league. The @everyone broadcast is limited to once per minute per sender.",
+      "Installed iOS and Android apps can opt in to private mention alerts. Tapping an alert opens the correct league chat; blocked phone permissions do not disable in-app badges.",
+      "Open Fixtures to enable match reminders independently for 24 hours and 30 minutes before the official start. Push is configured in the installed app; optional email appears after a verified sender is enabled.",
+      "Tapping a match reminder opens the correct league fixture. Started, cancelled and abandoned fixtures are skipped.",
+      "You may remove your own message. A league administrator may remove any message for moderation; removed messages remain visibly marked.",
+      "The latest 100 messages are shown. Messages are plain text, limited to 500 characters, and protected by server-side rate limits.",
     ],
   },
   {
@@ -2794,6 +2842,10 @@ const s = StyleSheet.create(normalizeUiStyles({
   mobileMoreDivider: { height: 1, backgroundColor: "#E0E6E2", marginVertical: 12 },
   mobileMoreSignOut: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: "#E4C7C1", backgroundColor: "#FFF5F2", alignItems: "center", justifyContent: "center" },
   mobileMoreSignOutText: { color: "#8A4035", fontSize: 12, fontWeight: "900" },
+  navUnreadBadge: { position: "absolute", top: -5, right: -7, minWidth: 17, height: 17, borderRadius: 9, paddingHorizontal: 4, backgroundColor: "#D83A52", borderWidth: 2, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center", zIndex: 4 },
+  navUnreadBadgeText: { color: "#FFFFFF", fontSize: 7, lineHeight: 9, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  mobileMoreUnreadPill: { minWidth: 25, height: 22, borderRadius: 11, paddingHorizontal: 7, backgroundColor: "#D83A52", alignItems: "center", justifyContent: "center" },
+  mobileMoreUnreadText: { color: "#FFFFFF", fontSize: 9, fontWeight: "900", fontVariant: ["tabular-nums"] },
   homeIcon: { width: 25, height: 25, alignItems: "center", justifyContent: "flex-end" },
   homeIconRoof: { position: "absolute", top: 1, width: 18, height: 18, backgroundColor: UI.primaryDeep, transform: [{ rotate: "45deg" }], borderRadius: 2 },
   homeIconBody: { width: 20, height: 16, backgroundColor: UI.primaryDeep, alignItems: "center", justifyContent: "flex-end" },
@@ -2825,6 +2877,15 @@ const s = StyleSheet.create(normalizeUiStyles({
   navIconShellActive: { shadowColor: "#111827", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4, elevation: 3 },
   navIconGlyph: { fontSize: 20, lineHeight: 23, fontWeight: "900", textAlign: "center" },
   navIconGlyphSmall: { fontSize: 12, letterSpacing: -0.5 },
+  chatroomTabIcon: { width: 25, height: 21, position: "relative" },
+  chatroomTabHeadCenter: { position: "absolute", top: 0, left: 8.5, width: 8, height: 8, borderRadius: 4, borderWidth: 2 },
+  chatroomTabHeadSide: { position: "absolute", top: 4, width: 6, height: 6, borderRadius: 3, borderWidth: 1.5 },
+  chatroomTabHeadLeft: { left: 0 },
+  chatroomTabHeadRight: { right: 0 },
+  chatroomTabBodyCenter: { position: "absolute", left: 5, bottom: 0, width: 15, height: 9, borderWidth: 2, borderBottomWidth: 0, borderTopLeftRadius: 8, borderTopRightRadius: 8 },
+  chatroomTabBodySide: { position: "absolute", bottom: 1, width: 8, height: 7, borderWidth: 1.5, borderBottomWidth: 0, borderTopLeftRadius: 5, borderTopRightRadius: 5 },
+  chatroomTabBodyLeft: { left: 0 },
+  chatroomTabBodyRight: { right: 0 },
   navIconCalendarTop: { position: "absolute", top: 8, left: 9, right: 9, height: 2, borderRadius: 1, opacity: 0.9 },
   leagueCardModern: { overflow: "hidden", borderRadius: 22, paddingLeft: 18, paddingVertical: 17, shadowColor: "#001A12", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 15, elevation: 7 },
   leagueCardAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 6 },

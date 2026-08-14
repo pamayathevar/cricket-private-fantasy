@@ -8,6 +8,7 @@ import { fixtureOwnerAction, fixtureOwnerActionLabel, isNoResultFixture } from "
 import { latestPublishedPlayerPoints, scorecardDismissalLabel, scorecardForFixture, seededPlayerPointDetails, seededPlayerPoints, seededPlayerStats } from "./scorecardData";
 import { calculatePointDetails, type PlayerMatchStats } from "./scoringRules";
 import { CARD_SHADOW, UI_TOKENS, normalizeUiStyles } from "./uiTokens";
+import { MatchReminderSettings } from "./MatchReminderSettings";
 
 const OWNER_FONT = Platform.select({ ios: "Georgia", android: "serif", default: "serif" });
 const fmt = (value: unknown) => Math.round(Number(value ?? 0)).toLocaleString("en-US");
@@ -616,6 +617,7 @@ export function ProductionMatches({ leagueId, memberId, roster, availableFixture
       {matches.length ? <View style={[x.fixtureHeroStats, compact && x.fixtureHeroStatsCompact]}><FixtureHeroStat label="FIXTURES" value={matches.length} /><FixtureHeroStat label="UPCOMING" value={upcomingCount} /><FixtureHeroStat label="ACTIVE" value={activeCount} /><FixtureHeroStat label="PUBLISHED" value={publishedCount} /></View> : null}
       {actionableMatch ? <View style={[x.fixtureHeroAction, compact && x.fixtureHeroActionCompact]}><View style={x.fixtureHeroActionMain}><Text style={x.fixtureHeroActionLabel}>{actionableSubmission ? "NEXT LINEUP" : "ACTION REQUIRED"}</Text><View style={x.fixtureHeroTeams}><Text style={x.fixtureHeroMatch}>MATCH {actionableMatch.match_number}</Text><IplTeamBadge code={actionableMatch.home?.code} /><Text style={x.fixtureHeroVs}>VS</Text><IplTeamBadge code={actionableMatch.away?.code} /></View><Text numberOfLines={1} style={x.fixtureHeroDate}>{actionableDate}</Text></View><TouchableOpacity accessibilityRole="button" accessibilityLabel={`${actionableSubmission ? "Edit" : "Submit"} XI for Match ${actionableMatch.match_number}`} style={[x.fixtureHeroActionButton, compact && x.fixtureHeroActionButtonCompact]} onPress={() => openTeam(actionableMatch.id)}><Text style={x.fixtureHeroActionButtonText}>{actionableSubmission ? "Edit XI" : "Submit XI"}</Text><Text style={x.fixtureHeroActionArrow}>›</Text></TouchableOpacity></View> : null}
     </View>
+    <MatchReminderSettings leagueId={leagueId} />
     {matches.length ? <View style={x.fixtureFilterPanel}><View style={x.fixtureBrowseHeading}><View><Text style={x.fixtureBrowseEyebrow}>FULL SCHEDULE</Text><Text style={x.fixtureBrowseTitle}>Browse fixtures</Text></View><Text style={x.fixtureBrowseCount}>{filteredMatches.length} matches</Text></View><View style={x.fixtureFilterHeading}><Text style={x.fixtureFilterHeadingText}>STATUS</Text>{matchesWidth < 520 ? <Text style={x.horizontalScrollHint}>SWIPE →</Text> : null}</View><ScrollView horizontal accessibilityRole="tablist" style={x.fixtureFilterScroller} showsHorizontalScrollIndicator={false} contentContainerStyle={x.fixtureFilters}>{([['ALL', 'All'], ['UPCOMING', 'Upcoming'], ['ACTIVE', 'Live / awaiting'], ['PUBLISHED', 'Published']] as Array<[typeof matchFilter, string]>).map(([value, label]) => <TouchableOpacity key={value} accessibilityRole="tab" accessibilityLabel={`${label} fixtures`} accessibilityState={{ selected: matchFilter === value }} style={[x.fixtureFilter, matchFilter === value && x.fixtureFilterActive]} onPress={() => { setMatchFilter(value); setExpanded(""); setVisibleLimit(12); }}><Text style={[x.fixtureFilterText, matchFilter === value && x.fixtureFilterTextActive]}>{label}</Text></TouchableOpacity>)}</ScrollView></View> : null}
     {!matches.length ? <Empty title="No fixtures yet" text="Fixtures will appear after the league schedule is imported." /> : null}
     {matches.length && !filteredMatches.length ? <Empty title="No matching fixtures" text="Choose another fixture filter to see matches." /> : null}
@@ -977,7 +979,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
     setLoading(true);
     Promise.all([
       supabase.from("player_match_points").select("fixture_id,batting_points,bowling_points,fielding_points,bonus_points,total_points,calculation_version,published_at,player:players(full_name,team:cricket_teams(code)),fixture:fixtures!inner(league_id,match_number,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code))").eq("fixture.league_id", leagueId).not("published_at", "is", null),
-      supabase.from("league_players").select("id,player_id,active,acquisition_price,bid_price,owner:league_members(id,display_name),player:players(full_name,role,team:cricket_teams(code))").eq("league_id", leagueId),
+      supabase.from("league_players").select("id,player_id,active,acquisition_price,bid_price,owner:league_members(id,display_name),player:players(full_name,role,team:cricket_teams(code))").eq("league_id", leagueId).eq("season_eligible", true),
       supabase.from("league_members").select("id,display_name").eq("league_id", leagueId).eq("status", "active").in("role", ["owner", "league_admin"]).order("display_name"),
       supabase.from("special_player_score_adjustments").select("fixture_id,player_id,adjustment_points,adjustment_type").eq("league_id", leagueId).in("adjustment_type", ["regular_royalty", "marquee_royalty"]),
       supabase.from("special_player_rule_sets").select("marquee_mode_enabled").eq("league_id", leagueId).eq("active", true).maybeSingle(),
@@ -1168,7 +1170,7 @@ export function ProductionPlayerSquad({ leagueId, canEdit, onAvailabilityChanged
   return <View>
     <View style={x.directoryHero}>
       <View style={x.directoryHeroGlow} />
-      <View style={x.directoryHeroHeading}><View style={x.directoryHeroMark}><Text style={x.directoryHeroMarkText}>◎</Text></View><View style={x.grow}><Text style={x.directoryHeroEyebrow}>LEAGUE DIRECTORY</Text><Text accessibilityRole="header" style={x.directoryHeroTitle}>Player Pool</Text><Text style={x.directoryHeroSubtitle}>Search every league player by team, role, owner and availability.</Text></View></View>
+      <View style={x.directoryHeroHeading}><View style={x.directoryHeroMark}><Text style={x.directoryHeroMarkText}>◎</Text></View><View style={x.grow}><Text style={x.directoryHeroEyebrow}>LEAGUE DIRECTORY</Text><Text accessibilityRole="header" style={x.directoryHeroTitle}>Player Pool</Text><Text style={x.directoryHeroSubtitle}>Search season players by team, role, owner and availability.</Text></View></View>
       <View style={x.directoryHeroStats}><FixtureHeroStat label="PLAYERS" value={squadPlayers.length} /><FixtureHeroStat label="ACTIVE" value={activePlayerCount} /><FixtureHeroStat label="INACTIVE" value={inactivePlayerCount} /><FixtureHeroStat label="TEAMS" value={teams.length} /></View>
     </View>
     {squadPlayers.length ? <View style={x.ownerSortCard}>

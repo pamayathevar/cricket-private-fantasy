@@ -1,0 +1,7 @@
+project_id = "lkhzoqfxhlirlhkzowzy"
+
+[functions.send-chat-mention]
+verify_jwt = true
+
+[functions.dispatch-match-reminders]
+verify_jwt = false

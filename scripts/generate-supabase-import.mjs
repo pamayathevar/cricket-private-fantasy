@@ -125,13 +125,14 @@ set role = excluded.role,
 -- identities so a stale prior-season row cannot remain selectable.
 update public.league_players
 set active = false,
+    season_eligible = false,
     released_at = coalesce(released_at, now()),
     updated_at = now()
 where league_id = '${leagueId}';
 
 insert into public.league_players (
   league_id, player_id, owner_member_id, acquisition_type,
-  acquisition_price, active, acquired_at, released_at
+  acquisition_price, active, season_eligible, acquired_at, released_at
 )
 select
   '${leagueId}',
@@ -139,6 +140,7 @@ select
   m.id,
   case when i.owner_name = 'Available' then 'open' else 'auction' end,
   i.acquisition_price,
+  true,
   true,
   case when i.owner_name = 'Available' then null else now() end,
   null
@@ -152,6 +154,7 @@ set owner_member_id = excluded.owner_member_id,
     acquisition_type = excluded.acquisition_type,
     acquisition_price = excluded.acquisition_price,
     active = true,
+    season_eligible = true,
     acquired_at = excluded.acquired_at,
     released_at = null,
     updated_at = now();

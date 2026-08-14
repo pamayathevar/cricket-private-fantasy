@@ -3,5 +3,6 @@
   "compilerOptions": {
     "strict": true,
     "types": ["react", "node"]
-  }
+  },
+  "exclude": ["supabase/functions"]
 }

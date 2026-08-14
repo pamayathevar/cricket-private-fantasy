@@ -40,6 +40,13 @@
           "hidden": false,
           "style": "light"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#CFFF4D",
+          "defaultChannel": "mentions"
+        }
       ]
     ],
     "web": {

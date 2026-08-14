@@ -60,6 +60,11 @@ const {
   recordNavigation,
 } = loadTypeScriptModule("navigationHistory.ts");
 
+const {
+  isMatchReminderDue,
+  matchReminderTarget,
+} = loadTypeScriptModule("matchReminderRules.ts");
+
 const blankStats = {
   runs: 0,
   balls: 0,
@@ -83,6 +88,25 @@ const blankStats = {
 };
 
 const tests = [
+  ["match reminders target exactly 24 hours and 30 minutes before start", () => {
+    const start = Date.parse("2026-08-16T14:00:00Z");
+    assert.equal(matchReminderTarget(start, 1440), Date.parse("2026-08-15T14:00:00Z"));
+    assert.equal(matchReminderTarget(start, 30), Date.parse("2026-08-16T13:30:00Z"));
+  }],
+  ["match reminders allow the scheduler grace window without sending early", () => {
+    const scheduledStart = "2026-08-16T14:00:00Z";
+    assert.equal(isMatchReminderDue({ scheduledStart, offsetMinutes: 30, now: Date.parse("2026-08-16T13:29:59Z"), status: "scheduled" }), false);
+    assert.equal(isMatchReminderDue({ scheduledStart, offsetMinutes: 30, now: Date.parse("2026-08-16T13:30:00Z"), status: "scheduled" }), true);
+    assert.equal(isMatchReminderDue({ scheduledStart, offsetMinutes: 30, now: Date.parse("2026-08-16T13:49:59Z"), status: "scheduled" }), true);
+    assert.equal(isMatchReminderDue({ scheduledStart, offsetMinutes: 30, now: Date.parse("2026-08-16T13:50:00Z"), status: "scheduled" }), false);
+  }],
+  ["match reminders skip started cancelled and abandoned fixtures", () => {
+    const scheduledStart = "2026-08-16T14:00:00Z";
+    const now = Date.parse("2026-08-16T13:30:00Z");
+    assert.equal(isMatchReminderDue({ scheduledStart, offsetMinutes: 30, now, status: "live" }), false);
+    assert.equal(isMatchReminderDue({ scheduledStart, offsetMinutes: 30, now, status: "cancelled" }), false);
+    assert.equal(isMatchReminderDue({ scheduledStart, offsetMinutes: 30, now, status: "abandoned" }), false);
+  }],
   ["navigation records the current screen without duplicating the active destination", () => {
     assert.deepEqual(recordNavigation(["Home"], "Team", "Ranking"), ["Home", "Team"]);
     assert.deepEqual(recordNavigation(["Home"], "Team", "Team"), ["Home"]);

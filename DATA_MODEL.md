@@ -77,6 +77,44 @@ activating the authoritative year's exact name + team identities. Lineups and
 score history continue to reference immutable player IDs rather than being
 rewritten when a player changes teams in a future IPL season.
 
+Migration `066` separates season membership from temporary availability on
+`league_players`. `season_eligible = true` keeps legitimate withdrawn or
+administrator-deactivated players visible in Player Pool, while stale identities
+copied from another season are marked `season_eligible = false`, hidden from the
+season directory, and prevented from being reactivated.
+
+Migration `067` adds league-private community data. `league_member_presence`
+stores an approximate server heartbeat for an active membership;
+`league_chat_messages` stores the latest league conversation and soft-removal
+state. Both tables use league-scoped RLS. Clients have read-only table access and
+must use guarded RPCs to touch presence, post a message, or remove a message.
+Postgres Changes publishes both tables so an open chatroom refreshes promptly;
+polling remains as a resilience fallback.
+
+Migration `068` keeps chat attention state separate from message content.
+`league_chat_mentions` stores server-validated message recipients;
+`league_chat_member_state` stores each member's read cursor and opt-in mention
+alert preference. `app_push_devices` stores Expo push tokens by authenticated
+user, and `league_chat_push_deliveries` provides an idempotent audit record for
+each message/member/device delivery attempt. Clients cannot read or write token
+or delivery tables directly: registration and preferences use guarded RPCs,
+while the authenticated `send-chat-mention` Edge Function performs delivery
+with server credentials. Opening a chat marks its messages and mentions read.
+
+Migration `069` adds the reserved exact tag `@everyone`. The posting RPC
+expands it inside Postgres to every other active member of the same league.
+Clients never supply the broadcast recipient list, and the existing mention
+rows continue to drive unread badges, push preferences, and delivery auditing.
+
+Match reminders are kept separate from chat state. Each active member has one
+`league_match_reminder_preferences` row per league with independent 24-hour and
+30-minute push/email switches. `match_reminder_deliveries` is the idempotent
+fixture/member/offset/channel outbox and provider audit trail. The server-only
+`claim_due_match_reminders` RPC uses row locks to prevent concurrent workers
+from claiming the same reminder. `notification_delivery_config` gates optional
+email delivery until a verified provider is operational; clients cannot read or
+write the configuration or delivery tables directly.
+
 ## Next model extensions
 
 Migration 018 creates the configuration foundation but does not claim runtime enforcement for new formats. Follow-up migrations should add:

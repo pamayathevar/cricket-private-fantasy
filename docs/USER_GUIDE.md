@@ -18,12 +18,36 @@ League settings can change by competition, phase, or fixture. The values shown o
 - **Ranking** — view the Overall table and each configured phase table.
 - **Results** — review match records, revealed owner XIs, transfer records, and published point breakdowns.
 - **Fixtures** — see match dates, opponents, lock/status, and your submission state.
-- **Player Pool** — inspect every league player, eligibility, role, IPL team, ownership, and availability.
+- **Player Pool** — inspect every player belonging to this season, including temporarily deactivated players. Identities carried from another season are excluded, while their historical records remain preserved.
 - **Owner Squads** — review auction ownership, squad points, and Unique or Marquee selections.
+- **Chatroom** — see active league members, approximate online/last-seen status, and the private league conversation.
 - **Rules** — see the live league format, lineup limits, scoring, phases, transfer periods, boosters, and special-player settings.
 - **Help** — search or browse the in-app version of this guide.
 
-On mobile, **Player Pool**, **Owner Squads**, **Help**, and **Rules** are under **More**.
+### Members and league chatroom
+
+- Online status is approximate. It refreshes through a server heartbeat while a signed-in member has the app active.
+- Only active members of the selected league can read its member board or chat messages.
+- Messages are plain text and limited to 500 characters. Server-side rate limits protect the room from accidental duplicate sends or spam.
+- Type `@` and choose a member to tag them. Their name is highlighted, and an unread badge appears on **Chatroom** (and **More** on mobile).
+- Choose **Everyone** after typing `@`, or type the exact tag `@everyone`, to notify every other active member in the selected league. A sender can use the broadcast once per minute.
+- In the installed iOS or Android app, each member may opt in to private mention alerts. Chat messages without a tag do not send a push alert. Tapping an alert opens the correct league chat.
+- Mention alerts require notification permission on the phone and a current native app build. If permission is blocked, in-app unread and mention badges still work.
+- A member can remove their own message; a league administrator can moderate any message. A removed item remains marked in the conversation and the action is audited.
+
+### Match reminders
+
+Open **Fixtures → Match reminders** to choose a push alert 24 hours before
+a fixture, 30 minutes before it, or both. These preferences apply only to the
+selected league. Push reminders are enabled from the installed iOS or Android
+app and tapping one opens the correct fixture.
+
+Email reminders are optional. Their switches appear only after the league's
+verified transactional email sender has been configured. Reminder timing uses
+the official fixture start, and started, cancelled, or abandoned fixtures do
+not send reminders.
+
+On mobile, **Player Pool**, **Owner Squads**, **Chatroom**, **Help**, and **Rules** are under **More**.
 
 ## 1. Selected XI and eligibility
 
