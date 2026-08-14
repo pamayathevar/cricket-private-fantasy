@@ -6,7 +6,8 @@
     "preview": {
       "distribution": "internal",
       "environment": "preview",
-      "node": "22.13.1"
+      "node": "22.13.1",
+      "autoIncrement": true
     },
     "production": {
       "environment": "production",

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Cricket Private Fantasy League",
-    "slug": "cricket-private-fantasy-league",
+    "slug": "cricketrivalriesleague",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -13,7 +13,6 @@
     },
     "android": {
       "package": "com.cpfl.mobile",
-      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/app-icon.png",
         "backgroundColor": "#CFFF4D"
@@ -45,6 +44,12 @@
     ],
     "web": {
       "favicon": "./assets/app-icon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c381c524-3edb-47c6-a37c-74ee2183080f"
+      }
+    },
+    "owner": "haran-pandiyan-info-tech"
   }
 }
