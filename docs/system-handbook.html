@@ -297,7 +297,7 @@
     summary { padding: 14px 16px; cursor: pointer; color: var(--navy); font-weight: 850; }
     details > div { padding: 0 16px 16px; }
 
-    .release-lanes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
+    .release-lanes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
     .release-lane { padding: 17px; border: 1px solid var(--line); border-radius: 16px; background: #fbfcfa; }
     .release-lane strong { display: block; margin-bottom: 7px; color: var(--navy); }
     .release-lane .lane-number { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-bottom: 11px; border-radius: 9px; color: var(--navy); background: var(--lime); font-weight: 900; }
@@ -361,7 +361,7 @@
           <h1>System Handbook</h1>
         </div>
       </div>
-      <p class="masthead-summary">A single review guide for the Cricket Rivalries League product: current behavior, business rules, architecture, data model, security boundaries, QA coverage and the Expo/EAS path from local development to Google Play.</p>
+      <p class="masthead-summary">A single review guide for the Cricket Rivalries League product: current behavior, business rules, architecture, data model, security boundaries, QA coverage and the web/native path from local development to Netlify and Google Play.</p>
       <div class="meta-row">
         <span class="pill live">Current baseline</span>
         <span class="pill">Version 1.0</span>
@@ -396,7 +396,7 @@
       <a href="#interfaces">RPC contracts</a>
       <a href="#codebase">Codebase map</a>
       <a href="#qa">QA strategy</a>
-      <a href="#release">Expo &amp; EAS release</a>
+      <a href="#release">Release &amp; deployment</a>
       <a href="#operations">Operations</a>
       <a href="#risks">Gaps &amp; risks</a>
       <a href="#glossary">Glossary &amp; sources</a>
@@ -795,12 +795,13 @@ npm run check:production</code></pre>
 
       <section class="doc-section" id="release" data-searchable>
         <div class="section-card">
-          <div class="section-heading"><div><p class="eyebrow">Mobile delivery</p><h2>Expo and EAS release model</h2></div><span class="section-index">13</span></div>
-          <p class="lede">Expo is the application runtime/toolchain. EAS is Expo's cloud build and release service: it compiles the JavaScript/TypeScript project into signed native Android/iOS artifacts without requiring the final build to happen on this Mac.</p>
+          <div class="section-heading"><div><p class="eyebrow">Web and mobile delivery</p><h2>Netlify, Expo and EAS release model</h2></div><span class="section-index">13</span></div>
+          <p class="lede">Netlify exports and serves the responsive web client from GitHub. Expo is the shared application runtime/toolchain, while EAS compiles the JavaScript/TypeScript project into signed native Android/iOS artifacts without requiring the final build to happen on this Mac.</p>
           <div class="release-lanes">
             <div class="release-lane"><span class="lane-number">1</span><strong>Development</strong><p class="small muted"><code>npm start</code> runs Metro for rapid iteration. A simulator, Expo-compatible client or web browser connects to the local bundle.</p></div>
-            <div class="release-lane"><span class="lane-number">2</span><strong>Preview</strong><p class="small muted">EAS creates a signed internal-distribution APK. Install it directly on Android devices for QA; it is not a Play Store release.</p></div>
-            <div class="release-lane"><span class="lane-number">3</span><strong>Production</strong><p class="small muted">EAS creates a signed AAB. Upload/submit it to Google Play internal testing, then promote through closed/open/production tracks.</p></div>
+            <div class="release-lane"><span class="lane-number">2</span><strong>Web production</strong><p class="small muted">A push to GitHub <code>main</code> triggers Netlify to export Expo web into <code>dist</code> and publish it to the custom domain.</p></div>
+            <div class="release-lane"><span class="lane-number">3</span><strong>Native preview</strong><p class="small muted">EAS creates a signed internal-distribution APK. Install it directly on Android devices for QA; it is not a Play Store release.</p></div>
+            <div class="release-lane"><span class="lane-number">4</span><strong>Native production</strong><p class="small muted">EAS creates a signed AAB. Upload/submit it to Google Play internal testing, then promote through closed/open/production tracks.</p></div>
           </div>
           <h3>Project identity</h3>
           <div class="table-wrap">
@@ -811,7 +812,8 @@ npm run check:production</code></pre>
                 <tr><td>Android application ID</td><td><code>com.cpfl.mobile</code></td></tr>
                 <tr><td>iOS bundle identifier</td><td><code>com.cpfl.mobile</code></td></tr>
                 <tr><td>Version source</td><td>Remote EAS versioning with automatic build-number increments.</td></tr>
-                <tr><td>Runtime</td><td>Node 22.13.1; Expo <code>~57.0.12</code>; React Native 0.86.2.</td></tr>
+                <tr><td>Runtime</td><td>Node 22.13.1; Expo <code>~57.0.13</code>; React Native 0.86.2.</td></tr>
+                <tr><td>Web production</td><td><code>https://cricketrivalriesleague.com</code> on Netlify project <code>cricketrivalriesleague</code>.</td></tr>
               </tbody>
             </table>
           </div>
@@ -840,6 +842,14 @@ npx eas-cli@latest build:list --limit 5</code></pre>
             <li>Promote gradually. Monitor authentication, Supabase errors, score publication and crash reports.</li>
           </ol>
           <div class="warning-box"><strong>APK versus AAB</strong><p>An APK is convenient for direct installation and QA. An AAB is the Google Play publishing format; Play generates optimized APKs for each device. A successful EAS build does not by itself publish the app.</p></div>
+          <h3>Web deployment and custom domain</h3>
+          <div class="grid two">
+            <div class="mini-card accent-green"><h4>Continuous deployment</h4><p class="small muted">Netlify watches <code>pamayathevar/cricket-private-fantasy</code> branch <code>main</code>, runs <code>npm run export:web</code> and publishes <code>dist</code>. Every push to <code>main</code> is therefore a production web release.</p></div>
+            <div class="mini-card accent-blue"><h4>Domain and TLS</h4><p class="small muted">Namecheap hosts DNS. Apex <code>@</code> is an ALIAS to <code>apex-loadbalancer.netlify.com</code>; <code>www</code> is a CNAME to <code>cricketrivalriesleague.netlify.app</code>. Netlify provisions Let's Encrypt TLS.</p></div>
+          </div>
+          <h3>Supabase web authentication URLs</h3>
+          <p>The Supabase Authentication Site URL is <code>https://cricketrivalriesleague.com</code>. The allowlist includes the apex and <code>www</code> domains, the controlled Netlify fallback and local ports 8081/8082. Validate authentication from an incognito session after domain or environment changes.</p>
+          <div class="status-box"><strong>Detailed operator procedure</strong><p>The complete Namecheap registration, Netlify import/build configuration, DNS records, HTTPS provisioning, Supabase redirect setup, smoke test, routine deployment, rollback and troubleshooting procedure is maintained in <a href="DEPLOYMENT_RUNBOOK.md">Deployment and custom-domain runbook</a>.</p></div>
         </div>
       </section>
 
@@ -927,7 +937,7 @@ npx eas-cli@latest build:list --limit 5</code></pre>
               <p class="small muted">Product/BA owns rule intent and terminology. Engineering owns technical accuracy, migrations and interface contracts. QA owns evidence and acceptance coverage. League operations owns match data, score review, No Result settlement and publication readiness.</p>
             </div>
           </div>
-          <p class="small muted" style="margin-top:24px">Handbook baseline: repository state on 13 August 2026. Update this page whenever a release changes a user-visible rule, schema domain, trust boundary, release command or operational workflow.</p>
+          <p class="small muted" style="margin-top:24px">Handbook baseline: repository state on 14 August 2026. Update this page whenever a release changes a user-visible rule, schema domain, trust boundary, release command or operational workflow.</p>
         </div>
       </section>
     </main>
