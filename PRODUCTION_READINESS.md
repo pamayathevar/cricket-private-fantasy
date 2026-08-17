@@ -6,6 +6,8 @@ This checklist covers a small private release on iOS and Android. A checked item
 
 The Expo 57 client, Supabase authentication, league foundation, RLS, configurable rules/phases/transfers/boosters and score review/publish workflow exist. Production is **not yet approved** until the remaining external/staging gates below are evidenced. The repository now has a reproducible Node 22 release gate, EAS profiles, native identity assets and verified web/iOS/Android bundles.
 
+The repository also has a provider-neutral offline score import compiler with source provenance, selected-player completeness checks, cricket-fact validation, explainable category calculations, reconciliation totals and a source fingerprint. It creates a review artifact only. The ingestion P0 items below remain open until a lawful provider, protected backend adapter, league-scoped identity mapping, idempotent database batches, monitoring and recovery are verified in staging. See `docs/SCORE_INGESTION_RUNBOOK.md`.
+
 ## P0 — release blockers
 
 ### Security and database
@@ -18,6 +20,7 @@ The Expo 57 client, Supabase authentication, league foundation, RLS, configurabl
 - [ ] Confirm automated backups and rehearse a restore.
 - [ ] Define migration forward-fix/rollback and back up before production changes.
 - [ ] Confirm no secrets exist in Git history or built application bundles.
+- [ ] Resolve or formally accept and monitor the current Expo/Metro/Xcode transitive `image-size` and `uuid` advisories. Do not use `npm audit fix --force`; it proposes incompatible Expo versions.
 
 ### Integrity and scoring
 

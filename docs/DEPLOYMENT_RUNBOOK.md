@@ -42,6 +42,8 @@ This runbook records the production web and native delivery process for Cricket 
 | Publish directory | `dist` |
 | Functions directory | blank |
 
+The repository's `netlify.toml` is the authoritative build, Node runtime, SPA fallback and baseline response-header configuration. Netlify should report that the build settings originate from the configuration file. Keep the UI values aligned for operator clarity; change source control rather than making an undocumented dashboard-only change.
+
 5. Add `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_KEY` under Netlify project environment variables. Use the public values from the intended production Supabase project; do not paste them into documentation or source control.
 6. Trigger the initial deploy. A successful deploy must finish the Expo web export and publish the generated `dist` directory.
 7. If the Netlify site was created as private, choose **Make public** before application testing. A private Netlify project returns HTTP `401` even when the build itself succeeded.
@@ -126,6 +128,8 @@ Use a private/incognito browser session so an existing Supabase session cannot h
 ## Routine web deployment
 
 Netlify continuously deploys the `main` branch. A push to `main` is therefore a production web release.
+
+`netlify.toml` pins Node `22.13.1`, runs `npm run export:web`, publishes `dist`, restores client-side routes to `index.html`, prevents stale HTML caching and adds conservative browser security headers. Content Security Policy is intentionally not enabled until its Supabase and Expo resource allowlist has been tested in staging.
 
 ```sh
 nvm use

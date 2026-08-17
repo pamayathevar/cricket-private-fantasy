@@ -19,6 +19,7 @@ Then visit [http://127.0.0.1:8088/docs/system-handbook.html](http://127.0.0.1:80
 ## Project documentation
 
 - [Deployment and custom-domain runbook](docs/DEPLOYMENT_RUNBOOK.md)
+- [Score ingestion and parsing runbook](docs/SCORE_INGESTION_RUNBOOK.md)
 - [Product specification](SPEC.md)
 - [Confirmed detailed rules](confirmed-rules.md)
 - [Production readiness plan](PRODUCTION_READINESS.md)
@@ -31,9 +32,11 @@ Then visit [http://127.0.0.1:8088/docs/system-handbook.html](http://127.0.0.1:80
 
 Install Node.js 22.13 or newer (`nvm use` reads the checked-in version), then run `npm ci` and `npm start` in this directory. Use an Expo development build or an iOS/Android simulator to open it. The app targets Expo SDK 57.
 
-Before creating a release build, run `npm run check:production`. This validates Expo configuration, TypeScript, 36 rule tests, tracked-secret hygiene, web/iOS/Android bundles and the live critical-vulnerability audit. EAS preview and production profiles are defined in `eas.json`; configure `EXPO_PUBLIC_SUPABASE_URL` and the public/publishable `EXPO_PUBLIC_SUPABASE_KEY` in the matching EAS environments before building.
+Before creating a release build, run `npm run check:production`. This validates Expo configuration, TypeScript, the unit/rule suite, tracked-secret hygiene, web/iOS/Android bundles and the live critical-vulnerability audit. EAS preview and production profiles are defined in `eas.json`; configure `EXPO_PUBLIC_SUPABASE_URL` and the public/publishable `EXPO_PUBLIC_SUPABASE_KEY` in the matching EAS environments before building.
 
 The production web application is deployed from GitHub `main` through Netlify at [cricketrivalriesleague.com](https://cricketrivalriesleague.com). Build settings, Namecheap DNS, HTTPS, Supabase redirect configuration, deployment verification and rollback are documented in the [deployment runbook](docs/DEPLOYMENT_RUNBOOK.md).
+
+Normalized score facts can be compiled offline into a validated, reconciled admin-review artifact with `npm run score:compile`. The compiler never connects to Supabase and never publishes a score. Its contract, validation gates and the remaining protected-backend work are documented in the [score ingestion runbook](docs/SCORE_INGESTION_RUNBOOK.md).
 
 ## Confirmed rules
 

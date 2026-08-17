@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "leagueId": "11111111-1111-4111-8111-111111111111",
+  "fixtureId": "22222222-2222-4222-8222-222222222222",
+  "matchNumber": 11,
+  "ruleSetId": "33333333-3333-4333-8333-333333333333",
+  "source": {
+    "provider": "licensed-score-feed",
+    "externalMatchId": "provider-match-11",
+    "sourceUrl": "https://provider.example/matches/provider-match-11",
+    "retrievedAt": "2026-08-14T20:00:00Z"
+  },
+  "expectedPlayerIds": [
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+  ],
+  "match": {
+    "homeTeam": "HME",
+    "awayTeam": "AWY",
+    "winnerTeam": "HME",
+    "playerOfMatchId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "maxBallsPerBowler": 24,
+    "resultSummary": "HME won by 12 runs"
+  },
+  "players": [
+    {
+      "playerId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "providerPlayerId": "p-101",
+      "name": "Home Batter",
+      "team": "HME",
+      "role": "BA",
+      "playingXI": true,
+      "batting": { "runs": 30, "balls": 20, "fours": 4, "sixes": 1, "dismissal": "none" }
+    },
+    {
+      "playerId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "providerPlayerId": "p-102",
+      "name": "Home Bowler",
+      "team": "HME",
+      "role": "BO",
+      "playingXI": true,
+      "bowling": {
+        "balls": 24,
+        "runsConceded": 20,
+        "maidens": 1,
+        "dots": 12,
+        "wickets": [
+          { "victimPlayerId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "victimRole": "BA" }
+        ]
+      }
+    },
+    {
+      "playerId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "providerPlayerId": "p-201",
+      "name": "Away Bowler",
+      "team": "AWY",
+      "role": "BO",
+      "playingXI": true,
+      "bowling": { "balls": 24, "runsConceded": 30, "maidens": 0, "dots": 8, "wickets": [] }
+    },
+    {
+      "playerId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "providerPlayerId": "p-202",
+      "name": "Away Batter",
+      "team": "AWY",
+      "role": "BA",
+      "playingXI": true,
+      "batting": { "runs": 10, "balls": 12, "fours": 1, "sixes": 0, "dismissal": "none" }
+    }
+  ]
+}

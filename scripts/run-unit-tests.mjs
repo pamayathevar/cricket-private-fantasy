@@ -65,6 +65,10 @@ const {
   matchReminderTarget,
 } = loadTypeScriptModule("matchReminderRules.ts");
 
+const {
+  compileScoreImport,
+} = loadTypeScriptModule("scoreImportRules.ts");
+
 const blankStats = {
   runs: 0,
   balls: 0,
@@ -394,6 +398,187 @@ const tests = [
     assert.equal(isPowerRoleRestricted({ labels: ["UNIQUE"], playerOwner: "Pandiyan", currentOwner: "Jeba" }), true);
     assert.equal(isPowerRoleRestricted({ labels: ["AUTO UNIQUE"], playerOwner: "Pandiyan", currentOwner: "Jeba" }), true);
     assert.equal(isPowerRoleRestricted({ labels: ["MARQUEE"], playerOwner: "Pandiyan", currentOwner: "Jeba" }), false);
+  }],
+  ["score imports compile mapped facts into a reviewable staging payload", () => {
+    const homeBatter = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const homeBowler = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const awayBatter = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const document = {
+      schemaVersion: 1,
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "22222222-2222-4222-8222-222222222222",
+      matchNumber: 11,
+      ruleSetId: "33333333-3333-4333-8333-333333333333",
+      source: {
+        provider: "licensed-test-feed",
+        externalMatchId: "match-11",
+        sourceUrl: "https://provider.example/match-11",
+        retrievedAt: "2026-08-14T20:00:00Z",
+      },
+      expectedPlayerIds: [homeBatter, homeBowler, awayBatter],
+      match: {
+        homeTeam: "HME",
+        awayTeam: "AWY",
+        winnerTeam: "HME",
+        playerOfMatchId: homeBatter,
+        maxBallsPerBowler: 24,
+        resultSummary: "HME won by 12 runs",
+      },
+      players: [
+        {
+          playerId: homeBatter,
+          name: "Home Batter",
+          team: "HME",
+          role: "BA",
+          playingXI: true,
+          batting: { runs: 25, balls: 10, fours: 1, sixes: 1, dismissal: "none" },
+        },
+        {
+          playerId: homeBowler,
+          name: "Home Bowler",
+          team: "HME",
+          role: "BO",
+          playingXI: true,
+          bowling: {
+            balls: 24,
+            runsConceded: 20,
+            maidens: 1,
+            dots: 12,
+            wickets: [{ victimPlayerId: awayBatter, victimRole: "BA" }],
+          },
+        },
+        {
+          playerId: awayBatter,
+          name: "Away Batter",
+          team: "AWY",
+          role: "BA",
+          playingXI: true,
+          batting: { runs: 10, balls: 12, fours: 1, sixes: 0, dismissal: "none" },
+        },
+      ],
+    };
+    const compiled = compileScoreImport(document, {
+      rules: defaultScoringRules,
+      calculatePoints: calculatePlayerPoints,
+      calculateDetails: calculatePointDetails,
+    });
+    assert.equal(compiled.issues.filter(issue => issue.severity === "error").length, 0);
+    assert.equal(compiled.stagingPayload.length, 3);
+    assert.equal(compiled.reconciliation.playerCount, 3);
+    assert.equal(compiled.reconciliation.expectedPlayerCount, 3);
+    assert.ok(compiled.reconciliation.totalPoints > 0);
+    const batterRow = compiled.stagingPayload.find(row => row.player_id === homeBatter);
+    assert.equal(batterRow.bonus_points, defaultScoringRules.bonus.player_of_match + defaultScoringRules.bonus.winning_participant);
+  }],
+  ["score imports reject incomplete mappings and impossible score facts", () => {
+    const playerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const missingId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const compiled = compileScoreImport({
+      schemaVersion: 1,
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "22222222-2222-4222-8222-222222222222",
+      matchNumber: 11,
+      ruleSetId: "33333333-3333-4333-8333-333333333333",
+      source: {
+        provider: "licensed-test-feed",
+        externalMatchId: "match-11",
+        sourceUrl: "http://provider.example/match-11",
+        retrievedAt: "2026-08-14T20:00:00Z",
+      },
+      expectedPlayerIds: [playerId, missingId],
+      match: {
+        homeTeam: "HME",
+        awayTeam: "AWY",
+        winnerTeam: "HME",
+        playerOfMatchId: null,
+        maxBallsPerBowler: 24,
+        resultSummary: "HME won",
+      },
+      players: [{
+        playerId,
+        name: "Invalid Batter",
+        team: "HME",
+        role: "BA",
+        playingXI: true,
+        batting: { runs: 4, balls: 1, fours: 2, sixes: 0, dismissal: "none" },
+      }],
+    }, {
+      rules: defaultScoringRules,
+      calculatePoints: calculatePlayerPoints,
+      calculateDetails: calculatePointDetails,
+    });
+    const codes = compiled.issues.map(issue => issue.code);
+    assert.ok(codes.includes("missing_expected_player"));
+    assert.ok(codes.includes("impossible_boundaries"));
+    assert.ok(codes.includes("invalid_source_url"));
+    assert.equal(compiled.stagingPayload.length, 0);
+  }],
+  ["score imports reject non-XI fielding and inconsistent wicket mappings", () => {
+    const bowlerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const victimId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const substituteId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const compiled = compileScoreImport({
+      schemaVersion: 1,
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "22222222-2222-4222-8222-222222222222",
+      matchNumber: 11,
+      ruleSetId: "33333333-3333-4333-8333-333333333333",
+      source: {
+        provider: "licensed-test-feed",
+        externalMatchId: "match-11",
+        sourceUrl: "https://provider.example/match-11",
+        retrievedAt: "2026-08-14T20:00:00Z",
+      },
+      expectedPlayerIds: [bowlerId, victimId, substituteId],
+      match: {
+        homeTeam: "HME",
+        awayTeam: "AWY",
+        winnerTeam: "HME",
+        playerOfMatchId: null,
+        maxBallsPerBowler: 24,
+        resultSummary: "HME won",
+      },
+      players: [
+        {
+          playerId: bowlerId,
+          name: "Home Bowler",
+          team: "HME",
+          role: "BO",
+          playingXI: true,
+          bowling: {
+            balls: 6,
+            runsConceded: 4,
+            maidens: 0,
+            dots: 3,
+            wickets: [{ victimPlayerId: victimId, victimRole: "BO" }],
+          },
+        },
+        {
+          playerId: victimId,
+          name: "Home Batter",
+          team: "HME",
+          role: "BA",
+          playingXI: true,
+        },
+        {
+          playerId: substituteId,
+          name: "Away Substitute",
+          team: "AWY",
+          role: "WK",
+          playingXI: false,
+          fielding: { catches: 1, stumpings: 0, directRunOuts: 0, sharedRunOuts: 0 },
+        },
+      ],
+    }, {
+      rules: defaultScoringRules,
+      calculatePoints: calculatePlayerPoints,
+      calculateDetails: calculatePointDetails,
+    });
+    const codes = compiled.issues.map(issue => issue.code);
+    assert.ok(codes.includes("non_xi_fielding"));
+    assert.ok(codes.includes("invalid_wicket_opposition"));
+    assert.ok(codes.includes("wicket_victim_role_mismatch"));
+    assert.equal(compiled.stagingPayload.length, 0);
   }],
 ];
 
