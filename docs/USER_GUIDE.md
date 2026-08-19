@@ -249,6 +249,7 @@ Additional rules:
 - When lineup privacy is enabled, other owners cannot see it before lock.
 - At lock, eligible submitted XIs become visible to active members of the private league.
 - **Results** clearly groups information by fixture and then by owner XI.
+- Each published owner card separates **Match Pts** (the XI contribution before royalty), **ROY** (the added owner royalty), and **Total Pts** (Match Pts + ROY).
 - Published player rows show the team, role, owner label, markers, base points, and credited points.
 - A No Result fixture remains in history for audit purposes but contributes zero points, no match rank, and no matches-scored count.
 

@@ -200,6 +200,9 @@ const tests = [
   ["Results attaches each published royalty to the player who generated it", () => {
     const source = fs.readFileSync("SupabaseScreens.tsx", "utf8");
     assert.match(source, /row\.fixture_id === match\.id && row\.recipient_member_id === lineup\.member\?\.id/);
+    assert.match(source, /const ownerMatchPoints = ownerTotalPoints - ownerRoyaltyTotal/);
+    assert.match(source, />MATCH PTS</);
+    assert.match(source, /\$\{fmt\(ownerMatchPoints\)\} match points, \$\{fmt\(ownerRoyaltyTotal\)\} royalty points, \$\{fmt\(ownerTotalPoints\)\} total points/);
     assert.match(source, /ownerRoyaltyRows\.filter\(row => row\.player_id === player\.id\)/);
     assert.match(source, /ROY \+\{fmt\(playerRoyaltyTotal\)\}/);
     assert.match(source, /OWNER ROYALTY \(ROY\)/);
