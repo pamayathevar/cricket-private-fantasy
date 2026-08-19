@@ -21,6 +21,7 @@ function buildMatch(input: MatchInput) {
       playerIsBowler: milestoneDismissal(name), dismissal: bat?.[5] ?? "none",
       bowlerWickets: victims.filter(victim => milestoneDismissal(victim)).length,
       nonBowlerWickets: victims.filter(victim => !milestoneDismissal(victim)).length,
+      directWickets: 0,
       ballsBowled: bowl?.[1] ?? 0, maxBalls: 24, runsConceded: bowl?.[2] ?? 0, dots: bowl?.[4] ?? 0, maidens: bowl?.[5] ?? 0,
       catches: input.fielding[name] ?? 0, stumpings: 0, runOuts: 0, sharedRunOuts: input.sharedRunOuts?.[name] ?? 0,
       playerOfMatch: name === input.potm, winningXI: input.winners.includes(name),

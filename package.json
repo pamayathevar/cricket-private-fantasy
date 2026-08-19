@@ -15,6 +15,7 @@
     "export:web": "expo export --platform web --output-dir dist",
     "export:production": "expo export --platform all --output-dir .expo/production-export",
     "test:unit": "node scripts/run-unit-tests.mjs",
+    "score:fetch": "node scripts/fetch-scorecard.mjs",
     "score:compile": "node scripts/compile-score-import.mjs",
     "check:secrets": "node scripts/check-tracked-secrets.mjs",
     "check": "npm run typecheck && npm run test:unit && npm run check:secrets && npm run export:web",
@@ -43,6 +44,7 @@
     "@types/node": "^22.20.1",
     "@types/react": "~19.2.10",
     "expo-doctor": "^1.20.1",
+    "playwright-core": "^1.62.1",
     "typescript": "~6.0.3"
   }
 }

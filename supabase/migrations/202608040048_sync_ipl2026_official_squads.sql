@@ -74,7 +74,7 @@ insert into ipl2026_role_corrections (team_code, full_name, role) values
   ('MI', 'Shardul Thakur', 'AL'),
   ('PBKS', 'Mitchell Owen', 'AL'),
   ('SRH', 'Krains Fuletra', 'AL'),
-  ('SRH', 'Harshal Patel', 'AL'),
+  ('SRH', 'Harshal Patel', 'BO'),
   ('SRH', 'Shivang Kumar', 'AL');
 
 do $$

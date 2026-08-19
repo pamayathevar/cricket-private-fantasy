@@ -2,6 +2,8 @@ import { completedMatchStats } from "./completedMatchPoints";
 import { squadPlayers } from "./squadData";
 import { calculatePlayerPoints, calculatePointDetails, PlayerMatchStats, PointBreakdown } from "./scoringRules";
 import { formatOversFromBalls, scorecardDismissalLabel } from "./scorecardRules";
+import { parseScoreIngestionArtifact } from "./scoreIngestionArtifact";
+import { scorecardFromIngestionPreview } from "./scorecardFromIngestionPreview";
 export { formatOversFromBalls, latestPublishedPlayerPoints, scorecardDismissalLabel } from "./scorecardRules";
 
 export type ScorecardBattingRow = {
@@ -51,6 +53,13 @@ export type ScorecardFixture = {
   external_ref?: unknown;
   scorecard_source_url?: unknown;
   player_match_points?: Array<{ raw_stats?: unknown }>;
+  score_ingestion_batches?: Array<{
+    status?: unknown;
+    calculation_version?: unknown;
+    source_url?: unknown;
+    review_artifact?: unknown;
+    published_at?: unknown;
+  }>;
 };
 
 type SeededMeta = {
@@ -181,6 +190,27 @@ export function scorecardForFixture(fixture: ScorecardFixture): SeededScorecard 
         };
       }),
     };
+  }
+  const publishedBatch = [...(fixture.score_ingestion_batches ?? [])]
+    .filter(batch => batch.status === "published" && batch.review_artifact)
+    .sort((left, right) => Number(right.calculation_version ?? 0) - Number(left.calculation_version ?? 0))[0];
+  if (publishedBatch?.review_artifact && typeof publishedBatch.review_artifact === "object") {
+    const artifact = publishedBatch.review_artifact as Record<string, unknown>;
+    try {
+      const parsed = parseScoreIngestionArtifact(JSON.stringify(artifact), {
+        leagueId: String(artifact.leagueId ?? ""),
+        fixtureId: String(artifact.fixtureId ?? ""),
+        matchNumber: Number(artifact.matchNumber ?? fixture.match_number),
+      });
+      return scorecardFromIngestionPreview(
+        parsed.preview,
+        Number(artifact.matchNumber ?? fixture.match_number),
+        parsed.summary.sourceUrl || String(publishedBatch.source_url ?? fixture.scorecard_source_url ?? ""),
+      );
+    } catch {
+      // Keep the legacy seeded fallback for older published matches whose
+      // review artifacts predate the complete two-innings format.
+    }
   }
   return seededScorecardForFixture(fixture);
 }

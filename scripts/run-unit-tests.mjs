@@ -31,6 +31,8 @@ const {
   defaultScoringRules,
 } = loadTypeScriptModule("scoringRules.ts");
 
+assert.equal(defaultScoringRules.fielding.shared_run_out, 10);
+
 const {
   boosterForFixture,
   canViewSubmittedLineup,
@@ -69,6 +71,38 @@ const {
   compileScoreImport,
 } = loadTypeScriptModule("scoreImportRules.ts");
 
+const {
+  extractSavedCricinfoScorecard,
+  parseScoreIngestionArtifact,
+} = loadTypeScriptModule("scoreIngestionArtifact.ts");
+
+const {
+  scorecardFromIngestionPreview,
+} = loadTypeScriptModule("scorecardFromIngestionPreview.ts");
+
+const {
+  browserCaptureStatus,
+  scoreSourceRequiresBrowserCapture,
+} = loadTypeScriptModule("scoreSourceWorkflow.ts");
+
+const {
+  applyCricbuzzFielderValidation,
+  isCricbuzzDismissalCapture,
+  isScorecardBrowserCapture,
+} = loadTypeScriptModule("scorecardBrowserExtension.ts");
+
+const {
+  buildCricinfoPasteImport,
+  fieldersFromDismissal,
+  isDirectBowlerWicket,
+  oversToBalls,
+  parseCricinfoBattingTable,
+  parseCricinfoBowlingTable,
+  parseCricinfoInningsTotal,
+  parsePlayerNameAliases,
+  resolveScorecardPlayer,
+} = loadTypeScriptModule("cricinfoScorecardPaste.ts");
+
 const blankStats = {
   runs: 0,
   balls: 0,
@@ -78,6 +112,7 @@ const blankStats = {
   dismissal: "none",
   bowlerWickets: 0,
   nonBowlerWickets: 0,
+  directWickets: 0,
   ballsBowled: 0,
   maxBalls: 24,
   runsConceded: 0,
@@ -91,7 +126,142 @@ const blankStats = {
   winningXI: false,
 };
 
+const reviewArtifact = () => ({
+  schemaVersion: 1,
+  status: "ready-for-admin-review",
+  generatedAt: "2026-08-17T10:00:00Z",
+  sourceFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  leagueId: "11111111-1111-4111-8111-111111111111",
+  fixtureId: "22222222-2222-4222-8222-222222222222",
+  matchNumber: 11,
+  ruleSetId: "33333333-3333-4333-8333-333333333333",
+  source: {
+    provider: "licensed-test-feed",
+    externalMatchId: "match-11",
+    sourceUrl: "https://provider.example/match-11",
+    retrievedAt: "2026-08-17T09:55:00Z",
+  },
+  issues: [{ severity: "warning", code: "manual_name_mapping", message: "Mapping was reviewed." }],
+  reconciliation: {
+    playerCount: 2,
+    expectedPlayerCount: 2,
+    battingPoints: 12,
+    bowlingPoints: 20,
+    fieldingPoints: 4,
+    bonusPoints: 5,
+    totalPoints: 41,
+  },
+  stagingPayload: [
+    {
+      player_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      raw_stats: {
+        player_name: "Batter One",
+        team: "SRH",
+        role: "BA",
+        playing_xi: true,
+        result_summary: "SRH won by 12 runs",
+        scorecard: {
+          firstInningsTeam: "SRH",
+          raw: {
+            firstInningsBatting: "BATTING\t\tR\tB\t4s\t6s\tSR\nBatter One\tc Bowler Two b Bowler Two\t12\t8\t2\t0\t150.00\nTOTAL\t20 Ov\t12/1",
+            firstInningsBowling: "BOWLING\tO\tM\tR\tW\t0s\nBowler Two\t4.0\t0\t30\t1\t10",
+            secondInningsBatting: "BATTING\t\tR\tB\t4s\t6s\tSR\nBowler Two\tnot out\t0\t0\t0\t0\t0.00\nTOTAL\t1 Ov\t0/0",
+            secondInningsBowling: "BOWLING\tO\tM\tR\tW\t0s\nBatter One\t1.0\t0\t0\t0\t6",
+          },
+        },
+        normalized_stats: { runs: 12, balls: 8, fours: 2, sixes: 0, ballsBowled: 0, runsConceded: 0, bowlerWickets: 0, nonBowlerWickets: 0, dots: 0, maidens: 0, catches: 1, stumpings: 0, runOuts: 0, sharedRunOuts: 0, playerOfMatch: true, winningXI: true },
+      },
+      batting_points: 12,
+      bowling_points: 0,
+      fielding_points: 4,
+      bonus_points: 5,
+      breakdown: { batting: { run_points: 12 } },
+    },
+    {
+      player_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      raw_stats: {
+        player_name: "Bowler Two",
+        team: "RR",
+        role: "BO",
+        playing_xi: true,
+        result_summary: "SRH won by 12 runs",
+        normalized_stats: { runs: 0, balls: 0, fours: 0, sixes: 0, ballsBowled: 24, runsConceded: 30, bowlerWickets: 1, nonBowlerWickets: 0, dots: 10, maidens: 0, catches: 0, stumpings: 0, runOuts: 0, sharedRunOuts: 0, playerOfMatch: false, winningXI: false },
+      },
+      batting_points: 0,
+      bowling_points: 20,
+      fielding_points: 0,
+      bonus_points: 0,
+      breakdown: { bowling: { wicket_points: 20 } },
+    },
+  ],
+});
+
 const tests = [
+  ["Results attaches each published royalty to the player who generated it", () => {
+    const source = fs.readFileSync("SupabaseScreens.tsx", "utf8");
+    assert.match(source, /row\.fixture_id === match\.id && row\.recipient_member_id === lineup\.member\?\.id/);
+    assert.match(source, /ownerRoyaltyRows\.filter\(row => row\.player_id === player\.id\)/);
+    assert.match(source, /ROY \+\{fmt\(playerRoyaltyTotal\)\}/);
+    assert.match(source, /OWNER ROYALTY \(ROY\)/);
+    assert.match(source, /Borrowed by \{row\.source\?\.display_name/);
+    assert.doesNotMatch(source, /OWNER ROYALTY EARNED/);
+  }],
+  ["browser extension capture contract requires all four innings tables", () => {
+    const capture = {
+      schemaVersion: 1,
+      captureMethod: "cricket-rivalries-browser-extension",
+      sourceUrl: "https://www.espncricinfo.com/series/example/full-scorecard",
+      capturedAt: "2026-08-18T00:00:00Z",
+      match: { matchNumber: 2, homeTeam: "KKR", awayTeam: "MI" },
+      tables: {
+        firstInningsBatting: "BATTING\tR\tB",
+        firstInningsBowling: "BOWLING\tO\tR\tW",
+        secondInningsBatting: "BATTING\tR\tB",
+        secondInningsBowling: "BOWLING\tO\tR\tW",
+      },
+    };
+    assert.equal(isScorecardBrowserCapture(capture), true);
+    assert.equal(isScorecardBrowserCapture({ ...capture, tables: { ...capture.tables, secondInningsBowling: null } }), false);
+  }],
+  ["browser extension permissions stay restricted to approved scorecard providers", () => {
+    const manifest = JSON.parse(fs.readFileSync("browser-extension/manifest.json", "utf8"));
+    assert.equal(manifest.manifest_version, 3);
+    assert.deepEqual(manifest.permissions, ["scripting"]);
+    assert.equal(manifest.host_permissions.includes("<all_urls>"), false);
+    assert.equal(manifest.host_permissions.some(value => /supabase/i.test(value)), false);
+    assert.equal(manifest.host_permissions.every(value => /(?:espncricinfo|cricinfo|cricbuzz)\.com/.test(value)), true);
+    assert.equal(manifest.host_permissions.some(value => /cricbuzz\.com/.test(value)), true);
+  }],
+  ["Cricbuzz validation corrects only ambiguous fielder names", () => {
+    const capture = {
+      schemaVersion: 1,
+      captureMethod: "cricket-rivalries-cricbuzz-fielder-validation",
+      sourceUrl: "https://www.cricbuzz.com/live-cricket-scorecard/149629/mi-vs-kkr-2nd-match-indian-premier-league-2026",
+      capturedAt: "2026-08-19T00:00:00Z",
+      match: { matchNumber: 2, homeTeam: "MI", awayTeam: "KKR" },
+      innings: [
+        { innings: 1, teamCode: "KKR", batters: [{ batterName: "Finn Allen", dismissalText: "c Tilak Varma b Shardul Thakur", runs: 37 }] },
+        { innings: 2, teamCode: "MI", batters: [{ batterName: "Suryakumar Yadav", dismissalText: "c Rinku Singh b Kartik Tyagi", runs: 16 }] },
+      ],
+    };
+    assert.equal(isCricbuzzDismissalCapture(capture), true);
+    const result = applyCricbuzzFielderValidation(
+      ["BATTING\t\tR\tB\t4s\t6s\tSR", "Finn Allen\tc Varma b Thakur\t37\t17\t6\t2\t217.64"].join("\n"),
+      ["BATTING\t\tR\tB\t4s\t6s\tSR", "Suryakumar Yadav\tc Singh b Kartik Tyagi\t16\t8\t3\t0\t200.00"].join("\n"),
+      capture,
+    );
+    assert.match(result.firstInningsBatting, /c Tilak Varma b Thakur/);
+    assert.match(result.secondInningsBatting, /c Rinku Singh b Kartik Tyagi/);
+    assert.equal(result.corrections.length, 2);
+    assert.equal(result.corrections[1].batterName, "Suryakumar Yadav");
+  }],
+  ["provider-page URLs use the guided browser capture workflow", () => {
+    assert.equal(scoreSourceRequiresBrowserCapture("https://www.espncricinfo.com/series/example/full-scorecard"), true);
+    assert.equal(scoreSourceRequiresBrowserCapture("https://www.cricinfo.com/series/example/full-scorecard"), true);
+    assert.equal(scoreSourceRequiresBrowserCapture("https://api.authorized-provider.example/match/2.json"), false);
+    assert.equal(scoreSourceRequiresBrowserCapture("not a URL"), false);
+    assert.match(browserCaptureStatus("ESPNcricinfo"), /No terminal command is required/);
+  }],
   ["match reminders target exactly 24 hours and 30 minutes before start", () => {
     const start = Date.parse("2026-08-16T14:00:00Z");
     assert.equal(matchReminderTarget(start, 1440), Date.parse("2026-08-15T14:00:00Z"));
@@ -123,6 +293,12 @@ const tests = [
   }],
   ["navigation back reports the root when no previous screen exists", () => {
     assert.deepEqual(previousNavigation([], ["Home", "Team"]), { destination: null, history: [] });
+  }],
+  ["home header uses the generic identity after returning from a league", () => {
+    const source = fs.readFileSync("App.tsx", "utf8");
+    assert.match(source, /const headerLeague = tab === "Home" \? undefined : activeLeague;/);
+    assert.match(source, /headerLeague \? headerLeague\.competition\.toUpperCase\(\) : "PRIVATE FANTASY"/);
+    assert.match(source, /headerLeague\?\.name \?\? "Cricket Fantasy"/);
   }],
   ["scorecard overs preserve cricket's base-six ball notation", () => {
     assert.equal(formatOversFromBalls(0), "0.0");
@@ -192,6 +368,17 @@ const tests = [
     });
     assert.equal(points.bowling, 37);
   }],
+  ["direct bowler wickets receive ten bonus points without fielder assistance", () => {
+    const direct = calculatePlayerPoints({ ...blankStats, playerIsBowler: true, nonBowlerWickets: 1, directWickets: 1 });
+    const assisted = calculatePlayerPoints({ ...blankStats, playerIsBowler: true, nonBowlerWickets: 1, directWickets: 0 });
+    assert.equal(direct.bowling, assisted.bowling + 10);
+    assert.equal(isDirectBowlerWicket("b Jacob Duffy"), true);
+    assert.equal(isDirectBowlerWicket("lbw b Jacob Duffy"), true);
+    assert.equal(isDirectBowlerWicket("hit wicket b Jacob Duffy"), true);
+    assert.equal(isDirectBowlerWicket("c & b Jacob Duffy"), true);
+    assert.equal(isDirectBowlerWicket("c Phil Salt b Jacob Duffy"), false);
+    assert.equal(isDirectBowlerWicket("st Phil Salt b Jacob Duffy"), false);
+  }],
   ["a wicketless bowler receives the configured half and full quota penalties", () => {
     const halfQuota = calculatePlayerPoints({
       ...blankStats,
@@ -225,9 +412,9 @@ const tests = [
       winningXI: true,
     });
     assert.equal(points.bowling, 33); // 15 wicket + 10 maiden + 8 dots.
-    assert.equal(points.fielding, 38);
+    assert.equal(points.fielding, 40);
     assert.equal(points.bonus, 17);
-    assert.equal(points.total, 88);
+    assert.equal(points.total, 90);
   }],
   ["point detail rows reconcile with every category and the total", () => {
     const stats = {
@@ -277,6 +464,7 @@ const tests = [
   ["default scoring rules retain the configured wicket values", () => {
     assert.equal(defaultScoringRules.bowling.dismissed_bowler_wicket, 15);
     assert.equal(defaultScoringRules.bowling.dismissed_non_bowler_wicket, 20);
+    assert.equal(defaultScoringRules.bowling.direct_wicket_bonus, 10);
   }],
   ["lineups lock exactly at the configured lock time", () => {
     const lock = "2026-08-09T18:00:00.000Z";
@@ -579,6 +767,344 @@ const tests = [
     assert.ok(codes.includes("invalid_wicket_opposition"));
     assert.ok(codes.includes("wicket_victim_role_mismatch"));
     assert.equal(compiled.stagingPayload.length, 0);
+  }],
+  ["score review artifacts validate fixture identity and reconciliation", () => {
+    const parsed = parseScoreIngestionArtifact(JSON.stringify(reviewArtifact()), {
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "22222222-2222-4222-8222-222222222222",
+      matchNumber: 11,
+    });
+    assert.equal(parsed.summary.provider, "licensed-test-feed");
+    assert.equal(parsed.summary.externalMatchId, "match-11");
+    assert.equal(parsed.summary.playerCount, 2);
+    assert.equal(parsed.summary.expectedPlayerCount, 2);
+    assert.equal(parsed.summary.warningCount, 1);
+    assert.equal(parsed.summary.totalPoints, 41);
+    assert.equal(parsed.preview.resultSummary, "SRH won by 12 runs");
+    assert.equal(parsed.preview.players[0].name, "Batter One");
+    assert.equal(parsed.preview.players[0].runs, 12);
+    assert.equal(parsed.preview.firstInningsTeam, "SRH");
+    assert.equal(parsed.preview.secondInningsTeam, "RR");
+    assert.equal(parsed.preview.firstInningsScore, "12/1");
+    assert.equal(parsed.preview.secondInningsScore, "0/0");
+    assert.equal(parsed.preview.winnerTeam, "SRH");
+    assert.equal(parsed.preview.playerOfMatchName, "Batter One");
+    assert.equal(parsed.preview.players[0].dismissalText, "c Bowler Two b Bowler Two");
+    assert.equal(parsed.preview.players[0].battingInnings, 1);
+    assert.equal(parsed.preview.players[1].bowlingInnings, 1);
+    assert.deepEqual(parsed.preview.players[1].wicketDetails, ["Batter One · c Bowler Two b Bowler Two"]);
+    assert.equal(parsed.preview.players[1].name, "Bowler Two");
+    assert.equal(parsed.preview.players[1].wickets, 1);
+    assert.equal(parsed.preview.bowlingPoints, 20);
+
+    const scorecard = scorecardFromIngestionPreview(parsed.preview, 11, parsed.summary.sourceUrl);
+    assert.equal(scorecard.result, "SRH won by 12 runs");
+    assert.equal(scorecard.winnerTeam, "SRH");
+    assert.equal(scorecard.playerOfMatch, "Batter One");
+    assert.equal(scorecard.innings.length, 2);
+    assert.equal(scorecard.innings[0].team, "SRH");
+    assert.equal(scorecard.innings[0].score, "12/1");
+    assert.equal(scorecard.innings[0].batting[0].dismissalText, "c Bowler Two b Bowler Two");
+    assert.equal(scorecard.innings[0].bowling[0].name, "Bowler Two");
+    assert.equal(scorecard.innings[0].bowling[0].overs, "4.0");
+    assert.equal(scorecard.innings[1].team, "RR");
+    assert.equal(scorecard.innings[1].score, "0/0");
+
+    const legacy = reviewArtifact();
+    delete legacy.stagingPayload[0].raw_stats.scorecard;
+    const legacyParsed = parseScoreIngestionArtifact(JSON.stringify(legacy), {
+      leagueId: legacy.leagueId,
+      fixtureId: legacy.fixtureId,
+      matchNumber: legacy.matchNumber,
+    });
+    assert.equal(legacyParsed.preview.firstInningsScore, "12/1");
+    assert.equal(legacyParsed.preview.secondInningsScore, "0/0");
+  }],
+  ["saved Cricinfo reviews can be regenerated without a local capture file", () => {
+    const artifact = reviewArtifact();
+    artifact.source.provider = "espncricinfo-copy-paste";
+    const saved = extractSavedCricinfoScorecard(artifact);
+    assert.equal(saved.sourceUrl, "https://provider.example/match-11");
+    assert.equal(saved.firstInningsTeam, "SRH");
+    assert.equal(saved.winnerTeam, "SRH");
+    assert.equal(saved.resultSummary, "SRH won by 12 runs");
+    assert.equal(saved.playerOfMatchName, "Batter One");
+    assert.equal(saved.maxBallsPerBowler, 24);
+    assert.match(saved.firstInningsBatting, /Batter One/);
+    assert.match(saved.secondInningsBowling, /Batter One/);
+  }],
+  ["score review artifacts reject a different fixture", () => {
+    assert.throws(() => parseScoreIngestionArtifact(JSON.stringify(reviewArtifact()), {
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "99999999-9999-4999-8999-999999999999",
+      matchNumber: 12,
+    }), /does not belong to Match 12/);
+  }],
+  ["score review artifacts reject duplicate players and mismatched totals", () => {
+    const duplicate = reviewArtifact();
+    duplicate.stagingPayload[1].player_id = duplicate.stagingPayload[0].player_id;
+    assert.throws(() => parseScoreIngestionArtifact(JSON.stringify(duplicate), {
+      leagueId: duplicate.leagueId,
+      fixtureId: duplicate.fixtureId,
+      matchNumber: duplicate.matchNumber,
+    }), /duplicate player score rows/);
+
+    const mismatched = reviewArtifact();
+    mismatched.reconciliation.totalPoints = 42;
+    assert.throws(() => parseScoreIngestionArtifact(JSON.stringify(mismatched), {
+      leagueId: mismatched.leagueId,
+      fixtureId: mismatched.fixtureId,
+      matchNumber: mismatched.matchNumber,
+    }), /category totals do not reconcile/);
+  }],
+  ["Cricinfo paste parser preserves cricket overs and copied batting facts", () => {
+    assert.equal(oversToBalls("4.0"), 24);
+    assert.equal(oversToBalls("3.5"), 23);
+    assert.throws(() => oversToBalls("2.6"), /Invalid overs value/);
+
+    const table = parseCricinfoBattingTable([
+      "BATTING\t\tR\tB\t4s\t6s\tSR",
+      "Travis Head\tc Salt b Duffy\t11\t9\t2\t0\t122.22",
+      "Ishan Kishan\tnot out\t80\t38\t8\t5\t210.52",
+      "Did not bat:\tHarshal Patel, Jaydev Unadkat",
+      "TOTAL\t20 Ov\t190/5",
+    ].join("\n"));
+    assert.equal(table.rows.length, 2);
+    assert.deepEqual(table.rows[0], {
+      name: "Travis Head",
+      dismissalText: "c Salt b Duffy",
+      runs: 11,
+      balls: 9,
+      fours: 2,
+      sixes: 0,
+    });
+    assert.deepEqual(table.didNotBat, ["Harshal Patel", "Jaydev Unadkat"]);
+    assert.equal(parseCricinfoInningsTotal("BATTING\t\tR\tB\nTOTAL\t20 Ov (RR: 9.50)\t190/5"), "190/5");
+    assert.equal(parseCricinfoInningsTotal("BATTING\t\tR\tB\nTOTAL\t18.4 Ov\t176 all out"), "176/10");
+  }],
+  ["Cricinfo paste parser accepts browser-flattened scorecard rows", () => {
+    const batting = parseCricinfoBattingTable([
+      "Kolkata Knight Riders (20 ovs maximum)",
+      "Batting\tR\tB\tM\t4s\t6s\tSR",
+      "Ajinkya Rahane (c)",
+      "c Pandya b Thakur",
+      "67\t40\t69\t3\t5\t167.50",
+      "Finn Allen",
+      "not out",
+      "37\t17\t26\t6\t2\t217.64",
+      "Total",
+      "224/4",
+      "Did not bat",
+      "Sherfane Rutherford,",
+      "Shardul Thakur",
+    ].join("\n"));
+    assert.deepEqual(batting.rows[0], {
+      name: "Ajinkya Rahane",
+      dismissalText: "c Pandya b Thakur",
+      runs: 67,
+      balls: 40,
+      fours: 3,
+      sixes: 5,
+    });
+    assert.equal(batting.rows[1].name, "Finn Allen");
+    assert.deepEqual(batting.didNotBat, ["Sherfane Rutherford", "Shardul Thakur"]);
+
+    const bowling = parseCricinfoBowlingTable([
+      "Bowling\tO\tM\tR\tW\tECON\t0s\tWD\tNB",
+      "Trent Boult",
+      "4\t0\t38\t0\t9.50\t7\t3\t0",
+      "Hardik Pandya",
+      "3\t0\t39\t1\t13.00\t7\t2\t0",
+    ].join("\n"));
+    assert.equal(bowling[0].name, "Trent Boult");
+    assert.equal(bowling[0].balls, 24);
+    assert.equal(bowling[1].wickets, 1);
+    assert.equal(bowling[1].dots, 7);
+  }],
+  ["Cricinfo paste parser requires dot-ball data for league scoring", () => {
+    const rows = parseCricinfoBowlingTable([
+      "BOWLING\tO\tM\tR\tW\t0s\t4s\t6s\tWD\tNB",
+      "Jacob Duffy\t4.0\t0\t22\t3\t13\t2\t0\t1\t0",
+    ].join("\n"));
+    assert.equal(rows[0].balls, 24);
+    assert.equal(rows[0].dots, 13);
+    assert.throws(() => parseCricinfoBowlingTable([
+      "BOWLING\tO\tM\tR\tW\tER",
+      "Jacob Duffy\t4.0\t0\t22\t3\t5.50",
+    ].join("\n")), /dot-ball column/);
+  }],
+  ["Cricinfo player aliases resolve provider name differences explicitly", () => {
+    const players = [
+      { playerId: "p1", name: "Mohammed Siraj", team: "GT", role: "BO" },
+      { playerId: "p2", name: "Mohammad Shami", team: "GT", role: "BO" },
+    ];
+    const aliases = parsePlayerNameAliases("M Siraj = Mohammed Siraj");
+    assert.equal(resolveScorecardPlayer("M Siraj", "GT", players, aliases).playerId, "p1");
+    assert.throws(
+      () => resolveScorecardPlayer("Unknown Player", "GT", players),
+      /No league player matched/,
+    );
+  }],
+  ["Cricinfo wicketkeeper shorthand resolves a unique wicketkeeper automatically", () => {
+    const players = [
+      { playerId: "wk", name: "Jitesh Sharma", team: "RCB", role: "WK" },
+      { playerId: "bo", name: "Suyash Sharma", team: "RCB", role: "BO" },
+    ];
+    assert.deepEqual(fieldersFromDismissal("c †Sharma b Duffy").catches, ["†Sharma"]);
+    assert.equal(resolveScorecardPlayer("†Sharma", "RCB", players).playerId, "wk");
+    assert.equal(resolveScorecardPlayer("Sharma", "RCB", players).playerId, "bo");
+  }],
+  ["Cricinfo paste import reconciles two complete XIs before review", () => {
+    const homeNames = ["Home One", "Home Two", "Home Three", "Home Four", "Home Five", "Home Six", "Home Seven", "Home Eight", "Home Nine", "Home Ten", "Home Eleven"];
+    const awayNames = ["Away One", "Away Two", "Away Three", "Away Four", "Away Five", "Away Six", "Away Seven", "Away Eight", "Away Nine", "Away Ten", "Away Eleven"];
+    const leaguePlayers = [
+      ...homeNames.map((name, index) => ({ playerId: `h${index + 1}`, name, team: "HME", role: index > 7 ? "BO" : "BA" })),
+      ...awayNames.map((name, index) => ({ playerId: `a${index + 1}`, name, team: "AWY", role: index > 7 ? "BO" : "BA" })),
+    ];
+    const batting = (names, bowler) => [
+      "BATTING\t\tR\tB\t4s\t6s\tSR",
+      `${names[0]}\tb ${bowler}\t0\t1\t0\t0\t0.00`,
+      `${names[1]}\tnot out\t10\t8\t1\t0\t125.00`,
+      `Did not bat:\t${names.slice(2).join(", ")}`,
+      "TOTAL\t20 Ov\t10/1",
+    ].join("\n");
+    const bowling = bowler => [
+      "BOWLING\tO\tM\tR\tW\t0s\t4s\t6s\tWD\tNB",
+      `${bowler}\t1.0\t0\t10\t1\t3\t1\t0\t0\t0`,
+    ].join("\n");
+    const imported = buildCricinfoPasteImport({
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "22222222-2222-4222-8222-222222222222",
+      matchNumber: 21,
+      ruleSetId: "33333333-3333-4333-8333-333333333333",
+      sourceUrl: "https://www.espncricinfo.com/series/example-123/match-987654/full-scorecard",
+      homeTeam: "HME",
+      awayTeam: "AWY",
+      firstInningsTeam: "HME",
+      winnerTeam: "AWY",
+      playerOfMatchName: "Away Nine",
+      resultSummary: "Away won",
+      firstInningsBatting: batting(homeNames, "Away Nine"),
+      firstInningsBowling: bowling("Away Nine"),
+      secondInningsBatting: batting(awayNames, "Home Nine"),
+      secondInningsBowling: bowling("Home Nine"),
+      leaguePlayers,
+    });
+    assert.equal(imported.players.length, 22);
+    assert.equal(imported.match.playerOfMatchId, "a9");
+    assert.equal(imported.players.find(player => player.playerId === "a9")?.bowling?.wickets.length, 1);
+    assert.equal(imported.players.find(player => player.playerId === "a9")?.bowling?.wickets[0]?.direct, true);
+    assert.equal(imported.source.provider, "espncricinfo-copy-paste");
+  }],
+  ["Cricinfo paste import ignores verified substitute fielder points by default and can enable them", () => {
+    const homeNames = ["Home One", "Home Two", "Home Three", "Home Four", "Home Five", "Home Six", "Home Seven", "Home Eight", "Home Nine", "Home Ten", "Home Eleven"];
+    const awayNames = ["Away One", "Away Two", "Away Three", "Away Four", "Away Five", "Away Six", "Away Seven", "Away Eight", "Away Nine", "Away Ten", "Away Eleven"];
+    const leaguePlayers = [
+      ...homeNames.map((name, index) => ({ playerId: `h${index + 1}`, name, team: "HME", role: index > 7 ? "BO" : "BA" })),
+      ...awayNames.map((name, index) => ({ playerId: `a${index + 1}`, name, team: "AWY", role: index > 7 ? "BO" : "BA" })),
+      { playerId: "hi", name: "Home Impact", team: "HME", role: "BO" },
+      { playerId: "ai", name: "Away Impact", team: "AWY", role: "BO" },
+      { playerId: "hs", name: "Home Substitute", team: "HME", role: "BA" },
+      { playerId: "as", name: "Away Substitute", team: "AWY", role: "BA" },
+    ];
+    const batting = (names, bowler, substitute) => [
+      "BATTING\t\tR\tB\t4s\t6s\tSR",
+      `${names[0]}\tc (sub) ${substitute} b ${bowler}\t0\t1\t0\t0\t0.00`,
+      `${names[1]}\tnot out\t10\t8\t1\t0\t125.00`,
+      `Did not bat:\t${names.slice(2).join(", ")}`,
+      "TOTAL\t20 Ov\t10/1",
+    ].join("\n");
+    const impactBowling = name => [
+      "BOWLING\tO\tM\tR\tW\t0s\t4s\t6s\tWD\tNB",
+      `${name}\t1.0\t0\t10\t1\t3\t1\t0\t0\t0`,
+    ].join("\n");
+    const importInput = {
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "22222222-2222-4222-8222-222222222222",
+      matchNumber: 21,
+      ruleSetId: "33333333-3333-4333-8333-333333333333",
+      sourceUrl: "https://www.espncricinfo.com/series/example-123/match-987654/full-scorecard",
+      homeTeam: "HME",
+      awayTeam: "AWY",
+      firstInningsTeam: "HME",
+      winnerTeam: "AWY",
+      playerOfMatchName: "Away One",
+      resultSummary: "Away won",
+      firstInningsBatting: batting(homeNames, "Away Impact", "Away Substitute"),
+      firstInningsBowling: impactBowling("Away Impact"),
+      secondInningsBatting: batting(awayNames, "Home Impact", "Home Substitute"),
+      secondInningsBowling: impactBowling("Home Impact"),
+      leaguePlayers,
+    };
+    const ignored = buildCricinfoPasteImport(importInput);
+    assert.equal(ignored.players.length, 24);
+    assert.ok(ignored.players.some(player => player.playerId === "hi"));
+    assert.ok(ignored.players.some(player => player.playerId === "ai"));
+    assert.ok(!ignored.players.some(player => player.playerId === "hs"));
+    assert.ok(!ignored.players.some(player => player.playerId === "as"));
+    assert.match(ignored.players.find(player => player.playerId === "h1")?.batting?.dismissalText ?? "", /\(sub\) Away Substitute/);
+    assert.equal(ignored.scorecard.substituteFielderPointsEnabled, false);
+    assert.equal(ignored.scorecard.substituteFielders.length, 2);
+    assert.ok(ignored.scorecard.substituteFielders.every(player => player.pointsAwarded === false));
+
+    const credited = buildCricinfoPasteImport({ ...importInput, substituteFielderPointsEnabled: true });
+    assert.equal(credited.players.length, 26);
+    assert.equal(credited.players.find(player => player.playerId === "hs")?.fielding?.catches, 1);
+    assert.equal(credited.players.find(player => player.playerId === "as")?.fielding?.catches, 1);
+    assert.equal(credited.scorecard.substituteFielderPointsEnabled, true);
+    assert.ok(credited.scorecard.substituteFielders.every(player => player.pointsAwarded === true));
+  }],
+  ["Cricinfo paste import scores a 13th batting or bowling participant with an admin-review warning", () => {
+    const homeNames = ["Home One", "Home Two", "Home Three", "Home Four", "Home Five", "Home Six", "Home Seven", "Home Eight", "Home Nine", "Home Ten", "Home Eleven"];
+    const awayNames = ["Away One", "Away Two", "Away Three", "Away Four", "Away Five", "Away Six", "Away Seven", "Away Eight", "Away Nine", "Away Ten", "Away Eleven"];
+    const playerId = (prefix, index) => `${prefix}0000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    const leaguePlayers = [
+      ...homeNames.map((name, index) => ({ playerId: playerId(1, index + 1), name, team: "HME", role: index > 7 ? "BO" : "BA" })),
+      ...awayNames.map((name, index) => ({ playerId: playerId(2, index + 1), name, team: "AWY", role: index > 7 ? "BO" : "BA" })),
+      { playerId: playerId(3, 1), name: "Home Extra One", team: "HME", role: "BO" },
+      { playerId: playerId(3, 2), name: "Home Extra Two", team: "HME", role: "BO" },
+    ];
+    const batting = names => [
+      "BATTING\t\tR\tB\t4s\t6s\tSR",
+      `${names[0]}\tnot out\t10\t8\t1\t0\t125.00`,
+      `Did not bat:\t${names.slice(1).join(", ")}`,
+      "TOTAL\t20 Ov\t10/0",
+    ].join("\n");
+    const bowling = names => [
+      "BOWLING\tO\tM\tR\tW\t0s\t4s\t6s\tWD\tNB",
+      ...names.map(name => `${name}\t1.0\t0\t5\t0\t3\t0\t0\t0\t0`),
+    ].join("\n");
+    const imported = buildCricinfoPasteImport({
+      leagueId: "11111111-1111-4111-8111-111111111111",
+      fixtureId: "22222222-2222-4222-8222-222222222222",
+      matchNumber: 21,
+      ruleSetId: "33333333-3333-4333-8333-333333333333",
+      sourceUrl: "https://www.espncricinfo.com/series/example-123/match-987654/full-scorecard",
+      homeTeam: "HME",
+      awayTeam: "AWY",
+      firstInningsTeam: "HME",
+      winnerTeam: "AWY",
+      playerOfMatchName: "Away One",
+      resultSummary: "Away won",
+      firstInningsBatting: batting(homeNames),
+      firstInningsBowling: bowling(["Away Nine"]),
+      secondInningsBatting: batting(awayNames),
+      secondInningsBowling: bowling(["Home Extra One", "Home Extra Two"]),
+      leaguePlayers,
+    });
+    assert.equal(imported.players.filter(player => player.team === "HME").length, 13);
+    assert.equal(imported.players.find(player => player.name === "Home Extra One")?.bowling?.balls, 6);
+    const compiled = compileScoreImport(imported, {
+      rules: defaultScoringRules,
+      calculatePoints: calculatePlayerPoints,
+      calculateDetails: calculatePointDetails,
+    });
+    assert.equal(compiled.issues.filter(issue => issue.severity === "error").length, 0);
+    const participantWarning = compiled.issues.find(issue => issue.code === "unexpected_playing_xi_count");
+    assert.equal(participantWarning?.severity, "warning");
+    assert.match(participantWarning?.message ?? "", /administrator-approved exception.*review notes/i);
+    const substituteRow = compiled.stagingPayload.find(row => row.player_id === playerId(3, 1));
+    assert.ok((substituteRow?.bowling_points ?? 0) > 0);
   }],
 ];
 

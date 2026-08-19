@@ -555,6 +555,7 @@ values (
     "bowling": {
       "dismissed_bowler_wicket": 15,
       "dismissed_non_bowler_wicket": 20,
+      "direct_wicket_bonus": 10,
       "wicket_milestones": [[2,2],[3,6],[4,12],[5,20],[6,30],[7,42],[8,56],[9,72],[10,90]],
       "no_wicket_half_quota": -2,
       "no_wicket_full_quota": -4,
@@ -564,7 +565,7 @@ values (
       "economy_bands": [[0,44],[1,32],[2,22],[3,14],[4,8],[5,4],[6,2],[7,0],[8,-2],[10,-4],[12,-8],[14,-12]],
       "hit_wicket_counts": true
     },
-    "fielding": {"catch": 10, "stumping": 10, "run_out": 10, "shared_run_out": 8},
+    "fielding": {"catch": 10, "stumping": 10, "run_out": 10, "shared_run_out": 10},
     "bonus": {"player_of_match": 15, "winning_participant": 2},
     "excluded": {"fours_or_sixes_conceded": true, "royalty_points": true}
   }'::jsonb,

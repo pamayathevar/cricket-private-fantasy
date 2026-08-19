@@ -1,7 +1,7 @@
 import { calculatePlayerPoints, PointBreakdown, PlayerMatchStats } from "./scoringRules";
 
 type MatchPlayer = PlayerMatchStats & { name: string };
-const base = { balls: 0, fours: 0, sixes: 0, playerIsBowler: false, dismissal: "none" as const, bowlerWickets: 0, nonBowlerWickets: 0, ballsBowled: 0, maxBalls: 24, runsConceded: 0, maidens: 0, dots: 0, catches: 0, stumpings: 0, runOuts: 0, sharedRunOuts: 0, playerOfMatch: false, winningXI: false };
+const base = { balls: 0, fours: 0, sixes: 0, playerIsBowler: false, dismissal: "none" as const, bowlerWickets: 0, nonBowlerWickets: 0, directWickets: 0, ballsBowled: 0, maxBalls: 24, runsConceded: 0, maidens: 0, dots: 0, catches: 0, stumpings: 0, runOuts: 0, sharedRunOuts: 0, playerOfMatch: false, winningXI: false };
 const p = (name: string, stats: Partial<PlayerMatchStats> & Pick<PlayerMatchStats, "runs">): MatchPlayer => ({ name, ...base, ...stats });
 
 export const match1Players: MatchPlayer[] = [

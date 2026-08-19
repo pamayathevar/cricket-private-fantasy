@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, BackHandler, ImageBackground, KeyboardAvoidingView, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, BackHandler, ImageBackground, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Session } from "@supabase/supabase-js";
 import { Player, Role, squadPlayers as players } from "./squadData";
@@ -15,6 +15,11 @@ import { CARD_SHADOW, UI_TOKENS, normalizeUiStyles } from "./uiTokens";
 import { previousNavigation, recordNavigation } from "./navigationHistory";
 import { CommunityScreen, useLeagueChatUnread, useLeagueHeartbeat } from "./CommunityScreen";
 import { useChatNotificationRouter } from "./chatNotifications";
+import { extractSavedCricinfoScorecard, parseScoreIngestionArtifact, type ScoreIngestionArtifactPreview, type ScoreIngestionArtifactSummary } from "./scoreIngestionArtifact";
+import { buildCricinfoPasteImport, ScorecardPasteError, type LeagueScorecardPlayer } from "./cricinfoScorecardPaste";
+import { buildScoreIngestionArtifact } from "./scoreIngestionArtifactBuilder";
+import { browserCaptureStatus, scoreSourceRequiresBrowserCapture } from "./scoreSourceWorkflow";
+import { applyCricbuzzFielderValidation, captureCricbuzzDismissalsWithBrowserExtension, captureScorecardWithBrowserExtension, detectScorecardBrowserExtension, type CricbuzzFielderCorrection, type ScorecardBrowserCapture } from "./scorecardBrowserExtension";
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Community" | "Help" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
@@ -290,6 +295,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   const [historyScorecardBackRequest, setHistoryScorecardBackRequest] = useState(0);
   const activeMembership = memberships.find(item => item.league_id === activeLeagueId && item.status === "active");
   const activeLeague = activeMembership?.league;
+  const headerLeague = tab === "Home" ? undefined : activeLeague;
   const memberName = activeMembership?.display_name ?? memberships.find(item => item.status === "active")?.display_name ?? memberships[0]?.display_name ?? session.user.email?.split("@")[0] ?? "Owner";
   const leagueDatabaseId = activeLeague?.id ?? "";
   useLeagueHeartbeat(leagueDatabaseId, activeMembership?.id ?? "");
@@ -379,13 +385,17 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
     if (!leagueDatabaseId) return;
     let cancelled = false;
     setTeamFixtures([]);
-    const loadOpenFixtures = () => {
+    const loadOpenFixtures = async () => {
+      // The database owns the lock decision. Reconciliation is idempotent,
+      // league-scoped, and time-guarded, so an open app advances a due fixture
+      // without relying on an administrator to edit its status manually.
+      await supabase.rpc("reconcile_due_fixture_lifecycle", { p_league_id: leagueDatabaseId });
+      if (cancelled) return;
       const now = new Date().toISOString();
-      supabase.from("fixtures").select("id,match_number,stage,scheduled_start,lineup_lock_at,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueDatabaseId).eq("status", "scheduled").gt("lineup_lock_at", now).order("match_number").limit(7).then(({ data, error }) => {
-        if (cancelled) return;
-        if (error || !data?.length) { setTeamFixtures([]); return; }
-        setTeamFixtures((data as any[]).map(row => { const start = new Date(row.scheduled_start); return { id: `M${row.match_number}`, databaseId: row.id, stage: row.stage, lineupLockAt: row.lineup_lock_at, home: row.home?.code ?? "TBD", away: row.away?.code ?? "TBD", day: start.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Kolkata" }), time: start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) }; }));
-      });
+      const { data, error } = await supabase.from("fixtures").select("id,match_number,stage,scheduled_start,lineup_lock_at,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueDatabaseId).eq("status", "scheduled").gt("lineup_lock_at", now).order("match_number").limit(7);
+      if (cancelled) return;
+      if (error || !data?.length) { setTeamFixtures([]); return; }
+      setTeamFixtures((data as any[]).map(row => { const start = new Date(row.scheduled_start); return { id: `M${row.match_number}`, databaseId: row.id, stage: row.stage, lineupLockAt: row.lineup_lock_at, home: row.home?.code ?? "TBD", away: row.away?.code ?? "TBD", day: start.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "Asia/Kolkata" }), time: start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) }; }));
     };
     loadOpenFixtures();
     const refreshTimer = setInterval(loadOpenFixtures, 30_000);
@@ -414,7 +424,7 @@ function FantasyApp({ session, memberships, refreshMemberships }: { session: Ses
   return <SafeAreaView edges={showMobileNavigation ? ["top", "left", "right"] : ["top", "bottom", "left", "right"]} style={s.safe}>
     <StatusBar barStyle="light-content" backgroundColor={UI.primaryDeep} translucent={false} />
     <View style={s.appShell}>
-      <View style={[s.header, s.headerModern, useMobileNavigation && s.headerModernMobile]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: activeLeague ? tabAccent(tab) : UI.primary }]} />{Platform.OS !== "web" && canNavigateBack ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" accessibilityHint="Returns to the previous app screen" style={[s.nativeBackButton, useMobileNavigation && s.nativeBackButtonMobile]} onPress={navigateBack}><Text style={s.nativeBackButtonText}>‹</Text></TouchableOpacity> : null}<TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, useMobileNavigation && s.logoModernMobile, tab === "Home" && s.logoHomeActive]} onPress={() => navigateToTab("Home")}><HomeIcon /></TouchableOpacity><View style={[s.headerIdentity, useMobileNavigation && s.headerIdentityMobile]}><Text style={[s.eyebrow, s.eyebrowModern, useMobileNavigation && s.eyebrowModernMobile]}>{activeLeague ? activeLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern, useMobileNavigation && s.brandModernMobile]} numberOfLines={1}>{activeLeague?.name ?? "Cricket Fantasy"}</Text><View style={[s.headerMetaRow, useMobileNavigation && s.headerMetaRowMobile]}><Text style={[s.signedInAs, s.signedInAsModern, useMobileNavigation && s.signedInAsModernMobile]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{activeLeague?.status === "active" && tab !== "Home" ? <View style={[s.livePill, useMobileNavigation && s.livePillMobile]}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
+      <View style={[s.header, s.headerModern, useMobileNavigation && s.headerModernMobile]}><View pointerEvents="none" style={[s.headerAccent, { backgroundColor: headerLeague ? tabAccent(tab) : UI.primary }]} />{Platform.OS !== "web" && canNavigateBack ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" accessibilityHint="Returns to the previous app screen" style={[s.nativeBackButton, useMobileNavigation && s.nativeBackButtonMobile]} onPress={navigateBack}><Text style={s.nativeBackButtonText}>‹</Text></TouchableOpacity> : null}<TouchableOpacity accessibilityRole="button" accessibilityLabel="Home" style={[s.logo, s.logoModern, useMobileNavigation && s.logoModernMobile, tab === "Home" && s.logoHomeActive]} onPress={() => navigateToTab("Home")}><HomeIcon /></TouchableOpacity><View style={[s.headerIdentity, useMobileNavigation && s.headerIdentityMobile]}><Text style={[s.eyebrow, s.eyebrowModern, useMobileNavigation && s.eyebrowModernMobile]}>{headerLeague ? headerLeague.competition.toUpperCase() : "PRIVATE FANTASY"}</Text><Text style={[s.brand, s.brandModern, useMobileNavigation && s.brandModernMobile]} numberOfLines={1}>{headerLeague?.name ?? "Cricket Fantasy"}</Text><View style={[s.headerMetaRow, useMobileNavigation && s.headerMetaRowMobile]}><Text style={[s.signedInAs, s.signedInAsModern, useMobileNavigation && s.signedInAsModernMobile]} numberOfLines={1}>{memberName}</Text></View></View><View style={s.headerActions}>{headerLeague?.status === "active" ? <View style={[s.livePill, useMobileNavigation && s.livePillMobile]}><View style={s.liveDot} /><Text style={s.live}>Live</Text></View> : <TouchableOpacity accessibilityRole="button" style={[s.signOutButton, s.signOutButtonModern]} onPress={() => supabase.auth.signOut()}><Text style={[s.signOutText, s.signOutTextModern]}>Sign out</Text></TouchableOpacity>}</View></View>
       {activeLeague && tab !== "Home" && !useMobileNavigation ? <View style={s.topNavigationShell}><ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} contentContainerStyle={s.topNavigationContent}>{tabs.map(item => {
         const active = tab === item;
         const accent = tabAccent(item);
@@ -529,8 +539,10 @@ type TransferPeriodForm = { id?: string; code: string; name: string; start: stri
 type TransferPeriod = { id: string; code: string; name: string; start_match_number: number; end_match_number: number; transfer_limit: number; first_match_free: boolean };
 type LeaguePhase = { code: string; name: string; start_match_number: number; end_match_number: number };
 type BoosterRuleSetting = { code: Exclude<BoosterCode, "">; total_usage_limit: number; phase_usage_limits: Record<string, number> };
-type PlayingRuleForm = Record<"lineup_size" | "lineup_budget" | "min_batters" | "min_bowlers" | "min_wicketkeepers" | "min_all_rounders" | "max_from_one_team" | "captain_multiplier" | "vice_captain_multiplier" | "impact_multiplier" | "other_owner_penalty_percent" | "other_owner_minimum_penalty", string>;
-type PointRuleForm = Record<"run" | "four_bonus" | "six_bonus" | "duck" | "golden_duck" | "bowler_wicket" | "non_bowler_wicket" | "maiden" | "dot_ball" | "catch" | "stumping" | "run_out" | "player_of_match" | "winning_participant", string>;
+const playingNumericRuleKeys = ["lineup_size", "lineup_budget", "min_batters", "min_bowlers", "min_wicketkeepers", "min_all_rounders", "max_from_one_team", "captain_multiplier", "vice_captain_multiplier", "impact_multiplier", "other_owner_penalty_percent", "other_owner_minimum_penalty"] as const;
+type PlayingNumericRuleKey = typeof playingNumericRuleKeys[number];
+type PlayingRuleForm = Record<PlayingNumericRuleKey, string> & { substitute_fielder_points_enabled: boolean };
+type PointRuleForm = Record<"run" | "four_bonus" | "six_bonus" | "duck" | "golden_duck" | "bowler_wicket" | "non_bowler_wicket" | "direct_wicket_bonus" | "maiden" | "dot_ball" | "catch" | "stumping" | "run_out" | "shared_run_out" | "player_of_match" | "winning_participant", string>;
 type LeagueFormatForm = { acquisition_mode: "auction" | "all_open"; bidding_enabled: boolean; other_owner_deductions_enabled: boolean; marquee_enabled: boolean; unique_players_enabled: boolean; unique_scope: "match" | "phase" | "league"; royalty_enabled: boolean };
 type SpecialPlayerRuleForm = {
   unique_mode_enabled: boolean; unique_players_per_owner: string;
@@ -544,8 +556,8 @@ type SpecialPlayerRuleForm = {
   automatic_unique_enabled: boolean; automatic_unique_usage_threshold: string;
   phase_change_deadline_hours: string; mid_phase_replacement_allowed: boolean;
 };
-const defaultPlayingRules: PlayingRuleForm = { lineup_size: "11", lineup_budget: "100", min_batters: "2", min_bowlers: "2", min_wicketkeepers: "1", min_all_rounders: "1", max_from_one_team: "7", captain_multiplier: "2", vice_captain_multiplier: "1.5", impact_multiplier: "2", other_owner_penalty_percent: "30", other_owner_minimum_penalty: "15" };
-const defaultPointRules: PointRuleForm = { run: "1", four_bonus: "1", six_bonus: "2", duck: "-2", golden_duck: "-4", bowler_wicket: "15", non_bowler_wicket: "20", maiden: "10", dot_ball: "2", catch: "10", stumping: "10", run_out: "10", player_of_match: "15", winning_participant: "2" };
+const defaultPlayingRules: PlayingRuleForm = { lineup_size: "11", lineup_budget: "100", min_batters: "2", min_bowlers: "2", min_wicketkeepers: "1", min_all_rounders: "1", max_from_one_team: "7", captain_multiplier: "2", vice_captain_multiplier: "1.5", impact_multiplier: "2", other_owner_penalty_percent: "30", other_owner_minimum_penalty: "15", substitute_fielder_points_enabled: false };
+const defaultPointRules: PointRuleForm = { run: "1", four_bonus: "1", six_bonus: "2", duck: "-2", golden_duck: "-4", bowler_wicket: "15", non_bowler_wicket: "20", direct_wicket_bonus: "10", maiden: "10", dot_ball: "2", catch: "10", stumping: "10", run_out: "10", shared_run_out: "10", player_of_match: "15", winning_participant: "2" };
 const defaultSpecialPlayerRules: SpecialPlayerRuleForm = { unique_mode_enabled: false, unique_players_per_owner: "2", other_player_fee_percent: "30", other_player_minimum_fee: "15", unique_restrict_captain: true, unique_restrict_vice_captain: true, unique_restrict_impact: true, unique_restrict_3x: true, marquee_mode_enabled: false, marquee_players_per_owner: "2", regular_royalty_percent: "5", regular_minimum_royalty: "5", marquee_royalty_percent: "15", marquee_minimum_royalty: "15", royalty_zero_floor: true, royalty_rounding: "immediate_whole_point", automatic_unique_enabled: true, automatic_unique_usage_threshold: "56", phase_change_deadline_hours: "24", mid_phase_replacement_allowed: false };
 const AdminEditContext = React.createContext(true);
 
@@ -835,6 +847,7 @@ const helpTopics: HelpTopic[] = [
     bullets: [
       "Submit XI stores a valid match sheet. SAVED is confirmation, not a button; change a player or match role and it becomes Resubmit XI.",
       "The latest valid submitted XI automatically starts the next match. You can edit that carried team until the next match locks.",
+      "If you do not submit a new XI before lock, the last eligible valid XI is shown in Results as AUTO / CARRIED with zero match transfers. Its booster is not copied. If you have no earlier valid XI, there is no team to carry.",
       "A booster never carries forward. Every new fixture begins with no booster, even when all 11 players carry forward.",
       "Resubmitting an earlier unlocked match resets every later submitted XI that is still unlocked. Their transfers and boosters are refunded, and those matches must be submitted again in order.",
       "Normal resubmission cannot change an earlier XI once a later submitted XI has locked. No Result settlement is the special exception: it preserves the locked later XI and recalculates its transfer charge.",
@@ -878,6 +891,9 @@ const helpTopics: HelpTopic[] = [
     id: "scoring", icon: "＋", title: "Points and calculation order", summary: "Where totals come from and why published history does not change.",
     bullets: [
       "Player totals combine the live batting, bowling, fielding and bonus rules, including configured milestones, strike-rate and economy rules.",
+      "An Impact or concussion substitute who appears in the official batting or bowling table earns the normal points for those recorded contributions.",
+      "A fielding-only substitute remains visible in dismissal details. Catch, stumping and run-out points are awarded only when Playing Rules → Substitute fielder points is enabled; the default is OFF.",
+      "A scorecard with 13 or more verified participants for one team can be reviewed as an exception. It creates a compiler warning, and an administrator must identify the extra participant and record approval notes before staging.",
       "C/VC multiply the eligible full player contribution. BAI/BOI multiply only the selected discipline. 3X applies to its target; 2UP doubles the final owner total.",
       "Other-player deductions or royalty are calculated under the league's active format and displayed as explainable adjustments in Results.",
       "Negative player and owner totals are valid when penalties or minimum other-player fees exceed positive points.",
@@ -948,7 +964,9 @@ function HelpScreen({ openTeam, openFixtures, openHistory, openRules }: { openTe
     ["What if I did not submit the cancelled match?", "Your later XI and transfer records are untouched. No Result resets/rebases only owners whose lineup chain used the void fixture."],
     ["Does a booster carry to the next match?", "No. Players may carry forward, but every fixture starts with no booster selected. A booster must be explicitly selected and submitted for that match."],
     ["Why did an other-owner player score negative points?", "In a Unique/fee league, the configured minimum borrowing fee may apply even when the player's contribution is zero. With a 15-point minimum, zero becomes −15."],
+    ["Does a substitute player receive fantasy points?", "Yes when the substitute bats or bowls: those recorded contributions score normally. A fielding-only substitute scores only when the live Substitute fielder points rule is enabled. If the official scorecard produces 13 or more participants for a team, an administrator must verify the exception and enter approval notes before staging."],
     ["When can other owners see my team?", "When lineup privacy is enabled, other owners cannot see it until that fixture locks."],
+    ["What happens if I do not submit a new XI?", "At lock, your latest eligible valid XI carries forward automatically with zero match transfers and no booster. Results marks it AUTO / CARRIED. If you have never submitted a valid XI, there is no team to carry."],
     ["Why can’t I submit a later fixture?", "An earlier open fixture may need a submitted XI first. Open the indicated prior match and submit it before continuing."],
     ["Can an injured Unique or Marquee Player be replaced immediately?", "Not under the confirmed default. The player remains fixed for the current phase and can change only in the next eligible selection window; the playoff phase does not allow changes."],
     ["Which rule value should I trust?", "Trust the values shown on the selected match sheet and live Rules page. This guide explains behavior, but league and fixture-effective configuration controls the actual limits."],
@@ -1013,6 +1031,142 @@ function HelpScreen({ openTeam, openFixtures, openHistory, openRules }: { openTe
   </ScrollView>;
 }
 
+const formatScorecardOvers = (balls: number) => `${Math.floor(balls / 6)}.${balls % 6}`;
+const IPL_TEAM_NAMES: Record<string, string> = {
+  CSK: "chennai super kings", DC: "delhi capitals", GT: "gujarat titans", KKR: "kolkata knight riders",
+  LSG: "lucknow super giants", MI: "mumbai indians", PBKS: "punjab kings", RCB: "royal challengers bengaluru",
+  RR: "rajasthan royals", SRH: "sunrisers hyderabad",
+};
+
+const capturedFirstInningsTeam = (capture: ScorecardBrowserCapture, fixture: any) => {
+  const name = String(capture.match.firstInningsTeamName ?? "").toLowerCase();
+  const fixtureCodes = [fixture?.home?.code, fixture?.away?.code].filter(Boolean).map(String);
+  return fixtureCodes.find(code => name.includes(IPL_TEAM_NAMES[code] ?? "__no_match__"))
+    ?? "";
+};
+
+const scoreSourceSupportsExtension = (value: string) => {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return ["espncricinfo.com", "cricinfo.com"].some(root => host === root || host.endsWith(`.${root}`));
+  } catch {
+    return false;
+  }
+};
+
+type ScoreReviewSource = {
+  sourceUrl: string;
+  firstInningsTeam: string;
+  winnerTeam: string;
+  resultSummary: string;
+  playerOfMatchName: string;
+  aliases: string;
+  firstInningsBatting: string;
+  firstInningsBowling: string;
+  secondInningsBatting: string;
+  secondInningsBowling: string;
+  fielderValidation?: {
+    provider: "cricbuzz";
+    sourceUrl: string;
+    corrections: CricbuzzFielderCorrection[];
+  };
+};
+
+function HumanScorePreview({ preview, fixture }: { preview: ScoreIngestionArtifactPreview; fixture: any }) {
+  const totals: Array<[string, number]> = [
+    ["BATTING", preview.battingPoints],
+    ["BOWLING", preview.bowlingPoints],
+    ["FIELDING", preview.fieldingPoints],
+    ["BONUS", preview.bonusPoints],
+    ["MATCH TOTAL", preview.totalPoints],
+  ];
+  const innings = [
+    { number: 1 as const, battingTeam: preview.firstInningsTeam, bowlingTeam: preview.secondInningsTeam, score: preview.firstInningsScore },
+    { number: 2 as const, battingTeam: preview.secondInningsTeam, bowlingTeam: preview.firstInningsTeam, score: preview.secondInningsScore },
+  ];
+  const numberCell = (value: string | number, width = 48, emphasized = false) => <Text style={[s.scoreTableCell, { width }, emphasized && s.scoreTableCellStrong]}>{value}</Text>;
+  const strikeRate = (runs: number, balls: number) => balls ? (runs * 100 / balls).toFixed(2) : "—";
+  const economyRate = (runs: number, balls: number) => balls ? (runs * 6 / balls).toFixed(2) : "—";
+
+  return <View style={s.scorePreview}>
+    <View style={s.scorePreviewHeader}>
+      <Text style={s.scorePreviewEyebrow}>HUMAN-READABLE REVIEW</Text>
+      <Text style={s.scorePreviewTitle}>Scoreboard preview</Text>
+      <Text style={s.scorePreviewResult}>{preview.resultSummary}</Text>
+    </View>
+    <View style={s.scorePreviewTotals}>
+      {totals.map(([label, value]) => <View key={label} style={[s.scorePreviewTotal, label === "MATCH TOTAL" && s.scorePreviewTotalPrimary]}>
+        <Text style={s.scorePreviewTotalLabel}>{label}</Text>
+        <Text style={s.scorePreviewTotalValue}>{value} pts</Text>
+      </View>)}
+    </View>
+    <View style={s.scoreMatchSummary}>
+      <View style={s.scoreMatchSummaryItem}><Text style={s.scoreMatchSummaryLabel}>WINNER</Text><Text style={s.scoreMatchSummaryValue}>{preview.winnerTeam}</Text></View>
+      <View style={s.scoreMatchSummaryItem}><Text style={s.scoreMatchSummaryLabel}>PLAYER OF THE MATCH</Text><Text style={s.scoreMatchSummaryValue}>{preview.playerOfMatchName}</Text></View>
+    </View>
+    {innings.map(item => {
+      const batters = preview.players.filter(player => player.team === item.battingTeam)
+        .sort((left, right) => left.battingOrder - right.battingOrder || left.name.localeCompare(right.name));
+      const hasCapturedBattingOrder = batters.some(player => player.dismissalText || player.battingOrder < Number.MAX_SAFE_INTEGER);
+      const displayedBatters = hasCapturedBattingOrder ? batters.filter(player => player.dismissalText !== "did not bat") : batters;
+      const didNotBat = batters.filter(player => player.dismissalText === "did not bat");
+      const bowlers = preview.players.filter(player => player.team === item.bowlingTeam && (player.ballsBowled > 0 || player.wickets > 0 || player.bowlingPoints !== 0))
+        .sort((left, right) => left.bowlingOrder - right.bowlingOrder || left.name.localeCompare(right.name));
+      return <View key={item.number} style={s.scoreInnings}>
+        <View style={s.scoreInningsHeader}>
+          <View style={s.scoreInningsNumber}><Text style={s.scoreInningsNumberText}>{item.number}</Text></View>
+          <View style={{ flex: 1 }}><Text style={s.scoreInningsTitle}>{item.number === 1 ? "First" : "Second"} innings</Text><Text style={s.scoreInningsSubtitle}>{item.battingTeam} batting · {item.bowlingTeam} bowling</Text></View>
+          <View style={s.scoreInningsScoreBlock}><Text style={s.scoreInningsScoreTeam}>{item.battingTeam}</Text><Text style={s.scoreInningsScoreValue}>{item.score}</Text></View>
+        </View>
+
+        <View style={s.scoreDisciplineHeader}><IplTeamBadge code={item.battingTeam} /><View><Text style={s.scoreDisciplineTitle}>{item.battingTeam} batting</Text><Text style={s.scoreDisciplineSubtitle}>Dismissal details are copied from the verified scorecard</Text></View></View>
+        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={s.scoreTableScroll}>
+          <View style={s.scoreTable}>
+            <View style={[s.scoreTableRow, s.scoreTableHeaderRow]}><Text style={[s.scoreTableHeader, { width: 190 }]}>BATTING</Text><Text style={[s.scoreTableHeader, { width: 250 }]}></Text>{["R", "B", "4s", "6s", "SR"].map((label, index) => <Text key={label} style={[s.scoreTableHeader, { width: index > 3 ? 66 : 48 }]}>{label}</Text>)}</View>
+            {displayedBatters.map(player => <View key={`${item.number}:bat:${player.playerId}`} style={s.scoreTableRow}>
+              <View style={{ width: 190 }}><View style={s.scoreTablePlayerRow}><Text numberOfLines={1} style={s.scoreTablePlayer}>{player.name}</Text><Text style={s.scoreTableRole}>{player.role}</Text>{player.playerOfMatch ? <View style={s.scorePreviewBadge}><Text style={s.scorePreviewBadgeText}>POTM</Text></View> : null}</View></View>
+              <Text numberOfLines={2} style={[s.scoreTableDismissal, { width: 250 }]}>{player.dismissalText || (player.runs || player.balls ? "Dismissal detail unavailable" : "did not bat")}</Text>
+              {numberCell(player.runs)}{numberCell(player.balls)}{numberCell(player.fours)}{numberCell(player.sixes)}{numberCell(strikeRate(player.runs, player.balls), 66)}
+            </View>)}
+            <View style={[s.scoreTableRow, s.scoreTableTotalRow]}><Text style={[s.scoreTableTotalLabel, { width: 440 }]}>TOTAL</Text><Text style={s.scoreTableTotalScore}>{item.score}</Text></View>
+          </View>
+        </ScrollView>
+        {didNotBat.length ? <Text style={s.scoreDidNotBat}><Text style={s.scoreDidNotBatLabel}>Did not bat: </Text>{didNotBat.map(player => player.name).join(", ")}</Text> : null}
+
+        <View style={s.scoreDisciplineHeader}><IplTeamBadge code={item.bowlingTeam} /><View><Text style={s.scoreDisciplineTitle}>{item.bowlingTeam} bowling</Text><Text style={s.scoreDisciplineSubtitle}>Overs, maidens, runs, wickets and dot balls</Text></View></View>
+        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={s.scoreTableScroll}>
+          <View style={[s.scoreTable, s.scoreBowlingTable]}>
+            <View style={[s.scoreTableRow, s.scoreTableHeaderRow]}><Text style={[s.scoreTableHeader, { width: 190 }]}>BOWLING</Text>{["O", "M", "R", "W", "ECON", "0s"].map(label => <Text key={label} style={[s.scoreTableHeader, { width: 56 }]}>{label}</Text>)}</View>
+            {bowlers.length ? bowlers.map(player => <View key={`${item.number}:bowl:${player.playerId}`} style={s.scoreTableRow}>
+              <View style={{ width: 190 }}><View style={s.scoreTablePlayerRow}><Text numberOfLines={1} style={s.scoreTablePlayer}>{player.name}</Text><Text style={s.scoreTableRole}>{player.role}</Text></View></View>
+              {numberCell(formatScorecardOvers(player.ballsBowled), 56)}{numberCell(player.maidens, 56)}{numberCell(player.runsConceded, 56)}{numberCell(player.wickets, 56, player.wickets > 0)}{numberCell(economyRate(player.runsConceded, player.ballsBowled), 56)}{numberCell(player.dots, 56)}
+            </View>) : <Text style={s.scoreTableEmpty}>No bowling figures were recorded for this innings.</Text>}
+          </View>
+        </ScrollView>
+      </View>;
+    })}
+    <View style={s.scoreFantasySection}>
+      <View style={s.scoreFantasyHeader}><Text style={s.scoreFantasyEyebrow}>PUBLICATION REVIEW</Text><Text style={s.scoreFantasyTitle}>Fantasy points by team</Text><Text style={s.scoreFantasySubtitle}>All player and category totals that will be published</Text></View>
+      <View style={s.scoreRoyaltyNotice}><Text style={s.scoreRoyaltyNoticeTitle}>ROY is calculated at publication</Text><Text style={s.scoreRoyaltyNoticeText}>Royalty depends on league ownership and submitted owner XIs. It remains pending in this player-score review and is applied separately when scores are published.</Text></View>
+      {[preview.firstInningsTeam, preview.secondInningsTeam].map(team => {
+        const teamPlayers = preview.players.filter(player => player.team === team)
+          .sort((left, right) => left.name.localeCompare(right.name));
+        const teamTotals = teamPlayers.reduce((sum, player) => ({ batting: sum.batting + player.battingPoints, bowling: sum.bowling + player.bowlingPoints, fielding: sum.fielding + player.fieldingPoints, bonus: sum.bonus + player.bonusPoints, total: sum.total + player.totalPoints }), { batting: 0, bowling: 0, fielding: 0, bonus: 0, total: 0 });
+        return <View key={`fantasy:${team}`} style={s.scoreFantasyTeam}>
+          <View style={s.scoreFantasyTeamHeader}><IplTeamBadge code={team} /><Text style={s.scoreFantasyTeamTitle}>{team}</Text><Text style={s.scoreFantasyTeamTotal}>{teamTotals.total} FP</Text></View>
+          <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={s.scoreTableScroll}>
+            <View style={s.scoreFantasyTable}>
+              <View style={[s.scoreTableRow, s.scoreTableHeaderRow]}><Text style={[s.scoreTableHeader, { width: 220, textAlign: "left" }]}>PLAYER</Text>{["BAT", "BOWL", "FIELD", "BONUS", "ROY", "TOTAL"].map(label => <Text key={label} style={[s.scoreTableHeader, { width: 72 }]}>{label}</Text>)}</View>
+              {teamPlayers.map(player => <View key={`fantasy:${player.playerId}`} style={s.scoreTableRow}><View style={{ width: 220 }}><View style={s.scoreTablePlayerRow}><Text numberOfLines={1} style={s.scoreTablePlayer}>{player.name}</Text><Text style={s.scoreTableRole}>{player.role}</Text>{player.playerOfMatch ? <View style={s.scorePreviewBadge}><Text style={s.scorePreviewBadgeText}>POTM</Text></View> : null}{!player.playingXI ? <View style={s.scorePreviewBadge}><Text style={s.scorePreviewBadgeText}>NOT IN XI</Text></View> : null}</View></View>{numberCell(player.battingPoints, 72)}{numberCell(player.bowlingPoints, 72)}{numberCell(player.fieldingPoints, 72)}{numberCell(player.bonusPoints, 72)}<Text style={[s.scoreTableCell, s.scoreRoyaltyPending, { width: 72 }]}>—</Text>{numberCell(player.totalPoints, 72, true)}</View>)}
+              <View style={[s.scoreTableRow, s.scoreFantasyTotalRow]}><Text style={[s.scoreFantasyTotalLabel, { width: 220 }]}>TEAM TOTAL</Text>{numberCell(teamTotals.batting, 72, true)}{numberCell(teamTotals.bowling, 72, true)}{numberCell(teamTotals.fielding, 72, true)}{numberCell(teamTotals.bonus, 72, true)}<Text style={[s.scoreTableCell, s.scoreRoyaltyPending, { width: 72 }]}>PENDING</Text>{numberCell(teamTotals.total, 72, true)}</View>
+            </View>
+          </ScrollView>
+        </View>;
+      })}
+    </View>
+  </View>;
+}
+
 function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: { leagueId: string; leagueName: string; canEdit: boolean; onLeaguesChanged: () => Promise<void> }) {
   const [section, setSection] = useState<AdminSection>("format");
   const adminScrollRef = useRef<ScrollView>(null);
@@ -1023,15 +1177,57 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [playing, setPlaying] = useState<PlayingRuleForm>(defaultPlayingRules);
   const [points, setPoints] = useState<PointRuleForm>(defaultPointRules);
   const [scoringDocument, setScoringDocument] = useState<any>(null);
+  const [scoringRuleSetId, setScoringRuleSetId] = useState("");
   const [versions, setVersions] = useState({ playing: 1, points: 1 });
   const [playingEffectiveMatch, setPlayingEffectiveMatch] = useState("6");
   const [pointsEffectiveMatch, setPointsEffectiveMatch] = useState("6");
   const [phases, setPhases] = useState<PhaseForm[]>([]);
   const [transferPeriods, setTransferPeriods] = useState<TransferPeriodForm[]>([]);
   const [scoringFixtures, setScoringFixtures] = useState<any[]>([]);
+  const [scoreImportFixture, setScoreImportFixture] = useState<any | null>(null);
+  const [scoreArtifactText, setScoreArtifactText] = useState("");
+  const [scoreReviewNotes, setScoreReviewNotes] = useState("");
+  const [scoreImportSummary, setScoreImportSummary] = useState<ScoreIngestionArtifactSummary | null>(null);
+  const [scoreImportPreview, setScoreImportPreview] = useState<ScoreIngestionArtifactPreview | null>(null);
+  const [scoreImportStaged, setScoreImportStaged] = useState(false);
+  const [scorePublishConfirming, setScorePublishConfirming] = useState(false);
+  const [scorePublicationComplete, setScorePublicationComplete] = useState(false);
+  const [showScoreRawJson, setShowScoreRawJson] = useState(false);
+  const [scoreImportError, setScoreImportError] = useState("");
+  const [scoreImportConflict, setScoreImportConflict] = useState(false);
+  const [scoreSourceUrl, setScoreSourceUrl] = useState("");
+  const [scoreSourceStatus, setScoreSourceStatus] = useState("");
+  const [scoreCaptureExtensionAvailable, setScoreCaptureExtensionAvailable] = useState(false);
+  const [scoreCaptureExtensionChecking, setScoreCaptureExtensionChecking] = useState(false);
+  const [scoreImportMode, setScoreImportMode] = useState<"url" | "paste" | "json">("url");
+  const [scorePasteFirstTeam, setScorePasteFirstTeam] = useState("");
+  const [scorePasteWinner, setScorePasteWinner] = useState("");
+  const [scorePasteResult, setScorePasteResult] = useState("");
+  const [scorePastePlayerOfMatch, setScorePastePlayerOfMatch] = useState("");
+  const [scorePasteAliases, setScorePasteAliases] = useState("");
+  const [scorePasteFirstBatting, setScorePasteFirstBatting] = useState("");
+  const [scorePasteFirstBowling, setScorePasteFirstBowling] = useState("");
+  const [scorePasteSecondBatting, setScorePasteSecondBatting] = useState("");
+  const [scorePasteSecondBowling, setScorePasteSecondBowling] = useState("");
+  const [scoreCricbuzzUrl, setScoreCricbuzzUrl] = useState("");
+  const [scoreFielderValidationRequired, setScoreFielderValidationRequired] = useState(false);
+  const [scoreFielderValidation, setScoreFielderValidation] = useState<ScoreReviewSource["fielderValidation"]>();
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const runAction = useActionGuard();
+  useWebModalFocus(!!scoreImportFixture, "score-ingestion-dialog");
+
+  useEffect(() => {
+    if (!scoreImportFixture || Platform.OS !== "web") return;
+    let mounted = true;
+    setScoreCaptureExtensionChecking(true);
+    detectScorecardBrowserExtension().then(available => {
+      if (!mounted) return;
+      setScoreCaptureExtensionAvailable(available);
+      setScoreCaptureExtensionChecking(false);
+    });
+    return () => { mounted = false; };
+  }, [scoreImportFixture?.id]);
 
   useEffect(() => {
     adminScrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -1052,10 +1248,14 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
         setMessage(playingResult.error?.message ?? scoringResult.error?.message ?? "Unable to load rules");
       } else {
         const rule = playingResult.data as any;
-        setPlaying(Object.fromEntries(Object.keys(defaultPlayingRules).map(key => [key, String(rule[key])])) as PlayingRuleForm);
+        setPlaying({
+          ...Object.fromEntries(playingNumericRuleKeys.map(key => [key, String(rule[key])])) as Record<PlayingNumericRuleKey, string>,
+          substitute_fielder_points_enabled: rule.substitute_fielder_points_enabled === true,
+        });
         const scoring = (scoringResult.data as any).rules;
+        setScoringRuleSetId((scoringResult.data as any).id);
         setScoringDocument(scoring);
-        setPoints({ run: String(scoring.batting.run), four_bonus: String(scoring.batting.four_bonus), six_bonus: String(scoring.batting.six_bonus), duck: String(scoring.batting.duck_non_bowler), golden_duck: String(scoring.batting.golden_or_diamond_duck_non_bowler), bowler_wicket: String(scoring.bowling.dismissed_bowler_wicket), non_bowler_wicket: String(scoring.bowling.dismissed_non_bowler_wicket), maiden: String(scoring.bowling.maiden), dot_ball: String(scoring.bowling.dot_ball), catch: String(scoring.fielding.catch), stumping: String(scoring.fielding.stumping), run_out: String(scoring.fielding.run_out), player_of_match: String(scoring.bonus.player_of_match), winning_participant: String(scoring.bonus.winning_participant) });
+        setPoints({ run: String(scoring.batting.run), four_bonus: String(scoring.batting.four_bonus), six_bonus: String(scoring.batting.six_bonus), duck: String(scoring.batting.duck_non_bowler), golden_duck: String(scoring.batting.golden_or_diamond_duck_non_bowler), bowler_wicket: String(scoring.bowling.dismissed_bowler_wicket), non_bowler_wicket: String(scoring.bowling.dismissed_non_bowler_wicket), direct_wicket_bonus: String(scoring.bowling.direct_wicket_bonus ?? 10), maiden: String(scoring.bowling.maiden), dot_ball: String(scoring.bowling.dot_ball), catch: String(scoring.fielding.catch), stumping: String(scoring.fielding.stumping), run_out: String(scoring.fielding.run_out), shared_run_out: String(scoring.fielding.shared_run_out ?? 10), player_of_match: String(scoring.bonus.player_of_match), winning_participant: String(scoring.bonus.winning_participant) });
         setVersions({ playing: rule.version, points: (scoringResult.data as any).version });
         setPlayingEffectiveMatch(String(rule.effective_from_match_number ?? 1));
         setPointsEffectiveMatch(String((scoringResult.data as any).effective_from_match_number ?? 1));
@@ -1085,11 +1285,613 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     });
     return () => { mounted = false; };
   }, [leagueId]);
-  const loadScoringFixtures = () => supabase.from("fixtures").select("id,match_number,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code)").eq("league_id", leagueId).in("status", ["live", "completed", "abandoned", "cancelled"]).order("match_number", { ascending: false }).then(({ data, error }) => {
+  const loadScoringFixtures = async () => {
+    const lifecycleResult = await supabase.rpc("reconcile_due_fixture_lifecycle", { p_league_id: leagueId });
+    if (lifecycleResult.error) setMessage(userActionError(lifecycleResult.error, "Fixture lifecycle update"));
+    const { data, error } = await supabase.from("fixtures").select("id,match_number,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),score_ingestion_batches(id,status,calculation_version,source_provider,external_match_id,source_fingerprint,warning_count,review_artifact,created_at)").eq("league_id", leagueId).in("status", ["live", "completed", "abandoned", "cancelled"]).order("match_number", { ascending: false });
     if (error) setMessage(userActionError(error, "Completed matches"));
-    else setScoringFixtures(data ?? []);
-  });
+    else {
+      const fixtureRows = data ?? [];
+      const fixtureIds = fixtureRows.map((fixture: any) => fixture.id);
+      const jobsResult = fixtureIds.length ? await supabase.from("score_ingestion_jobs").select("id,fixture_id,status,status_message,provider_key,source_host,error_code,created_at").eq("league_id", leagueId).in("fixture_id", fixtureIds).order("created_at", { ascending: false }) : { data: [], error: null } as any;
+      const jobsByFixture = new Map<string, any[]>();
+      for (const job of jobsResult.data ?? []) jobsByFixture.set(job.fixture_id, [...(jobsByFixture.get(job.fixture_id) ?? []), job]);
+      setScoringFixtures(fixtureRows.map((fixture: any) => ({ ...fixture, score_ingestion_jobs: jobsByFixture.get(fixture.id) ?? [] })));
+      if (jobsResult.error && !String(jobsResult.error.message ?? "").includes("score_ingestion_jobs")) setMessage(userActionError(jobsResult.error, "Score import jobs"));
+    }
+  };
   useEffect(() => { if (section === "scoring") loadScoringFixtures(); }, [section]);
+
+  const closeScoreImport = () => {
+    setScoreImportFixture(null);
+    setScoreArtifactText("");
+    setScoreReviewNotes("");
+    setScoreImportSummary(null);
+    setScoreImportPreview(null);
+    setScoreImportStaged(false);
+    setScorePublishConfirming(false);
+    setScorePublicationComplete(false);
+    setShowScoreRawJson(false);
+    setScoreImportError("");
+    setScoreImportConflict(false);
+    setScoreSourceUrl("");
+    setScoreSourceStatus("");
+    setScorePasteFirstTeam("");
+    setScorePasteWinner("");
+    setScorePasteResult("");
+    setScorePastePlayerOfMatch("");
+    setScorePasteAliases("");
+    setScorePasteFirstBatting("");
+    setScorePasteFirstBowling("");
+    setScorePasteSecondBatting("");
+    setScorePasteSecondBowling("");
+    setScoreCricbuzzUrl("");
+    setScoreFielderValidationRequired(false);
+    setScoreFielderValidation(undefined);
+    setScoreImportMode("url");
+  };
+  const openScoreImport = (fixture: any) => {
+    setScoreImportFixture(fixture);
+    setScoreArtifactText("");
+    setScoreReviewNotes("");
+    setScoreImportSummary(null);
+    setScoreImportPreview(null);
+    setScoreImportStaged(false);
+    setScorePublishConfirming(false);
+    setScorePublicationComplete(false);
+    setShowScoreRawJson(false);
+    setScoreImportError("");
+    setScoreImportConflict(false);
+    setScoreSourceUrl("");
+    setScoreSourceStatus("");
+    setScorePasteFirstTeam(fixture.home?.code ?? "");
+    setScorePasteWinner(fixture.home?.code ?? "");
+    setScorePasteResult("");
+    setScorePastePlayerOfMatch("");
+    setScorePasteAliases("");
+    setScorePasteFirstBatting("");
+    setScorePasteFirstBowling("");
+    setScorePasteSecondBatting("");
+    setScorePasteSecondBowling("");
+    setScoreCricbuzzUrl("");
+    setScoreFielderValidationRequired(false);
+    setScoreFielderValidation(undefined);
+    setScoreImportMode("url");
+  };
+  const openStagedScoreReview = (fixture: any, batch?: any) => {
+    const batches = Array.isArray(fixture.score_ingestion_batches) ? [...fixture.score_ingestion_batches] : [];
+    const selected = batch ?? batches.sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+    openScoreImport(fixture);
+    setScoreImportMode("json");
+    if (!selected?.review_artifact) {
+      setScoreImportError("The staged review artifact could not be loaded.");
+      return;
+    }
+    const artifactText = JSON.stringify(selected.review_artifact, null, 2);
+    setScoreArtifactText(artifactText);
+    try {
+      const parsed = parseScoreIngestionArtifact(artifactText, { leagueId, fixtureId: fixture.id, matchNumber: fixture.match_number });
+      setScoreImportSummary(parsed.summary);
+      setScoreImportPreview(parsed.preview);
+      setScoreImportStaged(true);
+      setShowScoreRawJson(false);
+      setScoreImportConflict(false);
+      setScoreImportError("");
+    } catch (error) {
+      setScoreImportError(error instanceof Error ? error.message : "The staged score review could not be loaded.");
+    }
+  };
+  const reviewLatestStagedBatch = () => {
+    const fixture = scoringFixtures.find(row => row.id === scoreImportFixture?.id) ?? scoreImportFixture;
+    if (!fixture) return;
+    const batches = Array.isArray(fixture.score_ingestion_batches) ? [...fixture.score_ingestion_batches] : [];
+    const matchingFingerprint = scoreImportSummary?.sourceFingerprint;
+    const matching = matchingFingerprint
+      ? batches.find((batch: any) => String(batch.source_fingerprint).toLocaleLowerCase() === matchingFingerprint.toLocaleLowerCase())
+      : null;
+    const latest = batches.sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+    openStagedScoreReview(fixture, matching ?? latest);
+  };
+  const openScorecardSource = async () => {
+    const sourceUrl = scoreSourceUrl.trim();
+    if (!/^https:\/\//i.test(sourceUrl)) {
+      setScoreImportError("Enter the HTTPS Cricinfo scorecard URL before opening it.");
+      return;
+    }
+    const supported = await Linking.canOpenURL(sourceUrl);
+    if (!supported) {
+      setScoreImportError("This device cannot open the scorecard URL.");
+      return;
+    }
+    await Linking.openURL(sourceUrl);
+  };
+  const loadLeagueScorecardPlayers = async () => {
+    const { data, error } = await supabase
+      .from("league_players")
+      .select("player_id,player:players!inner(id,full_name,role,team:cricket_teams(code))")
+      .eq("league_id", leagueId)
+      .eq("active", true);
+    if (error) throw error;
+    return (data ?? []).flatMap((row: any) => {
+      const player = row.player;
+      const team = Array.isArray(player?.team) ? player.team[0] : player?.team;
+      if (!row.player_id || !player?.full_name || !player?.role || !team?.code) return [];
+      return [{ playerId: row.player_id, name: player.full_name, role: player.role, team: team.code } as LeagueScorecardPlayer];
+    });
+  };
+  const loadEffectiveSubstituteFielderPointsRule = async (matchNumber: number) => {
+    const { data, error } = await supabase
+      .from("lineup_rule_sets")
+      .select("substitute_fielder_points_enabled,effective_from_match_number,version")
+      .eq("league_id", leagueId)
+      .lte("effective_from_match_number", matchNumber)
+      .order("effective_from_match_number", { ascending: false })
+      .order("version", { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    const effectiveRule = data?.[0] as any;
+    if (!effectiveRule) throw new Error(`No playing rules apply to Match ${matchNumber}.`);
+    return effectiveRule.substitute_fielder_points_enabled === true;
+  };
+  const generateScoreReview = async (source: ScoreReviewSource, successMessage: string) => {
+    if (!scoreImportFixture) throw new Error("Choose a fixture before generating a score review.");
+    if (!scoringDocument || !scoringRuleSetId) throw new Error("The active scoring rule set is still loading. Close this dialog and try again.");
+    if (!/^https:\/\//i.test(source.sourceUrl)) throw new Error("Enter the HTTPS Cricinfo scorecard URL used for this import.");
+    if (!source.resultSummary.trim()) throw new Error("Enter the official match result summary before generating the review.");
+
+    const [leaguePlayers, substituteFielderPointsEnabled] = await Promise.all([
+      loadLeagueScorecardPlayers(),
+      loadEffectiveSubstituteFielderPointsRule(scoreImportFixture.match_number),
+    ]);
+    const normalized = buildCricinfoPasteImport({
+      leagueId,
+      fixtureId: scoreImportFixture.id,
+      matchNumber: scoreImportFixture.match_number,
+      ruleSetId: scoringRuleSetId,
+      sourceUrl: source.sourceUrl,
+      homeTeam: scoreImportFixture.home?.code,
+      awayTeam: scoreImportFixture.away?.code,
+      firstInningsTeam: source.firstInningsTeam,
+      winnerTeam: source.winnerTeam,
+      playerOfMatchName: source.playerOfMatchName,
+      resultSummary: source.resultSummary,
+      maxBallsPerBowler: 24,
+      substituteFielderPointsEnabled,
+      firstInningsBatting: source.firstInningsBatting,
+      firstInningsBowling: source.firstInningsBowling,
+      secondInningsBatting: source.secondInningsBatting,
+      secondInningsBowling: source.secondInningsBowling,
+      aliases: source.aliases,
+      fielderValidation: source.fielderValidation,
+      leaguePlayers,
+    });
+    const artifact = await buildScoreIngestionArtifact(normalized, scoringDocument as ScoringRulesDocument);
+    const artifactText = JSON.stringify(artifact, null, 2);
+    const parsed = parseScoreIngestionArtifact(artifactText, {
+      leagueId,
+      fixtureId: scoreImportFixture.id,
+      matchNumber: scoreImportFixture.match_number,
+    });
+    setScoreArtifactText(artifactText);
+    setScoreImportSummary(parsed.summary);
+    setScoreImportPreview(parsed.preview);
+    setScoreImportStaged(false);
+    setShowScoreRawJson(false);
+    setScoreImportConflict(false);
+    setScoreSourceStatus(successMessage);
+    setScoreImportMode("json");
+  };
+  const preparePastedScoreReview = async () => {
+    if (!scoreImportFixture) return;
+    if (Platform.OS !== "web") {
+      setScoreImportError("The scorecard copy-and-paste compiler runs in the desktop web admin tool. Review and publish the resulting batch from any device.");
+      return;
+    }
+    const sourceUrl = scoreSourceUrl.trim();
+    if (!/^https:\/\//i.test(sourceUrl)) {
+      setScoreImportError("Enter the HTTPS Cricinfo scorecard URL used for this copy-and-paste import.");
+      return;
+    }
+    if (!scorePasteResult.trim()) {
+      setScoreImportError("Enter the official match result summary before generating the review.");
+      return;
+    }
+    setBusy(true);
+    setScoreImportError("");
+    setScoreSourceStatus("Resolving the copied scorecard against the league player pool…");
+    try {
+      await generateScoreReview({
+        sourceUrl,
+        firstInningsTeam: scorePasteFirstTeam,
+        winnerTeam: scorePasteWinner,
+        playerOfMatchName: scorePastePlayerOfMatch,
+        resultSummary: scorePasteResult,
+        firstInningsBatting: scorePasteFirstBatting,
+        firstInningsBowling: scorePasteFirstBowling,
+        secondInningsBatting: scorePasteSecondBatting,
+        secondInningsBowling: scorePasteSecondBowling,
+        aliases: scorePasteAliases,
+        fielderValidation: scoreFielderValidation,
+      }, "Scorecard parsed locally. Verify the review summary, then stage it for final publication review.");
+    } catch (error) {
+      if (error instanceof ScorecardPasteError && error.code === "fielder-name-unresolved") {
+        setScoreFielderValidationRequired(true);
+        setScoreSourceStatus("Cricinfo scorecard captured. Enter the matching Cricbuzz scorecard URL below so the app can validate only the ambiguous fielder names.");
+      } else {
+        setScoreSourceStatus("");
+      }
+      const details = error instanceof ScorecardPasteError && error.details.length ? `\n${error.details.join("\n")}` : "";
+      setScoreImportError(`${error instanceof Error ? error.message : "The copied scorecard could not be compiled."}${details}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const captureScorecardReview = async () => {
+    if (!scoreImportFixture) return;
+    const sourceUrl = scoreSourceUrl.trim();
+    if (!/^https:\/\//i.test(sourceUrl)) {
+      setScoreImportError("Enter the HTTPS Cricinfo Full Scorecard URL before capturing it.");
+      return;
+    }
+    setBusy(true);
+    setScoreImportError("");
+    setScoreSourceStatus("Opening Cricinfo in Chrome. The review will continue automatically when all four scorecard tables are visible…");
+    let captureLoaded = false;
+    try {
+      const capture = await captureScorecardWithBrowserExtension(sourceUrl, setScoreSourceStatus);
+      captureLoaded = true;
+      const fixtureCodes = [scoreImportFixture.home?.code, scoreImportFixture.away?.code].filter(Boolean).map((code: string) => code.toUpperCase());
+      const capturedCodes = [capture.match.homeTeam, capture.match.awayTeam].filter(Boolean).map(code => String(code).toUpperCase());
+      if (capture.match.matchNumber && Number(capture.match.matchNumber) !== Number(scoreImportFixture.match_number)) {
+        throw new Error(`The opened page is Match ${capture.match.matchNumber}, but this review is for Match ${scoreImportFixture.match_number}.`);
+      }
+      if (capturedCodes.length === 2 && capturedCodes.some(code => !fixtureCodes.includes(code))) {
+        throw new Error(`The opened page is ${capturedCodes.join(" vs ")}, but this fixture is ${fixtureCodes.join(" vs ")}.`);
+      }
+
+      const resultSummary = String(capture.match.resultSummary ?? "").trim();
+      const firstInningsTeam = capturedFirstInningsTeam(capture, scoreImportFixture);
+      const winnerTeam = fixtureCodes.includes(String(capture.match.winnerTeam ?? "").toUpperCase())
+        ? String(capture.match.winnerTeam).toUpperCase()
+        : fixtureCodes.find(code => resultSummary.toLowerCase().includes(IPL_TEAM_NAMES[code] ?? "__no_match__") || resultSummary.toUpperCase().startsWith(`${code} `)) ?? "";
+      const reviewSource: ScoreReviewSource = {
+        sourceUrl: capture.sourceUrl || sourceUrl,
+        firstInningsTeam,
+        winnerTeam,
+        resultSummary,
+        playerOfMatchName: String(capture.match.playerOfMatchName ?? "").trim(),
+        aliases: "",
+        firstInningsBatting: capture.tables.firstInningsBatting,
+        firstInningsBowling: capture.tables.firstInningsBowling,
+        secondInningsBatting: capture.tables.secondInningsBatting,
+        secondInningsBowling: capture.tables.secondInningsBowling,
+      };
+
+      setScoreSourceUrl(reviewSource.sourceUrl);
+      setScorePasteFirstTeam(reviewSource.firstInningsTeam);
+      setScorePasteWinner(reviewSource.winnerTeam);
+      setScorePasteResult(reviewSource.resultSummary);
+      setScorePastePlayerOfMatch(reviewSource.playerOfMatchName);
+      setScorePasteAliases(reviewSource.aliases);
+      setScorePasteFirstBatting(reviewSource.firstInningsBatting);
+      setScorePasteFirstBowling(reviewSource.firstInningsBowling);
+      setScorePasteSecondBatting(reviewSource.secondInningsBatting);
+      setScorePasteSecondBowling(reviewSource.secondInningsBowling);
+
+      if (!reviewSource.firstInningsTeam || !reviewSource.winnerTeam || !reviewSource.resultSummary) {
+        setScoreImportMode("paste");
+        throw new Error("The four tables were captured, but Cricinfo did not expose complete innings/result metadata. Complete the highlighted review fields, then select Generate review.");
+      }
+      setScoreSourceStatus("Scorecard captured. Resolving every player and calculating the review preview…");
+      await generateScoreReview(reviewSource, "Browser capture completed. Verify the innings, dismissals and fantasy totals below; nothing has been staged or published.");
+    } catch (error) {
+      if (error instanceof ScorecardPasteError && error.code === "fielder-name-unresolved") {
+        setScoreFielderValidationRequired(true);
+        setScoreSourceStatus("Cricinfo scorecard captured. Enter the matching Cricbuzz scorecard URL below so the app can validate only the ambiguous fielder names.");
+      }
+      const details = error instanceof ScorecardPasteError && error.details.length ? `\n${error.details.join("\n")}` : "";
+      setScoreImportError(`${error instanceof Error ? error.message : "The browser extension could not prepare the score review."}${details}`);
+      if (!(error instanceof ScorecardPasteError && error.code === "fielder-name-unresolved")) {
+        setScoreSourceStatus(captureLoaded ? "The captured scorecard is available in Scorecard capture for correction and retry." : "");
+      }
+      if (captureLoaded) setScoreImportMode("paste");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const validateFieldersWithCricbuzz = async () => {
+    if (!scoreImportFixture) return;
+    const validationUrl = scoreCricbuzzUrl.trim();
+    try {
+      const parsed = new URL(validationUrl);
+      const host = parsed.hostname.toLocaleLowerCase();
+      if (parsed.protocol !== "https:" || !(host === "cricbuzz.com" || host.endsWith(".cricbuzz.com"))) throw new Error();
+    } catch {
+      setScoreImportError("Enter the matching HTTPS Cricbuzz scorecard URL.");
+      return;
+    }
+    if (!scoreCaptureExtensionAvailable) {
+      setScoreImportError("Reload the Cricket Rivalries scorecard capture extension, then reload this admin page. Manual player aliases remain available as a fallback.");
+      return;
+    }
+    setBusy(true);
+    setScoreImportError("");
+    setScoreSourceStatus("Opening Cricbuzz to validate the ambiguous fielder names…");
+    try {
+      const capture = await captureCricbuzzDismissalsWithBrowserExtension(validationUrl, setScoreSourceStatus);
+      const fixtureCodes = [scoreImportFixture.home?.code, scoreImportFixture.away?.code].filter(Boolean).map((code: string) => code.toUpperCase());
+      const capturedCodes = [capture.match.homeTeam, capture.match.awayTeam].filter(Boolean).map(code => String(code).toUpperCase());
+      if (capture.match.matchNumber && Number(capture.match.matchNumber) !== Number(scoreImportFixture.match_number)) {
+        throw new Error(`The Cricbuzz page is Match ${capture.match.matchNumber}, but this review is for Match ${scoreImportFixture.match_number}.`);
+      }
+      if (capturedCodes.length === 2 && capturedCodes.some(code => !fixtureCodes.includes(code))) {
+        throw new Error(`The Cricbuzz page is ${capturedCodes.join(" vs ")}, but this fixture is ${fixtureCodes.join(" vs ")}.`);
+      }
+      const corrected = applyCricbuzzFielderValidation(scorePasteFirstBatting, scorePasteSecondBatting, capture);
+      const corrections = corrected.corrections.length ? corrected.corrections : scoreFielderValidation?.corrections ?? [];
+      if (!corrections.length) {
+        throw new Error("Cricbuzz did not provide a different full fielder name for the ambiguous Cricinfo dismissal. Add a manual player alias below.");
+      }
+      const audit: NonNullable<ScoreReviewSource["fielderValidation"]> = {
+        provider: "cricbuzz",
+        sourceUrl: capture.sourceUrl,
+        corrections,
+      };
+      setScorePasteFirstBatting(corrected.firstInningsBatting);
+      setScorePasteSecondBatting(corrected.secondInningsBatting);
+      setScoreFielderValidation(audit);
+      setScoreFielderValidationRequired(false);
+      await generateScoreReview({
+        sourceUrl: scoreSourceUrl.trim(),
+        firstInningsTeam: scorePasteFirstTeam,
+        winnerTeam: scorePasteWinner,
+        playerOfMatchName: scorePastePlayerOfMatch,
+        resultSummary: scorePasteResult,
+        firstInningsBatting: corrected.firstInningsBatting,
+        firstInningsBowling: scorePasteFirstBowling,
+        secondInningsBatting: corrected.secondInningsBatting,
+        secondInningsBowling: scorePasteSecondBowling,
+        aliases: scorePasteAliases,
+        fielderValidation: audit,
+      }, `Cricbuzz validated ${corrections.length} fielder name${corrections.length === 1 ? "" : "s"}. Verify the human-readable preview before staging.`);
+    } catch (error) {
+      const details = error instanceof ScorecardPasteError && error.details.length ? `\n${error.details.join("\n")}` : "";
+      setScoreImportError(`${error instanceof Error ? error.message : "Cricbuzz could not validate the fielder names."}${details}`);
+      setScoreSourceStatus(error instanceof ScorecardPasteError && error.code !== "fielder-name-unresolved"
+        ? "Cricbuzz fielder validation is saved. Resolve the remaining scorecard issue, then generate the review again."
+        : "Cricinfo remains the score source. Correct the Cricbuzz URL and retry, or use a manual player alias below.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const regenerateSavedScoreReview = async (fixture: any, batch: any) => {
+    openScoreImport(fixture);
+    setScoreImportMode("json");
+    setBusy(true);
+    setScoreImportError("");
+    setScoreSourceStatus("Loading the saved scorecard and fixture-effective scoring rules…");
+    try {
+      if (Platform.OS !== "web") {
+        throw new Error("Saved scorecard regeneration currently requires the desktop web admin screen.");
+      }
+      const saved = extractSavedCricinfoScorecard(batch?.review_artifact);
+      setScoreSourceUrl(saved.sourceUrl);
+      setScorePasteFirstTeam(saved.firstInningsTeam);
+      setScorePasteWinner(saved.winnerTeam);
+      setScorePasteResult(saved.resultSummary);
+      setScorePastePlayerOfMatch(saved.playerOfMatchName);
+      setScorePasteAliases(saved.aliases);
+      setScoreCricbuzzUrl(saved.fielderValidation?.sourceUrl ?? "");
+      setScoreFielderValidation(saved.fielderValidation);
+      setScoreFielderValidationRequired(false);
+      setScorePasteFirstBatting(saved.firstInningsBatting);
+      setScorePasteFirstBowling(saved.firstInningsBowling);
+      setScorePasteSecondBatting(saved.secondInningsBatting);
+      setScorePasteSecondBowling(saved.secondInningsBowling);
+
+      const [leaguePlayers, scoringResult, substituteFielderPointsEnabled] = await Promise.all([
+        loadLeagueScorecardPlayers(),
+        supabase
+          .from("scoring_rule_sets")
+          .select("id,rules,effective_from_match_number,version")
+          .eq("league_id", leagueId)
+          .lte("effective_from_match_number", fixture.match_number)
+          .order("effective_from_match_number", { ascending: false })
+          .order("version", { ascending: false })
+          .limit(1),
+        loadEffectiveSubstituteFielderPointsRule(fixture.match_number),
+      ]);
+      if (scoringResult.error) throw scoringResult.error;
+      const effectiveRules = scoringResult.data?.[0] as any;
+      if (!effectiveRules?.id || !effectiveRules?.rules) {
+        throw new Error(`No scoring rules apply to Match ${fixture.match_number}.`);
+      }
+
+      const normalized = buildCricinfoPasteImport({
+        leagueId,
+        fixtureId: fixture.id,
+        matchNumber: fixture.match_number,
+        ruleSetId: effectiveRules.id,
+        sourceUrl: saved.sourceUrl,
+        homeTeam: fixture.home?.code,
+        awayTeam: fixture.away?.code,
+        firstInningsTeam: saved.firstInningsTeam,
+        winnerTeam: saved.winnerTeam,
+        playerOfMatchName: saved.playerOfMatchName,
+        resultSummary: saved.resultSummary,
+        maxBallsPerBowler: saved.maxBallsPerBowler,
+        substituteFielderPointsEnabled,
+        firstInningsBatting: saved.firstInningsBatting,
+        firstInningsBowling: saved.firstInningsBowling,
+        secondInningsBatting: saved.secondInningsBatting,
+        secondInningsBowling: saved.secondInningsBowling,
+        aliases: saved.aliases,
+        fielderValidation: saved.fielderValidation,
+        leaguePlayers,
+      });
+      const artifact = await buildScoreIngestionArtifact(normalized, effectiveRules.rules as ScoringRulesDocument);
+      const artifactText = JSON.stringify(artifact, null, 2);
+      const parsed = parseScoreIngestionArtifact(artifactText, {
+        leagueId,
+        fixtureId: fixture.id,
+        matchNumber: fixture.match_number,
+      });
+      setScoreArtifactText(artifactText);
+      setScoreImportSummary(parsed.summary);
+      setScoreImportPreview(parsed.preview);
+      setScoreImportStaged(false);
+      setShowScoreRawJson(false);
+      setScoreImportConflict(false);
+      setScoreReviewNotes("");
+      setScoreSourceStatus("Saved scorecard regenerated with the rules for this match. Review every total before staging; nothing has been published.");
+    } catch (error) {
+      const details = error instanceof ScorecardPasteError && error.details.length ? `\n${error.details.join("\n")}` : "";
+      setScoreImportError(`${error instanceof Error ? error.message : "The saved scorecard could not be regenerated."}${details}`);
+      setScoreSourceStatus("");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const importScoreSourceUrl = async () => {
+    if (!scoreImportFixture) return;
+    const sourceUrl = scoreSourceUrl.trim();
+    if (!sourceUrl) {
+      setScoreImportError("Enter the authorized live or completed match URL.");
+      return;
+    }
+    if (scoreSourceRequiresBrowserCapture(sourceUrl)) {
+      setScoreImportError("");
+      setScoreSourceStatus(browserCaptureStatus("ESPNcricinfo/Cricbuzz"));
+      setScoreImportMode("paste");
+      return;
+    }
+    setBusy(true);
+    setScoreImportError("");
+    setScoreSourceStatus("Preparing a server-side review draft…");
+    const { data, error } = await supabase.functions.invoke("ingest-score-source", {
+      body: { fixtureId: scoreImportFixture.id, sourceUrl, providerKey: "auto" },
+    });
+    if (error) {
+      let detail = "";
+      const response = (error as { context?: Response | { body?: unknown } }).context;
+      try {
+        let payload: { error?: unknown; message?: unknown } | null = null;
+        if (response && typeof (response as Response).clone === "function") {
+          payload = await (response as Response).clone().json() as { error?: unknown; message?: unknown };
+        } else if (response && typeof (response as Response).json === "function") {
+          payload = await (response as Response).json() as { error?: unknown; message?: unknown };
+        } else if (typeof (response as { body?: unknown } | undefined)?.body === "string") {
+          payload = JSON.parse((response as { body: string }).body) as { error?: unknown; message?: unknown };
+        }
+        detail = typeof payload?.error === "string"
+          ? payload.error
+          : typeof payload?.message === "string"
+            ? payload.message
+            : "";
+      } catch {
+        // Fall back to the normalized client message when the response is not readable JSON.
+      }
+      if (!detail) detail = userActionError(error, "Score source import");
+      else if (__DEV__) console.warn("Score source import rejected:", detail);
+      setScoreImportError(detail);
+      setScoreSourceStatus("");
+    } else {
+      const result = data as any;
+      if (result?.status === "needs_configuration") {
+        setScoreImportError("");
+        setScoreSourceStatus(browserCaptureStatus());
+        setScoreImportMode("paste");
+        await loadScoringFixtures();
+        setBusy(false);
+        return;
+      }
+      setScoreSourceStatus(result?.message ?? "The score source request was recorded.");
+      if (result?.reviewArtifact) {
+        const artifactText = JSON.stringify(result.reviewArtifact, null, 2);
+        setScoreArtifactText(artifactText);
+        try {
+          const parsed = parseScoreIngestionArtifact(artifactText, {
+            leagueId,
+            fixtureId: scoreImportFixture.id,
+            matchNumber: scoreImportFixture.match_number,
+          });
+          setScoreImportSummary(parsed.summary);
+          setScoreImportPreview(parsed.preview);
+          setScoreImportStaged(false);
+          setShowScoreRawJson(false);
+          setScoreImportMode("json");
+        } catch (artifactError) {
+          setScoreImportError(artifactError instanceof Error ? artifactError.message : "The generated review artifact could not be validated.");
+        }
+      }
+      await loadScoringFixtures();
+    }
+    setBusy(false);
+  };
+  const validateScoreArtifact = () => {
+    if (!scoreImportFixture) return null;
+    try {
+      const parsed = parseScoreIngestionArtifact(scoreArtifactText, {
+        leagueId,
+        fixtureId: scoreImportFixture.id,
+        matchNumber: scoreImportFixture.match_number,
+      });
+      setScoreImportSummary(parsed.summary);
+      setScoreImportPreview(parsed.preview);
+      setScoreImportStaged(false);
+      setShowScoreRawJson(false);
+      setScoreImportError("");
+      setScoreImportConflict(false);
+      return parsed;
+    } catch (error) {
+      setScoreImportSummary(null);
+      setScoreImportPreview(null);
+      setScoreImportStaged(false);
+      setScoreImportError(error instanceof Error ? error.message : "Review artifact could not be validated.");
+      return null;
+    }
+  };
+  const stageScoreArtifact = async () => {
+    if (!scoreImportFixture) return;
+    const parsed = validateScoreArtifact();
+    if (!parsed) return;
+    if (parsed.summary.warningCount > 0 && !scoreReviewNotes.trim()) {
+      setScoreImportError("Add review notes explaining every compiler warning before staging.");
+      return;
+    }
+    setBusy(true);
+    setScoreImportError("");
+    setScoreImportConflict(false);
+    const { data, error } = await supabase.rpc("stage_score_ingestion_batch", {
+      p_fixture_id: scoreImportFixture.id,
+      p_artifact: parsed.artifact,
+      p_review_notes: scoreReviewNotes.trim() || null,
+    });
+    if (error) {
+      const normalizedMessage = String(error.message ?? "").toLocaleLowerCase();
+      const protectedRetry = normalizedMessage.includes("source fingerprint already exists")
+        || normalizedMessage.includes("duplicate key")
+        || normalizedMessage.includes("already in use");
+      setScoreImportConflict(protectedRetry);
+      if (protectedRetry) {
+        setScoreImportStaged(false);
+        setScoreImportError("This scorecard is already staged. Review the scoreboard below, then publish when ready.");
+        await loadScoringFixtures();
+      } else {
+        setScoreImportError(userActionError(error, "Score artifact staging"));
+      }
+    } else {
+      const result = data as any;
+      setMessage(result?.idempotent
+        ? `Match ${scoreImportFixture.match_number} already has this exact reviewed score batch.`
+        : `Staged Match ${scoreImportFixture.match_number} calculation v${result?.calculation_version} for final review.`);
+      setScoreImportStaged(true);
+      setScoreImportConflict(false);
+      setScoreImportError("");
+      await loadScoringFixtures();
+    }
+    setBusy(false);
+  };
 
   const selectAcquisitionMode = (mode: "auction" | "all_open") => setLeagueFormat(current => mode === "all_open" ? { ...current, acquisition_mode: mode, bidding_enabled: false, other_owner_deductions_enabled: false } : { ...current, acquisition_mode: mode });
   const publishFormat = async () => {
@@ -1100,7 +1902,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setBusy(false);
   };
 
-  const updatePlaying = (key: keyof PlayingRuleForm, value: string) => setPlaying(current => ({ ...current, [key]: value }));
+  const updatePlaying = (key: PlayingNumericRuleKey, value: string) => setPlaying(current => ({ ...current, [key]: value }));
   const updateSpecialNumber = (key: keyof SpecialPlayerRuleForm, value: string) => setSpecialRules(current => ({ ...current, [key]: value }));
   const publishSpecialRules = async () => {
     const numericValues = [specialEffectiveMatch, specialRules.unique_players_per_owner, specialRules.other_player_fee_percent, specialRules.other_player_minimum_fee, specialRules.marquee_players_per_owner, specialRules.regular_royalty_percent, specialRules.regular_minimum_royalty, specialRules.marquee_royalty_percent, specialRules.marquee_minimum_royalty, specialRules.automatic_unique_usage_threshold, specialRules.phase_change_deadline_hours];
@@ -1116,14 +1918,32 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   };
   const updatePoints = (key: keyof PointRuleForm, value: string) => setPoints(current => ({ ...current, [key]: value }));
   const publish = async () => {
-    const allValues = [...Object.values(playing), ...Object.values(points), playingEffectiveMatch, pointsEffectiveMatch];
+    const allValues = [...playingNumericRuleKeys.map(key => playing[key]), ...Object.values(points), playingEffectiveMatch, pointsEffectiveMatch];
     if (allValues.some(value => value.trim() === "" || Number.isNaN(Number(value)))) { setMessage("Every displayed rule must contain a valid number."); return; }
     if (Number(playing.min_batters) + Number(playing.min_bowlers) + Number(playing.min_wicketkeepers) + Number(playing.min_all_rounders) > Number(playing.lineup_size)) { setMessage("Minimum player roles cannot exceed the lineup size."); return; }
     setBusy(true); setMessage("");
-    const nextScoring = { ...(scoringDocument ?? {}), batting: { ...(scoringDocument?.batting ?? {}), run: Number(points.run), four_bonus: Number(points.four_bonus), six_bonus: Number(points.six_bonus), duck_non_bowler: Number(points.duck), golden_or_diamond_duck_non_bowler: Number(points.golden_duck) }, bowling: { ...(scoringDocument?.bowling ?? {}), dismissed_bowler_wicket: Number(points.bowler_wicket), dismissed_non_bowler_wicket: Number(points.non_bowler_wicket), maiden: Number(points.maiden), dot_ball: Number(points.dot_ball) }, fielding: { ...(scoringDocument?.fielding ?? {}), catch: Number(points.catch), stumping: Number(points.stumping), run_out: Number(points.run_out) }, bonus: { ...(scoringDocument?.bonus ?? {}), player_of_match: Number(points.player_of_match), winning_participant: Number(points.winning_participant) } };
-    const { data, error } = await supabase.rpc("publish_league_rules_effective", { p_league_id: leagueId, p_lineup_rules: Object.fromEntries(Object.entries(playing).map(([key, value]) => [key, Number(value)])), p_scoring_rules: nextScoring, p_lineup_effective_from_match: Number(playingEffectiveMatch), p_scoring_effective_from_match: Number(pointsEffectiveMatch) });
+    const nextScoring = { ...(scoringDocument ?? {}), batting: { ...(scoringDocument?.batting ?? {}), run: Number(points.run), four_bonus: Number(points.four_bonus), six_bonus: Number(points.six_bonus), duck_non_bowler: Number(points.duck), golden_or_diamond_duck_non_bowler: Number(points.golden_duck) }, bowling: { ...(scoringDocument?.bowling ?? {}), dismissed_bowler_wicket: Number(points.bowler_wicket), dismissed_non_bowler_wicket: Number(points.non_bowler_wicket), direct_wicket_bonus: Number(points.direct_wicket_bonus), maiden: Number(points.maiden), dot_ball: Number(points.dot_ball) }, fielding: { ...(scoringDocument?.fielding ?? {}), catch: Number(points.catch), stumping: Number(points.stumping), run_out: Number(points.run_out), shared_run_out: Number(points.shared_run_out) }, bonus: { ...(scoringDocument?.bonus ?? {}), player_of_match: Number(points.player_of_match), winning_participant: Number(points.winning_participant) } };
+    const lineupRulesPayload = {
+      ...Object.fromEntries(playingNumericRuleKeys.map(key => [key, Number(playing[key])])),
+      substitute_fielder_points_enabled: playing.substitute_fielder_points_enabled,
+    };
+    const { data, error } = await supabase.rpc("publish_league_rules_effective", { p_league_id: leagueId, p_lineup_rules: lineupRulesPayload, p_scoring_rules: nextScoring, p_lineup_effective_from_match: Number(playingEffectiveMatch), p_scoring_effective_from_match: Number(pointsEffectiveMatch) });
     if (error) setMessage(userActionError(error, "Rule publication"));
-    else { const result = data as any; setVersions({ playing: result.lineup_version, points: result.scoring_version }); setScoringDocument(nextScoring); setMessage(`Published playing rules v${result.lineup_version} and points rules v${result.scoring_version}.`); }
+    else {
+      const result = data as any;
+      const { data: participationRow, error: participationError } = await supabase
+        .from("lineup_rule_sets")
+        .update({ substitute_fielder_points_enabled: playing.substitute_fielder_points_enabled })
+        .eq("league_id", leagueId)
+        .eq("version", result.lineup_version)
+        .select("id")
+        .maybeSingle();
+      setVersions({ playing: result.lineup_version, points: result.scoring_version });
+      setScoringDocument(nextScoring);
+      setMessage(participationError || !participationRow
+        ? userActionError(participationError ?? new Error("The new playing-rule version could not be updated."), "Substitute-fielder rule publication")
+        : `Published playing rules v${result.lineup_version} and points rules v${result.scoring_version}.`);
+    }
     setBusy(false);
   };
 
@@ -1167,12 +1987,30 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     }
     setBusy(false);
   };
-  const publishScores = async (fixtureId: string) => {
-    setBusy(true); setMessage("");
+  const publishScores = async (fixtureId: string): Promise<boolean> => {
+    setBusy(true); setMessage(""); setScoreImportError("");
     const { data, error } = await supabase.rpc("publish_match_scores_safe", { p_fixture_id: fixtureId });
-    if (error) setMessage(userActionError(error, "Score publication"));
-    else { const result = data as any; setMessage(`Published Match scores for ${result.member_count} owners.`); await loadScoringFixtures(); }
+    if (error) {
+      const detail = userActionError(error, "Score publication");
+      setMessage(detail);
+      setScoreImportError(detail);
+      setBusy(false);
+      return false;
+    }
+    const result = data as any;
+    setMessage(`Published Match scores for ${result.member_count} owners.`);
+    await loadScoringFixtures();
     setBusy(false);
+    return true;
+  };
+  const publishConfirmedScores = async () => {
+    if (!scoreImportFixture) return;
+    setScoreImportError("");
+    const published = await publishScores(scoreImportFixture.id);
+    if (!published) return;
+    setScorePublishConfirming(false);
+    setScorePublicationComplete(true);
+    setScoreImportStaged(false);
   };
   const settleNoResult = async (fixtureId: string) => {
     setBusy(true); setMessage("");
@@ -1328,6 +2166,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <AdminNumberField label="BAI / BOI multiplier" value={playing.impact_multiplier} onChange={value => updatePlaying("impact_multiplier", value)} />
 <AdminNumberField label="Other-owner penalty" detail="percentage" value={playing.other_owner_penalty_percent} onChange={value => updatePlaying("other_owner_penalty_percent", value)} />
 <AdminNumberField label="Minimum other-owner penalty" detail="points" value={playing.other_owner_minimum_penalty} onChange={value => updatePlaying("other_owner_minimum_penalty", value)} />
+<Text style={s.adminGroupTitle}>Score participation</Text>
+<View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Impact and concussion substitutes</Text><Text style={s.adminNoticeText}>A substitute who bats or bowls receives the normal points for those recorded contributions. A 13+ participant scorecard requires an administrator to identify the extra participant and enter approval notes before staging. The toggle below controls only fielding-only substitute contributions.</Text></View>
+<FormatToggle label="Substitute fielder points" detail="OFF by default. Controls only fielding-only substitute catches, stumpings and run-outs; batting and bowling contributions always score." value={playing.substitute_fielder_points_enabled} disabled={!canEdit} onPress={() => setPlaying(current => ({ ...current, substitute_fielder_points_enabled: !current.substitute_fielder_points_enabled }))} />
 </View> : section === "points" ? <View style={s.adminCard}>
 <Text style={s.adminGroupTitle}>Rule schedule</Text>
 <AdminNumberField label="Effective from match" detail="Applies to scoring from this match onward" value={pointsEffectiveMatch} onChange={setPointsEffectiveMatch} />
@@ -1340,12 +2181,14 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <Text style={s.adminGroupTitle}>Bowling</Text>
 <AdminNumberField label="Dismissed bowler wicket" value={points.bowler_wicket} onChange={value => updatePoints("bowler_wicket", value)} />
 <AdminNumberField label="Dismissed non-bowler wicket" value={points.non_bowler_wicket} onChange={value => updatePoints("non_bowler_wicket", value)} />
+<AdminNumberField label="Direct wicket bonus" value={points.direct_wicket_bonus} onChange={value => updatePoints("direct_wicket_bonus", value)} />
 <AdminNumberField label="Maiden over" value={points.maiden} onChange={value => updatePoints("maiden", value)} />
 <AdminNumberField label="Dot ball" value={points.dot_ball} onChange={value => updatePoints("dot_ball", value)} />
 <Text style={s.adminGroupTitle}>Fielding and bonus</Text>
 <AdminNumberField label="Catch" value={points.catch} onChange={value => updatePoints("catch", value)} />
 <AdminNumberField label="Stumping" value={points.stumping} onChange={value => updatePoints("stumping", value)} />
 <AdminNumberField label="Run out" value={points.run_out} onChange={value => updatePoints("run_out", value)} />
+<AdminNumberField label="Shared run out" value={points.shared_run_out} onChange={value => updatePoints("shared_run_out", value)} />
 <AdminNumberField label="Player of the match" value={points.player_of_match} onChange={value => updatePoints("player_of_match", value)} />
 <AdminNumberField label="Winning participant" value={points.winning_participant} onChange={value => updatePoints("winning_participant", value)} />
 </View> : section === "phases" ? <View>
@@ -1381,11 +2224,125 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <AdminNumberField label="Transfer allowance" detail={transferAllowanceDetail(period)} value={period.limit} onChange={value => updateTransferPeriod(index, "limit", value)} />
 <TouchableOpacity accessibilityRole="switch" accessibilityState={{ checked: period.firstMatchFree, disabled: !canEdit }} accessibilityLabel={`Free first match for ${period.name || `period ${index + 1}`}`} disabled={!canEdit} style={[s.transferFreeToggle, !canEdit && s.disabled]} onPress={() => setTransferPeriods(current => current.map((item, periodIndex) => periodIndex === index ? { ...item, firstMatchFree: !item.firstMatchFree } : item))}><View style={{ flex: 1 }}><Text style={s.transferFreeTitle}>Free first match</Text><Text style={s.transferFreeText}>{period.firstMatchFree ? `Match ${period.start || "—"} resets the carried XI and does not use this allowance.` : "Changes in the first match use this period's allowance."}</Text></View><View style={[s.transferSwitch, period.firstMatchFree && s.transferSwitchActive]}><View style={[s.transferSwitchThumb, period.firstMatchFree && s.transferSwitchThumbActive]} /></View></TouchableOpacity>
 </View>; })}<TouchableOpacity accessibilityRole="button" disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
-</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View><View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "Publish calculated scores after review. For a fixture marked abandoned or cancelled, settle No Result to refund its usage, reset later unlocked XIs, and recalculate the first later locked XI against the last valid team." : "Match scoring status is visible here. Only a league administrator can publish or settle scores."}</Text></View>{scoringFixtures.length ? scoringFixtures.map((fixture: any) => { const noResult = isNoResultFixture(fixture.status); return <View key={fixture.id} style={s.adminPhaseCard}><View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{noResult ? "NO RESULT" : fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View>{canEdit && noResult && fixture.scoring_status !== "published" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Settle Match ${fixture.match_number} as No Result`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => confirmNoResultSettlement(fixture)}><Text style={s.resetButtonText}>Settle No Result</Text></TouchableOpacity> : canEdit && fixture.scoring_status === "review" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Publish scores for match ${fixture.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={s.resetButton} onPress={() => runAction(() => publishScores(fixture.id))}><Text style={s.resetButtonText}>Publish scores</Text></TouchableOpacity> : null}</View></View>; }) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live, completed, or No Result fixtures are available.</Text></View>}</View>}{message ? <View accessibilityLiveRegion="polite" style={[s.adminMessage, (message.startsWith("Published") || message.startsWith("No Result saved")) && s.adminMessageSuccess]}>
+</View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View>
+<View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "Validate a compiler review artifact, stage one immutable calculation version, then publish only after a final review. A substitute who bats or bowls scores normally. A 13+ participant team creates a warning and requires written admin approval notes before staging." : "Match scoring status and source batches are visible here. Substitute batting and bowling contributions score normally; 13+ participant exceptions require administrator approval before staging."}</Text></View>
+{scoringFixtures.length ? scoringFixtures.map((fixture: any) => {
+  const noResult = isNoResultFixture(fixture.status);
+  const batches = Array.isArray(fixture.score_ingestion_batches) ? [...fixture.score_ingestion_batches] : [];
+  const orderedBatches = batches.sort((left: any, right: any) => String(right.created_at).localeCompare(String(left.created_at)));
+  const latestBatch = orderedBatches.find((batch: any) => batch.status === "staged" || batch.status === "published");
+  const latestArchivedBatch = !latestBatch ? orderedBatches[0] : null;
+  const jobs = Array.isArray(fixture.score_ingestion_jobs) ? [...fixture.score_ingestion_jobs] : [];
+  const latestJob = jobs.sort((left: any, right: any) => String(right.created_at).localeCompare(String(left.created_at)))[0];
+  return <View key={fixture.id} style={s.adminPhaseCard}>
+    <View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{noResult ? "NO RESULT" : fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View></View>
+    {latestBatch ? <View style={s.scoreBatchSummary}><View style={{ flex: 1 }}><Text style={s.scoreBatchEyebrow}>LATEST REVIEW BATCH · V{latestBatch.calculation_version}</Text><Text numberOfLines={1} style={s.scoreBatchSource}>{latestBatch.source_provider} · {latestBatch.external_match_id}</Text><Text style={s.scoreBatchFingerprint}>{String(latestBatch.source_fingerprint).slice(0, 12)}… · {latestBatch.warning_count} warning{latestBatch.warning_count === 1 ? "" : "s"}</Text></View><View style={[s.scoreBatchStatus, latestBatch.status === "published" && s.scoreBatchStatusPublished]}><Text style={s.scoreBatchStatusText}>{String(latestBatch.status).toUpperCase()}</Text></View></View> : !noResult ? <><Text style={s.scoreBatchEmpty}>No active score review. Start a fresh import below.</Text>{latestArchivedBatch ? <Text style={s.scoreBatchArchive}>Previous review V{latestArchivedBatch.calculation_version} is preserved in the audit history.</Text> : null}</> : null}
+    {latestJob ? <View style={s.scoreJobSummary}><View style={{ flex: 1 }}><Text style={s.scoreBatchEyebrow}>LATEST URL IMPORT · {String(latestJob.status).replaceAll("_", " ").toUpperCase()}</Text><Text numberOfLines={1} style={s.scoreBatchSource}>{latestJob.source_host} · {latestJob.provider_key}</Text><Text style={s.scoreBatchFingerprint}>{latestJob.status_message || latestJob.error_code || "Request recorded"}</Text></View></View> : null}
+    {canEdit ? <View style={s.scoreAdminActions}>
+      {!noResult ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Import score source for Match ${fixture.match_number}`} accessibilityState={{ disabled: busy }} disabled={busy} style={[s.scoreImportAction, busy && s.disabled]} onPress={() => openScoreImport(fixture)}><Text style={s.scoreImportActionText}>{fixture.scoring_status === "published" ? "Import correction" : latestBatch ? "Replace review" : "Import score source"}</Text></TouchableOpacity> : null}
+      {!noResult && latestBatch?.source_provider === "espncricinfo-copy-paste" && latestBatch?.review_artifact ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Regenerate saved scorecard for Match ${fixture.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreRegenerateAction, busy && s.disabled]} onPress={() => runAction(() => regenerateSavedScoreReview(fixture, latestBatch))}><Text style={s.scoreRegenerateActionText}>↻ Regenerate saved scorecard</Text></TouchableOpacity> : null}
+      {!noResult && !latestBatch && latestArchivedBatch?.source_provider === "espncricinfo-copy-paste" && latestArchivedBatch?.review_artifact ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Reuse archived scorecard for Match ${fixture.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreRegenerateAction, busy && s.disabled]} onPress={() => runAction(() => regenerateSavedScoreReview(fixture, latestArchivedBatch))}><Text style={s.scoreRegenerateActionText}>↻ Reuse saved scorecard</Text></TouchableOpacity> : null}
+      {noResult && fixture.scoring_status !== "published" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Settle Match ${fixture.match_number} as No Result`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreSecondaryAction, busy && s.disabled]} onPress={() => confirmNoResultSettlement(fixture)}><Text style={s.scoreSecondaryActionText}>Settle No Result</Text></TouchableOpacity> : null}
+      {!noResult && fixture.scoring_status === "review" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Review and publish scores for match ${fixture.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scorePublishAction, busy && s.disabled]} onPress={() => openStagedScoreReview(fixture, latestBatch)}><Text style={s.scorePublishActionText}>Review & publish</Text></TouchableOpacity> : null}
+    </View> : null}
+  </View>;
+}) : <View style={s.adminCard}><Text style={s.adminNoticeText}>No live, completed, or No Result fixtures are available.</Text></View>}
+</View>}{message ? <View accessibilityLiveRegion="polite" style={[s.adminMessage, (message.startsWith("Published") || message.startsWith("No Result saved") || message.startsWith("Staged")) && s.adminMessageSuccess]}>
 <Text style={s.adminMessageText}>{message}</Text>
 </View> : null}{canEdit && section !== "scoring" && section !== "owners" && section !== "templates" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={section === "format" ? "Publish league format" : section === "special" ? "Publish Unique and Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.primary, busy && s.disabled]} onPress={requestPublicationConfirmation}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.primaryText}>{section === "format" ? "Publish league format" : section === "special" ? "Publish Unique & Royalty rules" : section === "phases" ? "Publish phase configuration" : section === "transfers" ? "Publish transfer periods" : "Review and publish both rule sets"}</Text>}</TouchableOpacity> : null}
 <Text style={s.adminFootnote}>{section === "special" ? "Changes apply only from the selected unlocked match. Historical scoring remains pinned to its original version." : section === "phases" ? "Changing phases updates fixture assignments and phase-wise ranking." : section === "transfers" ? "Transfer periods apply immediately to future submissions; recorded usage is regrouped by the published match ranges." : "Milestone, strike-rate and economy tables remain preserved when these headline values are updated."}</Text>
-</ScrollView></AdminEditContext.Provider>;
+</ScrollView>
+<Modal visible={!!scoreImportFixture} transparent animationType="fade" statusBarTranslucent onRequestClose={closeScoreImport}>
+  <KeyboardAvoidingView style={s.scoreImportOverlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <View nativeID="score-ingestion-dialog" accessibilityViewIsModal accessibilityRole="alert" accessibilityLabel={scoreImportFixture ? `Import scores for Match ${scoreImportFixture.match_number}` : "Import scores"} style={s.scoreImportModal}>
+      <View style={s.scoreImportHeader}>
+        <View style={{ flex: 1 }}><Text style={s.scoreImportEyebrow}>VERIFIED SCORE INGESTION</Text><Text style={s.scoreImportTitle}>Match {scoreImportFixture?.match_number} score import</Text>{scoreImportFixture ? <View style={s.adminFixtureTeams}><IplTeamBadge code={scoreImportFixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={scoreImportFixture.away?.code} /></View> : null}</View>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close score import" style={s.scoreImportClose} onPress={closeScoreImport}><Text style={s.scoreImportCloseText}>×</Text></TouchableOpacity>
+      </View>
+      <ScrollView style={s.scoreImportScroll} contentContainerStyle={s.scoreImportBody} keyboardShouldPersistTaps="handled">
+        <View accessibilityRole="tablist" style={s.scoreImportTabs}>
+          <TouchableOpacity accessibilityRole="tab" accessibilityState={{ selected: scoreImportMode === "url" }} style={[s.scoreImportTab, scoreImportMode === "url" && s.scoreImportTabActive]} onPress={() => setScoreImportMode("url")}><Text style={[s.scoreImportTabText, scoreImportMode === "url" && s.scoreImportTabTextActive]}>Provider URL</Text></TouchableOpacity>
+          <TouchableOpacity accessibilityRole="tab" accessibilityState={{ selected: scoreImportMode === "paste" }} style={[s.scoreImportTab, scoreImportMode === "paste" && s.scoreImportTabActive]} onPress={() => setScoreImportMode("paste")}><Text style={[s.scoreImportTabText, scoreImportMode === "paste" && s.scoreImportTabTextActive]}>Scorecard capture</Text></TouchableOpacity>
+          <TouchableOpacity accessibilityRole="tab" accessibilityState={{ selected: scoreImportMode === "json", disabled: !scoreArtifactText.trim() }} disabled={!scoreArtifactText.trim()} style={[s.scoreImportTab, scoreImportMode === "json" && s.scoreImportTabActive, !scoreArtifactText.trim() && s.disabled]} onPress={() => setScoreImportMode("json")}><Text style={[s.scoreImportTabText, scoreImportMode === "json" && s.scoreImportTabTextActive]}>Review</Text></TouchableOpacity>
+        </View>
+        {scoreImportMode === "url" ? <>
+          <Text style={s.scoreImportHelp}>Paste an authorized live or completed match URL. The backend records the request, invokes the configured score provider, calculates a review draft and returns it here for verification. Nothing is published automatically.</Text>
+          <Text style={s.scoreImportLabel}>AUTHORIZED SCORE SOURCE URL</Text>
+          <TextInput accessibilityLabel="Live or completed match score URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="https://authorized-score-provider.example/match/..." placeholderTextColor="#819089" style={s.scoreSourceInput} value={scoreSourceUrl} onChangeText={value => { setScoreSourceUrl(value); setScoreImportError(""); setScoreSourceStatus(""); }} />
+          <View style={s.scoreSourceNotice}><Text style={s.scoreSourceNoticeTitle}>Automatic or browser capture</Text><Text style={s.scoreSourceNoticeText}>Connected providers generate the review automatically. With the local Chrome capture extension, ESPNcricinfo opens in a visible tab and returns the four rendered tables directly to this review. Nothing is staged or published automatically.</Text></View>
+          {scoreSourceSupportsExtension(scoreSourceUrl) ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreCaptureExtensionChecking ? "Checking for the local scorecard capture extension…" : scoreCaptureExtensionAvailable ? "Browser capture extension connected. One click will capture this scorecard and generate the human-readable preview." : "Browser capture extension not detected. Install it once from the browser-extension folder and reload this page, or continue with the manual Scorecard capture form."}</Text></View> : null}
+          {scoreSourceStatus ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreSourceStatus}</Text></View> : null}
+        </> : scoreImportMode === "paste" ? <>
+          <Text style={s.scoreImportHelp}>Open the Cricinfo Full Scorecard, copy the four rendered tables into the matching fields, then generate the review. This guided form is the complete fallback workflow—no terminal or background command is needed. Nothing is staged or published automatically.</Text>
+          <Text style={s.scoreImportLabel}>CRICINFO SCORECARD URL</Text>
+          <View style={s.scoreSourceRow}>
+            <TextInput accessibilityLabel="Cricinfo full scorecard URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="https://www.espncricinfo.com/series/.../full-scorecard" placeholderTextColor="#819089" style={[s.scoreSourceInput, { flex: 1 }]} value={scoreSourceUrl} onChangeText={value => { setScoreSourceUrl(value); setScoreImportError(""); }} />
+            <TouchableOpacity accessibilityRole="link" accessibilityLabel="Open Cricinfo scorecard in browser" disabled={busy || !scoreSourceUrl.trim()} style={[s.scoreSourceOpen, (busy || !scoreSourceUrl.trim()) && s.disabled]} onPress={() => runAction(openScorecardSource)}><Text style={s.scoreSourceOpenText}>Open ↗</Text></TouchableOpacity>
+          </View>
+          <View style={s.scorePasteInstruction}><Text style={s.scorePasteInstructionTitle}>Required capture</Text><Text style={s.scorePasteInstructionText}>Both batting tables must include Did not bat names. Both bowling tables must include O, R, W and dot balls (0s/D). Screenshots cannot be parsed.</Text></View>
+          <Text style={s.scoreImportLabel}>FIRST INNINGS TEAM</Text>
+          <View style={s.scorePasteChoiceRow}>{[scoreImportFixture?.home?.code, scoreImportFixture?.away?.code].filter(Boolean).map(code => <TouchableOpacity key={`first:${code}`} accessibilityRole="radio" accessibilityState={{ checked: scorePasteFirstTeam === code }} style={[s.scorePasteChoice, scorePasteFirstTeam === code && s.scorePasteChoiceActive]} onPress={() => setScorePasteFirstTeam(code)}><IplTeamBadge code={code} /><Text style={[s.scorePasteChoiceText, scorePasteFirstTeam === code && s.scorePasteChoiceTextActive]}>{scorePasteFirstTeam === code ? "Batted first" : "Select"}</Text></TouchableOpacity>)}</View>
+          <Text style={s.scoreImportLabel}>MATCH WINNER</Text>
+          <View style={s.scorePasteChoiceRow}>{[scoreImportFixture?.home?.code, scoreImportFixture?.away?.code].filter(Boolean).map(code => <TouchableOpacity key={`winner:${code}`} accessibilityRole="radio" accessibilityState={{ checked: scorePasteWinner === code }} style={[s.scorePasteChoice, scorePasteWinner === code && s.scorePasteChoiceActive]} onPress={() => setScorePasteWinner(code)}><IplTeamBadge code={code} /><Text style={[s.scorePasteChoiceText, scorePasteWinner === code && s.scorePasteChoiceTextActive]}>{scorePasteWinner === code ? "Winner" : "Select"}</Text></TouchableOpacity>)}</View>
+          <Text style={s.scoreImportLabel}>OFFICIAL RESULT SUMMARY</Text>
+          <TextInput accessibilityLabel="Official match result summary" editable={!busy} placeholder="Example: SRH won by 6 wickets" placeholderTextColor="#819089" style={s.scoreSourceInput} value={scorePasteResult} onChangeText={setScorePasteResult} />
+          <Text style={s.scoreImportLabel}>PLAYER OF THE MATCH (OPTIONAL)</Text>
+          <TextInput accessibilityLabel="Player of the match name" editable={!busy} placeholder="Use the name shown on Cricinfo" placeholderTextColor="#819089" style={s.scoreSourceInput} value={scorePastePlayerOfMatch} onChangeText={setScorePastePlayerOfMatch} />
+          <Text style={s.scoreImportLabel}>1ST INNINGS · BATTING</Text>
+          <TextInput accessibilityLabel="First innings batting table" multiline textAlignVertical="top" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder={'Paste BATTING table with headers and "Did not bat"'} placeholderTextColor="#819089" style={s.scorePasteTableInput} value={scorePasteFirstBatting} onChangeText={setScorePasteFirstBatting} />
+          <Text style={s.scoreImportLabel}>1ST INNINGS · BOWLING</Text>
+          <TextInput accessibilityLabel="First innings bowling table" multiline textAlignVertical="top" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="Paste BOWLING table with O, M, R, W and 0s/D" placeholderTextColor="#819089" style={s.scorePasteTableInput} value={scorePasteFirstBowling} onChangeText={setScorePasteFirstBowling} />
+          <Text style={s.scoreImportLabel}>2ND INNINGS · BATTING</Text>
+          <TextInput accessibilityLabel="Second innings batting table" multiline textAlignVertical="top" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder={'Paste BATTING table with headers and "Did not bat"'} placeholderTextColor="#819089" style={s.scorePasteTableInput} value={scorePasteSecondBatting} onChangeText={setScorePasteSecondBatting} />
+          <Text style={s.scoreImportLabel}>2ND INNINGS · BOWLING</Text>
+          <TextInput accessibilityLabel="Second innings bowling table" multiline textAlignVertical="top" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="Paste BOWLING table with O, M, R, W and 0s/D" placeholderTextColor="#819089" style={s.scorePasteTableInput} value={scorePasteSecondBowling} onChangeText={setScorePasteSecondBowling} />
+          <Text style={s.scoreImportLabel}>PLAYER NAME ALIASES (ONLY WHEN NEEDED)</Text>
+          <Text style={s.scoreImportHelp}>Wicketkeeper shorthand such as †Sharma is matched automatically to the unique wicketkeeper on the fielding team. Add an alias only when the app reports more than one possible player.</Text>
+          <TextInput accessibilityLabel="Player name aliases" multiline textAlignVertical="top" autoCapitalize="words" autoCorrect={false} editable={!busy} placeholder={'Cricinfo name = Exact league player name\nN Reddy = Nitish Kumar Reddy'} placeholderTextColor="#819089" style={s.scorePasteAliasesInput} value={scorePasteAliases} onChangeText={setScorePasteAliases} />
+          {scoreFielderValidationRequired ? <View style={s.scoreFielderValidation}>
+            <Text style={s.scoreFielderValidationTitle}>Fielder name needs validation</Text>
+            <Text style={s.scoreFielderValidationText}>Cricinfo remains the primary scorecard. Paste the matching Cricbuzz scorecard URL; the app will verify the fixture and correct only ambiguous catch, stumping or run-out names.</Text>
+            <Text style={s.scoreImportLabel}>MATCHING CRICBUZZ SCORECARD URL</Text>
+            <TextInput accessibilityLabel="Matching Cricbuzz scorecard URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="https://www.cricbuzz.com/live-cricket-scorecard/..." placeholderTextColor="#819089" style={s.scoreSourceInput} value={scoreCricbuzzUrl} onChangeText={value => { setScoreCricbuzzUrl(value); setScoreImportError(""); }} />
+            <Text style={s.scoreFielderValidationFootnote}>{scoreCaptureExtensionAvailable ? "The browser extension will open Cricbuzz, read both innings and return the full dismissal names." : "Reload extension version 0.2.0 and this admin page, or enter a manual alias above."}</Text>
+          </View> : null}
+        </> : <>
+          <Text style={s.scoreImportHelp}>Review the readable scoreboard below. Raw JSON remains available for audit or correction, and every fixture, player and point total is validated again before staging.</Text>
+          {!scoreImportSummary || showScoreRawJson ? <>
+            <Text style={s.scoreImportLabel}>REVIEW ARTIFACT JSON</Text>
+            <TextInput accessibilityLabel="Score review artifact JSON" multiline textAlignVertical="top" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="Paste compiled JSON here" placeholderTextColor="#819089" style={s.scoreImportJsonInput} value={scoreArtifactText} onChangeText={value => { setScoreArtifactText(value); setScoreImportSummary(null); setScoreImportPreview(null); setScoreImportStaged(false); setScoreImportError(""); setScoreImportConflict(false); }} />
+          </> : null}
+          {scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={showScoreRawJson ? "Hide raw score artifact JSON" : "Show raw score artifact JSON"} style={s.scoreRawToggle} onPress={() => setShowScoreRawJson(current => !current)}><Text style={s.scoreRawToggleText}>{showScoreRawJson ? "Hide raw JSON" : "Show raw JSON"}</Text></TouchableOpacity> : null}
+        </>}
+        {scoreImportMode !== "url" && scoreSourceStatus ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreSourceStatus}</Text></View> : null}
+        {scoreImportError ? <View accessibilityRole={scoreImportConflict ? undefined : "alert"} accessibilityLiveRegion={scoreImportConflict ? "polite" : undefined} style={scoreImportConflict ? s.scoreSourceStatus : s.scoreImportError}><Text style={scoreImportConflict ? s.scoreSourceStatusText : s.scoreImportErrorText}>{scoreImportError}</Text></View> : null}
+        {scoreImportMode === "json" && scoreImportSummary ? <View style={s.scoreImportValidated}>
+          <View style={s.scoreImportValidatedHeader}><View style={s.scoreImportCheck}><Text style={s.scoreImportCheckText}>✓</Text></View><View style={{ flex: 1 }}><Text style={s.scoreImportValidatedTitle}>Artifact checks passed</Text><Text style={s.scoreImportValidatedText}>{scoreImportSummary.playerCount} player rows · {scoreImportSummary.totalPoints} total fantasy points</Text></View></View>
+          <View style={s.scoreImportMetaGrid}><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>SOURCE</Text><Text numberOfLines={2} style={s.scoreImportMetaValue}>{scoreImportSummary.provider}</Text></View><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>EXTERNAL MATCH</Text><Text numberOfLines={2} style={s.scoreImportMetaValue}>{scoreImportSummary.externalMatchId}</Text></View><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>EXPECTED</Text><Text style={s.scoreImportMetaValue}>{scoreImportSummary.expectedPlayerCount} players</Text></View><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>WARNINGS</Text><Text style={s.scoreImportMetaValue}>{scoreImportSummary.warningCount}</Text></View></View>
+          <Text style={s.scoreImportFingerprint}>SHA-256 · {scoreImportSummary.sourceFingerprint}</Text>
+        </View> : null}
+        {scoreImportMode === "json" && scoreImportPreview ? <HumanScorePreview preview={scoreImportPreview} fixture={scoreImportFixture} /> : null}
+        {scoreImportMode === "json" && scoreImportSummary?.warningCount ? <><Text style={s.scoreImportLabel}>ADMIN APPROVAL REQUIRED</Text><Text style={s.scoreImportHelp}>Explain every warning before staging. For a 13+ participant team, confirm the extra player and how they participated (for example, a concussion substitute who batted or bowled).</Text><TextInput accessibilityLabel="Score compiler warning review notes" multiline textAlignVertical="top" editable={!busy} placeholder="Example: Verified the 13th participant batted or bowled as an approved substitute" placeholderTextColor="#819089" style={s.scoreImportNotesInput} value={scoreReviewNotes} onChangeText={setScoreReviewNotes} /></> : null}
+        {scorePublicationComplete ? <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={s.scorePublishSuccess}>
+          <Text style={s.scorePublishSuccessTitle}>Match {scoreImportFixture?.match_number} published</Text>
+          <Text style={s.scorePublishSuccessText}>Player points, owner totals and league rankings were updated successfully.</Text>
+        </View> : scorePublishConfirming ? <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={scoreImportError ? s.scorePublishFailure : s.scorePublishConfirmation}>
+          <Text style={scoreImportError ? s.scorePublishFailureTitle : s.scorePublishConfirmationTitle}>{scoreImportError ? "Publication blocked" : `Publish Match ${scoreImportFixture?.match_number} now?`}</Text>
+          <Text style={scoreImportError ? s.scorePublishFailureText : s.scorePublishConfirmationText}>{scoreImportError || "This applies the reviewed fantasy points to owner XIs and updates league rankings. There is no undo option on this screen."}</Text>
+        </View> : <View style={s.scoreImportGuardrail}><Text style={s.scoreImportGuardrailTitle}>Publication stays separate</Text><Text style={s.scoreImportGuardrailText}>Stage this verified scoreboard first. Publication requires a separate confirmation below and updates owner totals and league rankings.</Text></View>}
+      </ScrollView>
+      <View style={s.scoreImportFooter}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={scorePublishConfirming ? "Keep reviewing scores" : scorePublicationComplete || scoreImportStaged || scoreImportConflict ? "Close score import" : "Cancel score import"} disabled={busy} style={s.scoreImportCancel} onPress={scorePublishConfirming ? () => setScorePublishConfirming(false) : closeScoreImport}>
+          <Text style={s.scoreImportCancelText}>{scorePublishConfirming ? "Keep reviewing" : scorePublicationComplete || scoreImportStaged || scoreImportConflict ? "Close" : "Cancel"}</Text>
+        </TouchableOpacity>
+        {!scorePublicationComplete && scoreImportStaged && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scorePublishConfirming ? `Confirm publication for match ${scoreImportFixture?.match_number}` : `Publish scores for match ${scoreImportFixture?.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => scorePublishConfirming ? runAction(publishConfirmedScores) : setScorePublishConfirming(true)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scorePublishConfirming ? "Confirm publish now" : "Publish scores"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportConflict ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Review existing staged score batch" disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={reviewLatestStagedBatch}>
+          <Text style={s.scoreImportStageText}>Review staged batch</Text>
+        </TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "url" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard and generate preview" : "Prepare score review from URL"} accessibilityState={{ disabled: busy || !scoreSourceUrl.trim(), busy }} disabled={busy || !scoreSourceUrl.trim()} style={[s.scoreImportStage, (busy || !scoreSourceUrl.trim()) && s.disabled]} onPress={() => runAction(scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? captureScorecardReview : importScoreSourceUrl)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard & generate preview" : scoreSourceRequiresBrowserCapture(scoreSourceUrl) ? "Continue to scorecard capture" : "Prepare review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "paste" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreFielderValidationRequired ? "Validate fielder names with Cricbuzz and generate preview" : "Generate review from copied scorecard"} accessibilityState={{ disabled: busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim()), busy }} disabled={busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim())} style={[s.scoreImportStage, (busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim())) && s.disabled]} onPress={() => runAction(scoreFielderValidationRequired ? validateFieldersWithCricbuzz : preparePastedScoreReview)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scoreFielderValidationRequired ? "Validate with Cricbuzz & generate preview" : "Generate review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Stage reviewed score artifact" accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => runAction(stageScoreArtifact)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>Stage for review</Text>}</TouchableOpacity> : !scorePublicationComplete ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Validate score review artifact" accessibilityState={{ disabled: busy || !scoreArtifactText.trim() }} disabled={busy || !scoreArtifactText.trim()} style={[s.scoreImportStage, (busy || !scoreArtifactText.trim()) && s.disabled]} onPress={validateScoreArtifact}><Text style={s.scoreImportStageText}>Validate artifact</Text></TouchableOpacity> : null}
+      </View>
+    </View>
+  </KeyboardAvoidingView>
+</Modal>
+</AdminEditContext.Provider>;
 }
 
 function Dashboard({ memberName, tab, bid, setBid, openTeam }: { memberName: string; tab: Tab; bid: number; setBid: (n: number) => void; openTeam: () => void }) {
@@ -2716,6 +3673,176 @@ const s = StyleSheet.create(normalizeUiStyles({
   adminPhaseRange: { flexDirection: "row", alignItems: "flex-end", gap: 10, marginTop: 10 },
   adminPhaseNumberInput: { height: 44, borderWidth: 1, borderColor: "#CFD9D4", backgroundColor: "#F8FAF9", borderRadius: 10, paddingHorizontal: 10, marginTop: 4, color: "#173028", fontSize: 12, fontWeight: "900", textAlign: "center" },
   adminPhaseTo: { color: UI_TOKENS.colors.muted, fontSize: 9, fontWeight: "800", paddingBottom: 14 },
+  scoreBatchSummary: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#F1F6F3", borderWidth: 1, borderColor: "#DCE7E1", borderRadius: 11, padding: 10, marginTop: 10 },
+  scoreJobSummary: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#EEF4FA", borderWidth: 1, borderColor: "#CEDDEC", borderRadius: 11, padding: 10, marginTop: 8 },
+  scoreBatchEyebrow: { color: "#557068", fontSize: 7, fontWeight: "900", letterSpacing: 0.6 },
+  scoreBatchSource: { color: "#17352C", fontSize: 10, fontWeight: "900", marginTop: 3 },
+  scoreBatchFingerprint: { color: "#75867F", fontSize: 8, marginTop: 3 },
+  scoreBatchStatus: { backgroundColor: "#FFF2C7", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6 },
+  scoreBatchStatusPublished: { backgroundColor: "#DFF1E4" },
+  scoreBatchStatusText: { color: "#34584C", fontSize: 7, fontWeight: "900" },
+  scoreBatchEmpty: { color: "#77857F", fontSize: 9, fontStyle: "italic", marginTop: 9 },
+  scoreBatchArchive: { color: "#8B6E3B", fontSize: 8, fontWeight: "800", marginTop: 4 },
+  scoreAdminActions: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10 },
+  scoreImportAction: { minHeight: 42, borderWidth: 1, borderColor: "#174D3D", backgroundColor: "#F4F8F6", borderRadius: 10, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
+  scoreImportActionText: { color: "#174D3D", fontSize: 9, fontWeight: "900" },
+  scoreRegenerateAction: { minHeight: 42, borderWidth: 1, borderColor: "#5E8FA8", backgroundColor: "#EEF7FB", borderRadius: 10, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
+  scoreRegenerateActionText: { color: "#244C64", fontSize: 9, fontWeight: "900" },
+  scoreSecondaryAction: { minHeight: 42, borderWidth: 1, borderColor: "#B87C70", backgroundColor: "#FFF6F3", borderRadius: 10, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
+  scoreSecondaryActionText: { color: "#87463A", fontSize: 9, fontWeight: "900" },
+  scorePublishAction: { minHeight: 42, backgroundColor: "#174D3D", borderRadius: 10, paddingHorizontal: 14, alignItems: "center", justifyContent: "center" },
+  scorePublishActionText: { color: "#DDFB72", fontSize: 9, fontWeight: "900" },
+  scoreImportOverlay: { flex: 1, backgroundColor: "rgba(0, 24, 19, 0.78)", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, paddingVertical: 24 },
+  scoreImportModal: { width: "100%", maxWidth: 900, maxHeight: "92%", backgroundColor: "#FFFFFF", borderRadius: 20, overflow: "hidden", borderWidth: 1, borderColor: "#BDD0C7", ...CARD_SHADOW },
+  scoreImportHeader: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#0B2748", paddingHorizontal: 18, paddingVertical: 16 },
+  scoreImportEyebrow: { color: "#AFC5D9", fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
+  scoreImportTitle: { color: "#FFFFFF", fontSize: 17, lineHeight: 22, fontWeight: "900", marginTop: 3 },
+  scoreImportClose: { width: 44, height: 44, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  scoreImportCloseText: { color: "#FFFFFF", fontSize: 25, lineHeight: 27, fontWeight: "500" },
+  scoreImportScroll: { flexShrink: 1 },
+  scoreImportBody: { padding: 16, paddingBottom: 20 },
+  scoreImportTabs: { flexDirection: "row", gap: 7, backgroundColor: "#EDF2F0", borderRadius: 11, padding: 4, marginBottom: 13 },
+  scoreImportTab: { flex: 1, minHeight: 40, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  scoreImportTabActive: { backgroundColor: "#174D3D" },
+  scoreImportTabText: { color: "#5B6E66", fontSize: 9, fontWeight: "900" },
+  scoreImportTabTextActive: { color: "#DDFB72" },
+  scoreImportHelp: { color: "#536760", fontSize: 10, lineHeight: 16 },
+  scoreImportLabel: { color: "#60746C", fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 15, marginBottom: 6 },
+  scoreSourceInput: { minHeight: 50, borderWidth: 1, borderColor: "#C5D1CB", backgroundColor: "#F8FAF9", borderRadius: 12, paddingHorizontal: 12, color: "#173028", fontSize: 10 },
+  scoreSourceRow: { flexDirection: "row", alignItems: "stretch", gap: 8 },
+  scoreSourceOpen: { minWidth: 84, minHeight: 50, borderRadius: 12, borderWidth: 1, borderColor: "#174D3D", backgroundColor: "#EEF7F3", alignItems: "center", justifyContent: "center", paddingHorizontal: 11 },
+  scoreSourceOpenText: { color: "#174D3D", fontSize: 9, fontWeight: "900" },
+  scorePasteInstruction: { backgroundColor: "#EAF4FA", borderWidth: 1, borderColor: "#C5DCE9", borderRadius: 11, padding: 11, marginTop: 10 },
+  scorePasteInstructionTitle: { color: "#244C64", fontSize: 9, fontWeight: "900" },
+  scorePasteInstructionText: { color: "#536E7D", fontSize: 8, lineHeight: 13, marginTop: 3 },
+  scorePasteChoiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  scorePasteChoice: { flex: 1, minWidth: 130, minHeight: 52, flexDirection: "row", alignItems: "center", gap: 9, borderWidth: 1, borderColor: "#C5D1CB", backgroundColor: "#F8FAF9", borderRadius: 12, paddingHorizontal: 12 },
+  scorePasteChoiceActive: { borderWidth: 2, borderColor: "#174D3D", backgroundColor: "#EDF7F2" },
+  scorePasteChoiceText: { color: "#6A7B74", fontSize: 9, fontWeight: "800" },
+  scorePasteChoiceTextActive: { color: "#174D3D", fontWeight: "900" },
+  scorePasteTableInput: { minHeight: 126, borderWidth: 1, borderColor: "#C5D1CB", backgroundColor: "#F8FAF9", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: "#173028", fontSize: 8, lineHeight: 13, fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }) },
+  scorePasteAliasesInput: { minHeight: 76, borderWidth: 1, borderColor: "#D9BF78", backgroundColor: "#FFFBEE", borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, color: "#43391A", fontSize: 9, lineHeight: 14 },
+  scoreFielderValidation: { backgroundColor: "#FFF8E5", borderWidth: 1, borderColor: "#D8B753", borderRadius: 12, padding: 12, marginTop: 12 },
+  scoreFielderValidationTitle: { color: "#684F08", fontSize: 11, fontWeight: "900" },
+  scoreFielderValidationText: { color: "#756437", fontSize: 9, lineHeight: 14, marginTop: 4 },
+  scoreFielderValidationFootnote: { color: "#756437", fontSize: 8, lineHeight: 12, marginTop: 7, fontWeight: "700" },
+  scoreSourceNotice: { backgroundColor: "#FFF8E5", borderWidth: 1, borderColor: "#E6D49C", borderRadius: 11, padding: 11, marginTop: 11 },
+  scoreSourceNoticeTitle: { color: "#675414", fontSize: 9, fontWeight: "900" },
+  scoreSourceNoticeText: { color: "#756B47", fontSize: 8, lineHeight: 13, marginTop: 3 },
+  scoreSourceStatus: { backgroundColor: "#EAF4FA", borderWidth: 1, borderColor: "#C5DCE9", borderRadius: 10, padding: 10, marginTop: 9 },
+  scoreSourceStatusText: { color: "#244C64", fontSize: 9, lineHeight: 14, fontWeight: "800" },
+  scoreImportJsonInput: { minHeight: 190, borderWidth: 1, borderColor: "#C5D1CB", backgroundColor: "#F8FAF9", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, color: "#173028", fontSize: 9, lineHeight: 14, fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }) },
+  scoreRawToggle: { alignSelf: "flex-start", minHeight: 34, borderWidth: 1, borderColor: "#C5D1CB", borderRadius: 9, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", marginTop: 9 },
+  scoreRawToggleText: { color: "#174D3D", fontSize: 8, fontWeight: "900" },
+  scoreImportError: { backgroundColor: "#FFF0EC", borderWidth: 1, borderColor: "#E7BBB0", borderRadius: 10, padding: 10, marginTop: 9 },
+  scoreImportErrorText: { color: "#843E32", fontSize: 9, lineHeight: 14, fontWeight: "800" },
+  scoreImportValidated: { backgroundColor: "#EEF7F1", borderWidth: 1, borderColor: "#BAD7C4", borderRadius: 13, padding: 12, marginTop: 11 },
+  scoreImportValidatedHeader: { flexDirection: "row", alignItems: "center", gap: 9 },
+  scoreImportCheck: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#238A57", alignItems: "center", justifyContent: "center" },
+  scoreImportCheckText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
+  scoreImportValidatedTitle: { color: "#19573D", fontSize: 11, fontWeight: "900" },
+  scoreImportValidatedText: { color: "#587066", fontSize: 9, marginTop: 2 },
+  scoreImportMetaGrid: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 11 },
+  scoreImportMeta: { width: "48%", minHeight: 54, backgroundColor: "rgba(255,255,255,0.72)", borderRadius: 9, padding: 8 },
+  scoreImportMetaLabel: { color: "#75887E", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  scoreImportMetaValue: { color: "#17352C", fontSize: 9, lineHeight: 13, fontWeight: "900", marginTop: 3 },
+  scoreImportFingerprint: { color: "#6A7E75", fontSize: 7, lineHeight: 11, fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }), marginTop: 10 },
+  scorePreview: { borderWidth: 1, borderColor: "#C7D6CF", borderRadius: 14, overflow: "hidden", marginTop: 12, backgroundColor: "#FFFFFF" },
+  scorePreviewHeader: { backgroundColor: "#0B2748", padding: 13 },
+  scorePreviewEyebrow: { color: "#AFC5D9", fontSize: 7, fontWeight: "900", letterSpacing: 0.8 },
+  scorePreviewTitle: { color: "#FFFFFF", fontSize: 14, fontWeight: "900", marginTop: 2 },
+  scorePreviewResult: { color: "#D8E5ED", fontSize: 9, marginTop: 4 },
+  scorePreviewTotals: { flexDirection: "row", flexWrap: "wrap", gap: 7, padding: 10, backgroundColor: "#F3F7F5" },
+  scorePreviewTotal: { flexGrow: 1, minWidth: 94, borderWidth: 1, borderColor: "#D9E3DE", backgroundColor: "#FFFFFF", borderRadius: 9, padding: 8 },
+  scorePreviewTotalPrimary: { backgroundColor: "#DDFB72", borderColor: "#B6DD35" },
+  scorePreviewTotalLabel: { color: "#71817A", fontSize: 7, fontWeight: "900" },
+  scorePreviewTotalValue: { color: "#17352C", fontSize: 13, fontWeight: "900", marginTop: 2 },
+  scoreMatchSummary: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 10, paddingBottom: 11, backgroundColor: "#F3F7F5" },
+  scoreMatchSummaryItem: { flexGrow: 1, minWidth: 150, minHeight: 58, borderWidth: 1, borderColor: "#CADBD3", backgroundColor: "#FFFFFF", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9 },
+  scoreMatchSummaryLabel: { color: "#71817A", fontSize: 7, fontWeight: "900", letterSpacing: 0.4 },
+  scoreMatchSummaryValue: { color: "#17352C", fontSize: 11, lineHeight: 15, fontWeight: "900", marginTop: 4 },
+  scoreMatchSummaryScore: { color: "#0B2748", fontSize: 17, lineHeight: 21, fontWeight: "900", marginTop: 2 },
+  scoreInnings: { borderTopWidth: 1, borderTopColor: "#D8E3DE", paddingBottom: 14 },
+  scoreInningsHeader: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#DDE9F3", paddingHorizontal: 13, paddingVertical: 11 },
+  scoreInningsNumber: { width: 29, height: 29, borderRadius: 15, backgroundColor: "#0B2748", alignItems: "center", justifyContent: "center" },
+  scoreInningsNumberText: { color: "#DDFB72", fontSize: 11, fontWeight: "900" },
+  scoreInningsTitle: { color: "#0B2748", fontSize: 12, fontWeight: "900" },
+  scoreInningsSubtitle: { color: "#536D82", fontSize: 8, fontWeight: "800", marginTop: 2 },
+  scoreInningsScoreBlock: { alignItems: "flex-end", paddingLeft: 10 },
+  scoreInningsScoreTeam: { color: "#536D82", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  scoreInningsScoreValue: { color: "#0B2748", fontSize: 18, lineHeight: 21, fontWeight: "900", marginTop: 1 },
+  scoreDisciplineHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingTop: 13, paddingBottom: 7 },
+  scoreDisciplineTitle: { color: "#17352C", fontSize: 10, fontWeight: "900" },
+  scoreDisciplineSubtitle: { color: "#708179", fontSize: 7, marginTop: 2 },
+  scoreTableScroll: { paddingHorizontal: 12, paddingBottom: 3 },
+  scoreTable: { minWidth: 698, borderWidth: 1, borderColor: "#D9E3DE", borderRadius: 10, overflow: "hidden" },
+  scoreBowlingTable: { minWidth: 526 },
+  scoreTableRow: { minHeight: 43, flexDirection: "row", alignItems: "center", paddingHorizontal: 9, borderTopWidth: 1, borderTopColor: "#E8EEEB", backgroundColor: "#FFFFFF" },
+  scoreTableHeaderRow: { minHeight: 32, borderTopWidth: 0, backgroundColor: "#EEF3F1" },
+  scoreTableHeader: { color: "#64776F", fontSize: 7, fontWeight: "900", letterSpacing: 0.4, paddingHorizontal: 4, textAlign: "right" },
+  scoreTablePlayerRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5, paddingRight: 7 },
+  scoreTablePlayer: { maxWidth: 128, color: "#17352C", fontSize: 9, fontWeight: "900" },
+  scoreTableRole: { color: "#6B7C75", fontSize: 7, fontWeight: "800" },
+  scoreTableDismissal: { color: "#52675F", fontSize: 8, lineHeight: 11, paddingHorizontal: 5 },
+  scoreTableCell: { color: "#425A51", fontSize: 9, fontWeight: "800", paddingHorizontal: 4, textAlign: "right" },
+  scoreTableCellStrong: { color: "#174D3D", fontWeight: "900" },
+  scoreTableEmpty: { color: "#71817A", fontSize: 8, fontStyle: "italic", paddingHorizontal: 12, paddingVertical: 14 },
+  scoreTableTotalRow: { backgroundColor: "#F3F7F5", borderTopColor: "#CDDCD5" },
+  scoreTableTotalLabel: { color: "#17352C", fontSize: 9, fontWeight: "900" },
+  scoreTableTotalScore: { color: "#0B2748", fontSize: 12, fontWeight: "900", paddingHorizontal: 4 },
+  scoreDidNotBat: { color: "#62756D", fontSize: 8, lineHeight: 12, paddingHorizontal: 13, paddingTop: 7 },
+  scoreDidNotBatLabel: { color: "#425A51", fontWeight: "900" },
+  scoreFantasySection: { borderTopWidth: 1, borderTopColor: "#C9D9D1", backgroundColor: "#F3F7F5", paddingBottom: 14 },
+  scoreFantasyHeader: { backgroundColor: "#17352C", paddingHorizontal: 13, paddingVertical: 12 },
+  scoreFantasyEyebrow: { color: "#A9C5BB", fontSize: 7, fontWeight: "900", letterSpacing: 0.7 },
+  scoreFantasyTitle: { color: "#FFFFFF", fontSize: 13, fontWeight: "900", marginTop: 2 },
+  scoreFantasySubtitle: { color: "#C9DDD6", fontSize: 8, marginTop: 3 },
+  scoreFantasyTeam: { paddingTop: 12 },
+  scoreFantasyTeamHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingBottom: 7 },
+  scoreFantasyTeamTitle: { flex: 1, color: "#17352C", fontSize: 11, fontWeight: "900" },
+  scoreFantasyTeamTotal: { color: "#0B2748", fontSize: 13, fontWeight: "900" },
+  scoreFantasyTable: { minWidth: 652, borderWidth: 1, borderColor: "#D2DED8", borderRadius: 10, overflow: "hidden" },
+  scoreFantasyTotalRow: { backgroundColor: "#DDE9E3", borderTopColor: "#B9CEC4" },
+  scoreFantasyTotalLabel: { color: "#17352C", fontSize: 9, fontWeight: "900" },
+  scoreRoyaltyNotice: { marginHorizontal: 12, marginTop: 10, borderWidth: 1, borderColor: "#D9BF78", backgroundColor: "#FFFBEE", borderRadius: 9, padding: 9 },
+  scoreRoyaltyNoticeTitle: { color: "#675414", fontSize: 8, fontWeight: "900" },
+  scoreRoyaltyNoticeText: { color: "#756B47", fontSize: 7, lineHeight: 11, marginTop: 2 },
+  scoreRoyaltyPending: { color: "#8A773C", fontSize: 7, fontWeight: "900" },
+  scorePreviewTeam: { borderTopWidth: 1, borderTopColor: "#DDE6E2" },
+  scorePreviewTeamHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "#ECF4F1" },
+  scorePreviewTeamTitle: { color: "#17352C", fontSize: 11, fontWeight: "900" },
+  scorePreviewPlayer: { padding: 11, borderTopWidth: 1, borderTopColor: "#EDF1EF" },
+  scorePreviewPlayerHead: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  scorePreviewPlayerMain: { flex: 1, minWidth: 0 },
+  scorePreviewPlayerNameRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5 },
+  scorePreviewPlayerName: { color: "#17352C", fontSize: 10, fontWeight: "900" },
+  scorePreviewRole: { color: "#6B7C75", fontSize: 8, fontWeight: "800" },
+  scorePreviewBadge: { backgroundColor: "#F0DFF8", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2 },
+  scorePreviewBadgeText: { color: "#703493", fontSize: 6, fontWeight: "900" },
+  scorePreviewPlayerStats: { color: "#62756D", fontSize: 8, lineHeight: 12, marginTop: 4 },
+  scorePreviewPlayerTotal: { color: "#174D3D", fontSize: 13, fontWeight: "900", textAlign: "right" },
+  scorePreviewPlayerPointsLabel: { color: "#6B7D75", fontSize: 6, fontWeight: "900", textAlign: "right" },
+  scorePreviewCategories: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 8 },
+  scorePreviewCategory: { backgroundColor: "#F1F5F3", borderRadius: 7, paddingHorizontal: 7, paddingVertical: 4 },
+  scorePreviewCategoryText: { color: "#496159", fontSize: 7, fontWeight: "900" },
+  scoreImportNotesInput: { minHeight: 90, borderWidth: 1, borderColor: "#D9BF78", backgroundColor: "#FFFBEE", borderRadius: 11, padding: 11, color: "#43391A", fontSize: 10, lineHeight: 15 },
+  scoreImportGuardrail: { backgroundColor: "#EEF2F7", borderRadius: 11, padding: 11, marginTop: 13 },
+  scoreImportGuardrailTitle: { color: "#243B56", fontSize: 9, fontWeight: "900" },
+  scoreImportGuardrailText: { color: "#627184", fontSize: 8, lineHeight: 13, marginTop: 3 },
+  scorePublishConfirmation: { backgroundColor: "#FFF7DF", borderWidth: 1, borderColor: "#E2BE55", borderRadius: 11, padding: 12, marginTop: 13 },
+  scorePublishConfirmationTitle: { color: "#5B4300", fontSize: 10, fontWeight: "900" },
+  scorePublishConfirmationText: { color: "#766126", fontSize: 8, lineHeight: 13, marginTop: 4 },
+  scorePublishFailure: { backgroundColor: "#FFF0EC", borderWidth: 1, borderColor: "#D98E7E", borderRadius: 11, padding: 12, marginTop: 13 },
+  scorePublishFailureTitle: { color: "#843E32", fontSize: 10, fontWeight: "900" },
+  scorePublishFailureText: { color: "#843E32", fontSize: 8, lineHeight: 13, marginTop: 4 },
+  scorePublishSuccess: { backgroundColor: "#E7F7EE", borderWidth: 1, borderColor: "#73B991", borderRadius: 11, padding: 12, marginTop: 13 },
+  scorePublishSuccessTitle: { color: "#155B36", fontSize: 10, fontWeight: "900" },
+  scorePublishSuccessText: { color: "#397154", fontSize: 8, lineHeight: 13, marginTop: 4 },
+  scoreImportFooter: { flexDirection: "row", gap: 9, borderTopWidth: 1, borderTopColor: "#E2E8E5", backgroundColor: "#F8FAF9", padding: 13 },
+  scoreImportCancel: { flex: 1, minHeight: 46, borderWidth: 1, borderColor: "#BFCBC6", borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  scoreImportCancelText: { color: "#52665D", fontSize: 10, fontWeight: "900" },
+  scoreImportStage: { flex: 2, minHeight: 46, backgroundColor: "#DDFB72", borderRadius: 11, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  scoreImportStageText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
   adminAddPhase: { borderWidth: 1, borderStyle: "dashed", borderColor: "#8FA49B", borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 9 },
   adminAddPhaseText: { color: "#174D3D", fontSize: 10, fontWeight: "900" },
   transferScreenIntro: { backgroundColor: "#153D33", borderRadius: 18, padding: 16, marginTop: 10 },

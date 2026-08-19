@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Cricket Rivalries Scorecard Capture",
+  "version": "0.2.0",
+  "description": "Captures ESPNcricinfo scorecards and validates ambiguous fielder names with Cricbuzz.",
+  "permissions": [
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*.espncricinfo.com/*",
+    "https://*.cricinfo.com/*",
+    "https://*.cricbuzz.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://cricketrivalriesleague.com/*",
+        "https://www.cricketrivalriesleague.com/*",
+        "https://cricketrivalriesleague.netlify.app/*"
+      ],
+      "js": [
+        "admin-bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "Cricket Rivalries scorecard capture"
+  }
+}

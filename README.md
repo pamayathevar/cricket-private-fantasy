@@ -36,7 +36,7 @@ Before creating a release build, run `npm run check:production`. This validates 
 
 The production web application is deployed from GitHub `main` through Netlify at [cricketrivalriesleague.com](https://cricketrivalriesleague.com). Build settings, Namecheap DNS, HTTPS, Supabase redirect configuration, deployment verification and rollback are documented in the [deployment runbook](docs/DEPLOYMENT_RUNBOOK.md).
 
-Normalized score facts can be compiled offline into a validated, reconciled admin-review artifact with `npm run score:compile`. The compiler never connects to Supabase and never publishes a score. Its contract, validation gates and the remaining protected-backend work are documented in the [score ingestion runbook](docs/SCORE_INGESTION_RUNBOOK.md).
+Normalized score facts can be compiled offline into a validated, reconciled admin-review artifact with `npm run score:compile`. League administrators can also request a protected URL import through the Supabase job/Edge Function boundary, or use the desktop browser-assisted ESPNcricinfo copy/paste tool when no provider adapter is configured. All paths stop at review and never publish automatically. Contracts, name-alias handling, validation gates, secrets and deployment order are documented in the [score ingestion runbook](docs/SCORE_INGESTION_RUNBOOK.md).
 
 ## Confirmed rules
 
@@ -85,7 +85,7 @@ The detailed lineup workflow is documented in [team-selection-flow.md](team-sele
 
 - Mobile: React Native with Expo and TypeScript
 - Backend: Supabase (Postgres, authentication, realtime, and server functions)
-- Match data: start with commissioner-entered/imported scorecards; connect a licensed cricket-data provider before public release
+- Match data: load the restricted Chrome extension from `browser-extension/` once, then paste an ESPNcricinfo Full Scorecard URL in Match Scoring to capture and generate the review preview; the `score:fetch` command remains a diagnostic fallback, and a licensed cricket-data provider is still required for unattended production ingestion
 
 ## Important auction safeguards
 

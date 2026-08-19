@@ -131,6 +131,8 @@ Normal resubmission cannot change an earlier XI after a later submitted XI has l
 
 Locking uses server time for the fixture. After lock, the XI, Captain, Vice-Captain, BAI/BOI, and booster cannot be edited.
 
+If an active owner does not submit a new XI before lock, their latest eligible valid XI is automatically carried into the locked fixture. Results labels it **AUTO / CARRIED**, charges zero match transfers, and does not copy a booster. An owner with no earlier valid XI has nothing to carry and therefore has no team for that fixture. Before scores are published, the server materializes these carried XIs so scoring, rankings, ownership usage, and audit records all use the same effective team shown in Results.
+
 ## 4. Captain, Vice-Captain, and Impact roles
 
 All four roles are optional. A valid XI can be submitted without them.
@@ -315,6 +317,11 @@ These are the confirmed defaults for the current IPL 2026 league. The live **Rul
 - Active phase ranges cannot overlap.
 - Transfer periods must cover the configured sequence without overlaps or gaps.
 - Administrative publications and No Result settlements write audit records.
+- For a match that already has a saved Cricinfo review, choose **Regenerate saved scorecard** on its Match Scoring card. The admin screen reuses the four captured tables stored in the immutable batch, applies the rules effective for that fixture, and opens a new human-readable preview. No terminal or local capture file is required, and nothing is staged or published automatically.
+- For the first Cricinfo import, use **Import score source → Local capture** and paste the four Full Scorecard tables. The optional desktop capture helper can still prefill those fields when needed. Verify every total and use the alias field if a source name differs from the league player record.
+- An Impact or concussion substitute who appears in the official batting or bowling table receives the normal points for those contributions. A fielding-only substitute receives catch, stumping, or run-out points only when **Playing Rules → Substitute fielder points** is enabled; the default is OFF.
+- If an official scorecard resolves 13 or more participants for one team, preview generation continues with a warning. The administrator must verify the extra participant, explain the exception in the required approval notes, and then explicitly stage the review. Fewer than 11 core participants remain an import error.
+- If the app was not running when capture finished, start it and retry from the saved file: `npm run score:fetch -- --capture ".local/score-imports/<capture-file>.json" --app-url http://localhost:8081`. Use the port printed by Expo if it is not `8081`.
 
 ## Frequently asked questions
 

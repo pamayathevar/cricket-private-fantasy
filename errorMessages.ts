@@ -13,6 +13,7 @@ export function userActionError(error: ErrorLike, action = "This action"): strin
   if (message.includes("league admin access required") || message.includes("permission denied") || message.includes("row-level security")) return "Only a league administrator can make this change.";
   if (message.includes("active league membership required")) return "Your league membership is not active. Return to All leagues and check your invitation status.";
   if (message.includes("lineup is locked") || message.includes("fixture is locked")) return "This lineup is locked because the match has started.";
+  if (message.includes("source fingerprint already exists with different score facts")) return "This score capture is already staged, but this retry calculated at least one score fact differently. Nothing was overwritten. Review the existing staged batch, or create a correction from an updated scorecard.";
   if (message.includes("already used in this league") || message.includes("duplicate key") || message.includes("already exists")) return "That value is already in use. Choose a different one.";
   if (message.includes("overlap") || message.includes("gap") || message.includes("continuous")) return "Match ranges must be continuous and cannot overlap.";
   if (message.includes("transfer limit")) return "This change exceeds the available transfer balance.";

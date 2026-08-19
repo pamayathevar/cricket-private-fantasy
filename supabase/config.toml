@@ -5,3 +5,6 @@ verify_jwt = true
 
 [functions.dispatch-match-reminders]
 verify_jwt = false
+
+[functions.ingest-score-source]
+verify_jwt = true

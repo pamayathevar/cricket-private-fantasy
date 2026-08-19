@@ -23,6 +23,7 @@ export type ScoreImportSource = {
 export type ScoreImportWicket = {
   victimPlayerId: string;
   victimRole: ScoreImportRole;
+  direct?: boolean;
 };
 
 export type ScoreImportPlayer = {
@@ -38,6 +39,9 @@ export type ScoreImportPlayer = {
     fours: number;
     sixes: number;
     dismissal: "none" | "duck" | "golden-duck" | "diamond-duck" | "retired-out" | "retired-hurt";
+    dismissalText?: string;
+    innings?: 1 | 2;
+    order?: number;
   };
   bowling?: {
     balls: number;
@@ -45,6 +49,8 @@ export type ScoreImportPlayer = {
     maidens: number;
     dots: number;
     wickets: ScoreImportWicket[];
+    innings?: 1 | 2;
+    order?: number;
   };
   fielding?: {
     catches: number;
@@ -213,7 +219,10 @@ export const validateScoreImport = (document: NormalizedScoreImport): ScoreImpor
     victimRole: ScoreImportRole;
     path: string;
   }> = [];
-  let playingXiCount = 0;
+  const participantCounts = new Map<string, number>([
+    [homeTeam, 0],
+    [awayTeam, 0],
+  ]);
 
   document.players.forEach((player, index) => {
     const path = `players[${index}]`;
@@ -233,7 +242,9 @@ export const validateScoreImport = (document: NormalizedScoreImport): ScoreImpor
     }
     if (!ROLES.has(player.role)) addIssue(issues, "error", "invalid_role", `${path}.role`, "Role must be BA, WK, AL, or BO.");
     if (typeof player.playingXI !== "boolean") addIssue(issues, "error", "invalid_playing_xi", `${path}.playingXI`, "playingXI must be true or false.");
-    if (player.playingXI) playingXiCount += 1;
+    if (player.playingXI) {
+      participantCounts.set(player.team, (participantCounts.get(player.team) ?? 0) + 1);
+    }
 
     const batting = player.batting;
     if (batting) {
@@ -340,8 +351,17 @@ export const validateScoreImport = (document: NormalizedScoreImport): ScoreImpor
     }
   }
 
-  if (playingXiCount !== 22) {
-    addIssue(issues, "warning", "unexpected_playing_xi_count", "players", `Expected 22 playing-XI players for a standard match; found ${playingXiCount}. Review substitutes and mappings.`);
+  const invalidParticipantCounts = [homeTeam, awayTeam]
+    .map(team => ({ team, count: participantCounts.get(team) ?? 0 }))
+    .filter(({ count }) => count < 11 || count > 12);
+  if (invalidParticipantCounts.length > 0) {
+    addIssue(
+      issues,
+      "warning",
+      "unexpected_playing_xi_count",
+      "players",
+      `Expected 11–12 official match participants per team; found ${[homeTeam, awayTeam].map(team => `${team} ${participantCounts.get(team) ?? 0}`).join(" and ")}. A 13+ participant team is allowed only as an administrator-approved exception when the extra player actually participated, such as an Impact or concussion substitute who batted or bowled. Explain the verification in the required review notes before staging.`,
+    );
   }
 
   return issues;
@@ -363,6 +383,7 @@ const toPlayerMatchStats = (document: NormalizedScoreImport, player: ScoreImport
     dismissal: batting.dismissal,
     bowlerWickets: bowling.wickets.filter((wicket) => wicket.victimRole === "BO").length,
     nonBowlerWickets: bowling.wickets.filter((wicket) => wicket.victimRole !== "BO").length,
+    directWickets: bowling.wickets.filter((wicket) => wicket.direct === true).length,
     ballsBowled: bowling.balls,
     runsConceded: bowling.runsConceded,
     maidens: bowling.maidens,
@@ -415,6 +436,11 @@ export const compileScoreImport = (
       team: player.team,
       role: player.role,
       playing_xi: player.playingXI,
+      batting_innings: player.batting?.innings ?? null,
+      bowling_innings: player.bowling?.innings ?? null,
+      batting_order: player.batting?.order ?? null,
+      bowling_order: player.bowling?.order ?? null,
+      dismissal_text: player.batting?.dismissalText ?? null,
       normalized_stats: stats,
     };
     if (index === 0 && document.scorecard !== undefined) rawStats.scorecard = document.scorecard;

@@ -24,3 +24,9 @@ yarn-error.log*
 
 # Expo Application Services
 .eas/
+
+# Visible-browser score capture profile and review artifacts
+.local/
+
+# Supabase CLI project-link and version cache
+supabase/.temp/
