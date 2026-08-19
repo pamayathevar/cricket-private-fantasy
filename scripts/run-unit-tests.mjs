@@ -197,6 +197,14 @@ const reviewArtifact = () => ({
 });
 
 const tests = [
+  ["scorecard fixture identity is enforced while staging and publishing", () => {
+    const migration = fs.readFileSync("supabase/migrations/20260819220518_reject_mismatched_scorecard_fixture.sql", "utf8");
+    assert.match(migration, /function public\.score_source_matches_fixture/);
+    assert.match(migration, /Scorecard URL does not match Match/);
+    assert.match(migration, /Cannot publish Match %: the scorecard URL belongs to a different fixture/);
+    assert.match(migration, /stage_score_ingestion_batch\(uuid,jsonb,text\)/);
+    assert.match(migration, /publish_match_scores_safe\(uuid\)/);
+  }],
   ["Results attaches each published royalty to the player who generated it", () => {
     const source = fs.readFileSync("SupabaseScreens.tsx", "utf8");
     assert.match(source, /row\.fixture_id === match\.id && row\.recipient_member_id === lineup\.member\?\.id/);
@@ -843,6 +851,42 @@ const tests = [
       fixtureId: "99999999-9999-4999-8999-999999999999",
       matchNumber: 12,
     }), /does not belong to Match 12/);
+  }],
+  ["score review artifacts reject a scorecard URL for another fixture", () => {
+    const correct = reviewArtifact();
+    correct.matchNumber = 2;
+    correct.source.externalMatchId = "1527675";
+    correct.source.sourceUrl = "https://www.espncricinfo.com/series/ipl-2026-1510719/mumbai-indians-vs-kolkata-knight-riders-2nd-match-1527675/full-scorecard";
+    const expected = {
+      leagueId: correct.leagueId,
+      fixtureId: correct.fixtureId,
+      matchNumber: 2,
+      homeTeam: "KKR",
+      awayTeam: "MI",
+    };
+    assert.equal(parseScoreIngestionArtifact(JSON.stringify(correct), expected).summary.externalMatchId, "1527675");
+
+    const wrongMatch = structuredClone(correct);
+    wrongMatch.source.externalMatchId = "1527676";
+    wrongMatch.source.sourceUrl = "https://www.espncricinfo.com/series/ipl-2026-1510719/chennai-super-kings-vs-rajasthan-royals-3rd-match-1527676/full-scorecard";
+    assert.throws(
+      () => parseScoreIngestionArtifact(JSON.stringify(wrongMatch), expected),
+      /does not match Match 2 \(KKR vs MI\)/,
+    );
+
+    const wrongTeams = structuredClone(correct);
+    wrongTeams.source.sourceUrl = "https://www.espncricinfo.com/series/ipl-2026-1510719/chennai-super-kings-vs-rajasthan-royals-2nd-match-1527675/full-scorecard";
+    assert.throws(
+      () => parseScoreIngestionArtifact(JSON.stringify(wrongTeams), expected),
+      /does not match Match 2 \(KKR vs MI\)/,
+    );
+
+    const missingExternalId = structuredClone(correct);
+    missingExternalId.source.sourceUrl = "https://www.espncricinfo.com/series/ipl-2026-1510719/mumbai-indians-vs-kolkata-knight-riders-2nd-match-9999999/full-scorecard";
+    assert.throws(
+      () => parseScoreIngestionArtifact(JSON.stringify(missingExternalId), expected),
+      /does not match Match 2 \(KKR vs MI\)/,
+    );
   }],
   ["score review artifacts reject duplicate players and mismatched totals", () => {
     const duplicate = reviewArtifact();

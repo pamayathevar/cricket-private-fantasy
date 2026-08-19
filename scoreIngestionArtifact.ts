@@ -2,6 +2,8 @@ export type ScoreIngestionFixtureIdentity = {
   leagueId: string;
   fixtureId: string;
   matchNumber: number;
+  homeTeam?: string;
+  awayTeam?: string;
 };
 
 export type ScoreIngestionArtifactSummary = {
@@ -99,6 +101,53 @@ export type SavedCricinfoScorecard = {
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const SCORECARD_TEAM_SLUGS: Record<string, string[]> = {
+  CSK: ["csk", "chennai-super-kings"],
+  DC: ["dc", "delhi-capitals"],
+  GT: ["gt", "gujarat-titans"],
+  KKR: ["kkr", "kolkata-knight-riders"],
+  LSG: ["lsg", "lucknow-super-giants"],
+  MI: ["mi", "mumbai-indians"],
+  PBKS: ["pbks", "punjab-kings"],
+  RCB: ["rcb", "royal-challengers-bengaluru", "royal-challengers-bangalore"],
+  RR: ["rr", "rajasthan-royals"],
+  SRH: ["srh", "sunrisers-hyderabad"],
+};
+
+const SCORECARD_IDENTITY_HOSTS = /(^|\.)(?:cricinfo\.com|espncricinfo\.com|cricbuzz\.com)$/i;
+
+const scorecardPathHasTeam = (path: string, team: string) => {
+  const normalized = team.trim().toLocaleUpperCase();
+  const aliases = SCORECARD_TEAM_SLUGS[normalized] ?? [normalized.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-")];
+  return aliases.some(alias => new RegExp(`(?:^|[-_/])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[-_/]|$)`, "i").test(path));
+};
+
+export const assertScoreSourceMatchesFixture = (
+  sourceUrl: string,
+  externalMatchId: string,
+  expected: ScoreIngestionFixtureIdentity,
+) => {
+  let url: URL;
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    throw new Error("Source URL must be a valid HTTPS URL.");
+  }
+  if (url.protocol !== "https:") throw new Error("Source URL must be a valid HTTPS URL.");
+  if (!SCORECARD_IDENTITY_HOSTS.test(url.hostname)) return;
+
+  const mismatch = (): never => {
+    const teams = expected.homeTeam && expected.awayTeam ? ` (${expected.homeTeam} vs ${expected.awayTeam})` : "";
+    throw new Error(`Scorecard URL does not match Match ${expected.matchNumber}${teams}. Select the correct fixture scorecard before staging.`);
+  };
+  const path = decodeURIComponent(url.pathname).toLocaleLowerCase();
+  const sourceMatch = path.match(/(?:^|[-_/])(\d+)(?:st|nd|rd|th)-match(?:[-_/]|$)/i);
+  if (!sourceMatch || Number(sourceMatch[1]) !== expected.matchNumber) mismatch();
+  if (!path.includes(externalMatchId.trim().toLocaleLowerCase())) mismatch();
+  if (expected.homeTeam && !scorecardPathHasTeam(path, expected.homeTeam)) mismatch();
+  if (expected.awayTeam && !scorecardPathHasTeam(path, expected.awayTeam)) mismatch();
+};
 
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -302,6 +351,7 @@ export const parseScoreIngestionArtifact = (
   } catch {
     throw new Error("Source URL must be a valid HTTPS URL.");
   }
+  assertScoreSourceMatchesFixture(sourceUrl, externalMatchId, expected);
 
   if (!Array.isArray(artifact.issues)) throw new Error("Artifact issues must be an array.");
   const issues = artifact.issues.map((issue, index) => {

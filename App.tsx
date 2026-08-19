@@ -1386,7 +1386,13 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     const artifactText = JSON.stringify(selected.review_artifact, null, 2);
     setScoreArtifactText(artifactText);
     try {
-      const parsed = parseScoreIngestionArtifact(artifactText, { leagueId, fixtureId: fixture.id, matchNumber: fixture.match_number });
+      const parsed = parseScoreIngestionArtifact(artifactText, {
+        leagueId,
+        fixtureId: fixture.id,
+        matchNumber: fixture.match_number,
+        homeTeam: fixture.home?.code,
+        awayTeam: fixture.away?.code,
+      });
       setScoreImportSummary(parsed.summary);
       setScoreImportPreview(parsed.preview);
       setScoreImportStaged(true);
@@ -1487,6 +1493,8 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       leagueId,
       fixtureId: scoreImportFixture.id,
       matchNumber: scoreImportFixture.match_number,
+      homeTeam: scoreImportFixture.home?.code,
+      awayTeam: scoreImportFixture.away?.code,
     });
     setScoreArtifactText(artifactText);
     setScoreImportSummary(parsed.summary);
@@ -1751,6 +1759,8 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
         leagueId,
         fixtureId: fixture.id,
         matchNumber: fixture.match_number,
+        homeTeam: fixture.home?.code,
+        awayTeam: fixture.away?.code,
       });
       setScoreArtifactText(artifactText);
       setScoreImportSummary(parsed.summary);
@@ -1830,6 +1840,8 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
             leagueId,
             fixtureId: scoreImportFixture.id,
             matchNumber: scoreImportFixture.match_number,
+            homeTeam: scoreImportFixture.home?.code,
+            awayTeam: scoreImportFixture.away?.code,
           });
           setScoreImportSummary(parsed.summary);
           setScoreImportPreview(parsed.preview);
@@ -1851,6 +1863,8 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
         leagueId,
         fixtureId: scoreImportFixture.id,
         matchNumber: scoreImportFixture.match_number,
+        homeTeam: scoreImportFixture.home?.code,
+        awayTeam: scoreImportFixture.away?.code,
       });
       setScoreImportSummary(parsed.summary);
       setScoreImportPreview(parsed.preview);
