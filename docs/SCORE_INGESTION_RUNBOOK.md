@@ -76,6 +76,8 @@ Bowler wickets list the dismissed player's mapped ID and league role. The compil
 - bowler-victim wickets (`victimRole = BO`);
 - non-bowler-victim wickets (`BA`, `WK`, or `AL`).
 
+The direct-wicket bonus applies only to bowled and hit-wicket dismissals. It does not apply to LBW, catches or stumpings. Caught-and-bowled is still a caught dismissal, so it receives normal wicket points and catch points but no direct-wicket bonus.
+
 Run-outs belong under fielding and must not appear in bowler wickets. A wicket victim cannot be credited twice and must resolve to the mapped player list.
 
 The batting `dismissal` value is the point-category value, not free text:

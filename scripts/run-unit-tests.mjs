@@ -368,14 +368,15 @@ const tests = [
     });
     assert.equal(points.bowling, 37);
   }],
-  ["direct bowler wickets receive ten bonus points without fielder assistance", () => {
+  ["only bowled and hit-wicket dismissals receive the ten-point bonus", () => {
     const direct = calculatePlayerPoints({ ...blankStats, playerIsBowler: true, nonBowlerWickets: 1, directWickets: 1 });
     const assisted = calculatePlayerPoints({ ...blankStats, playerIsBowler: true, nonBowlerWickets: 1, directWickets: 0 });
     assert.equal(direct.bowling, assisted.bowling + 10);
     assert.equal(isDirectBowlerWicket("b Jacob Duffy"), true);
-    assert.equal(isDirectBowlerWicket("lbw b Jacob Duffy"), true);
+    assert.equal(isDirectBowlerWicket("lbw b Jacob Duffy"), false);
     assert.equal(isDirectBowlerWicket("hit wicket b Jacob Duffy"), true);
-    assert.equal(isDirectBowlerWicket("c & b Jacob Duffy"), true);
+    assert.equal(isDirectBowlerWicket("c & b Jacob Duffy"), false);
+    assert.deepEqual(fieldersFromDismissal("c & b Jacob Duffy").catches, ["Jacob Duffy"]);
     assert.equal(isDirectBowlerWicket("c Phil Salt b Jacob Duffy"), false);
     assert.equal(isDirectBowlerWicket("st Phil Salt b Jacob Duffy"), false);
   }],
