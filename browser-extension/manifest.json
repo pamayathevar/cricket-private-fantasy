@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Cricket Rivalries Scorecard Capture",
   "version": "0.2.0",
-  "description": "Captures ESPNcricinfo scorecards and validates ambiguous fielder names with Cricbuzz.",
+  "description": "Captures ESPNcricinfo scorecards and validates missing or ambiguous fielder names with Cricbuzz.",
   "permissions": [
     "scripting"
   ],

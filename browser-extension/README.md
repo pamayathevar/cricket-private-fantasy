@@ -1,6 +1,6 @@
 # Cricket Rivalries scorecard capture extension
 
-This Chrome Manifest V3 extension reads a visible ESPNcricinfo Full Scorecard and returns the four rendered tables to the Cricket Rivalries admin review screen. When Cricinfo supplies an ambiguous fielder surname, it can also read the matching Cricbuzz scorecard to validate that dismissal. It cannot access Supabase, stage a score or publish a score.
+This Chrome Manifest V3 extension reads a visible ESPNcricinfo Full Scorecard and returns the four rendered tables to the Cricket Rivalries admin review screen. When Cricinfo omits a run-out fielder or supplies an ambiguous fielder surname, it can also read the matching Cricbuzz scorecard to validate that dismissal. It cannot access Supabase, stage a score or publish a score.
 
 For the complete administrator workflow—including installation, capture, human review, staging, publication, verification, corrections, and troubleshooting—see [Administrator guide: capture, review, and publish match scores](../docs/ADMIN_SCORE_PUBLISHING_GUIDE.md).
 
@@ -14,7 +14,7 @@ For the complete administrator workflow—including installation, capture, human
 
 The Match Scoring dialog will show **Browser capture extension connected**. Paste an ESPNcricinfo Full Scorecard URL and select **Capture scorecard & generate preview**.
 
-If the app cannot uniquely resolve a catcher, wicketkeeper or run-out fielder, it will then ask for the matching Cricbuzz scorecard URL. Select **Validate with Cricbuzz & generate preview**. Cricinfo remains the primary source; Cricbuzz changes only the ambiguous fielder names, and those corrections are saved in the review audit data. Manual aliases remain available as a fallback.
+If the app finds a missing or ambiguous catcher, wicketkeeper or run-out fielder—including a Cricinfo dismissal shown only as `run out`—it asks for the matching Cricbuzz scorecard URL. Select **Validate with Cricbuzz & generate preview**. Cricinfo remains the primary source; Cricbuzz changes only the incomplete fielder names, and those corrections are saved in the review audit data. Manual aliases remain available as a fallback when a name is present.
 
 ## Permissions
 

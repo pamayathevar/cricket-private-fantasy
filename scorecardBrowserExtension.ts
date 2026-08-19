@@ -111,7 +111,7 @@ const dismissalType = (value: string) => {
   if (/^(?:c|caught)\s*&\s*b\b/.test(text)) return "caught-and-bowled";
   if (/^(?:c|caught)\s+.+?\s+b\s+/.test(text)) return "caught";
   if (/^(?:st|stumped)\s+.+?\s+b\s+/.test(text)) return "stumped";
-  if (/run\s*out\s*\(/.test(text)) return "run-out";
+  if (/run\s*out\b/.test(text)) return "run-out";
   if (/\bb\s+/.test(text)) return "bowled";
   if (/\blbw\b/.test(text)) return "lbw";
   if (/not\s+out/.test(text)) return "not-out";

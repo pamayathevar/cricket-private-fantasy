@@ -15,11 +15,16 @@ import { CARD_SHADOW, UI_TOKENS, normalizeUiStyles } from "./uiTokens";
 import { previousNavigation, recordNavigation } from "./navigationHistory";
 import { CommunityScreen, useLeagueChatUnread, useLeagueHeartbeat } from "./CommunityScreen";
 import { useChatNotificationRouter } from "./chatNotifications";
-import { extractSavedCricinfoScorecard, parseScoreIngestionArtifact, type ScoreIngestionArtifactPreview, type ScoreIngestionArtifactSummary } from "./scoreIngestionArtifact";
+import { extractSavedCricinfoScorecard, parseScoreIngestionArtifact, ScoreIngestionArtifactError, unresolvedRunOutPlayer, type ScoreIngestionArtifactPreview, type ScoreIngestionArtifactSummary } from "./scoreIngestionArtifact";
 import { buildCricinfoPasteImport, ScorecardPasteError, type LeagueScorecardPlayer } from "./cricinfoScorecardPaste";
 import { buildScoreIngestionArtifact } from "./scoreIngestionArtifactBuilder";
 import { browserCaptureStatus, scoreSourceRequiresBrowserCapture } from "./scoreSourceWorkflow";
 import { applyCricbuzzFielderValidation, captureCricbuzzDismissalsWithBrowserExtension, captureScorecardWithBrowserExtension, detectScorecardBrowserExtension, type CricbuzzFielderCorrection, type ScorecardBrowserCapture } from "./scorecardBrowserExtension";
+
+const isFielderValidationError = (error: unknown) => (
+  (error instanceof ScorecardPasteError || error instanceof ScoreIngestionArtifactError)
+  && error.code === "fielder-name-unresolved"
+);
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Community" | "Help" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
@@ -950,7 +955,7 @@ const helpTopics: HelpTopic[] = [
       "One-time setup: in desktop Chrome open chrome://extensions, enable Developer mode, choose Load unpacked and select the supplied browser-extension folder. Reload the app and confirm Browser capture extension connected in Rules → Match Scoring → Import score source.",
       "For a completed match, open its Match Scoring card, select Import score source, keep Provider URL selected, paste the ESPNcricinfo Full Scorecard HTTPS URL and choose Capture scorecard & generate preview.",
       "Chrome opens the source visibly and returns to the admin tab after both batting and both bowling tables are rendered. The extension has no database credentials and cannot stage or publish anything.",
-      "If a fielder name is ambiguous, paste the matching Cricbuzz scorecard URL and select Validate with Cricbuzz & generate preview. Cricinfo remains the scoring source; Cricbuzz corrects only ambiguous dismissal names.",
+      "If a fielder name is missing or ambiguous—including a bare run out—paste the matching Cricbuzz scorecard URL and select Validate with Cricbuzz & generate preview. Cricinfo remains the scoring source; Cricbuzz corrects only the incomplete dismissal names.",
       "Before staging, verify the fixture, innings order, team totals, winner, Player of the Match, dismissals, wickets, dot balls, fielders and every BAT/BOWL/FIELD/BONUS/TOTAL player row. Explain every warning in the admin approval notes.",
       "Select Stage for review only after the human-readable preview is correct. Staging creates an immutable calculation version but does not change Results or Ranking.",
       "Select Publish scores, read the final warning and then select Confirm publish now. Do not close the dialog until Match n published confirms that player points, owner totals and rankings were updated.",
@@ -1101,6 +1106,7 @@ function HumanScorePreview({ preview, fixture }: { preview: ScoreIngestionArtifa
     { number: 2 as const, battingTeam: preview.secondInningsTeam, bowlingTeam: preview.firstInningsTeam, score: preview.secondInningsScore },
   ];
   const numberCell = (value: string | number, width = 48, emphasized = false) => <Text style={[s.scoreTableCell, { width }, emphasized && s.scoreTableCellStrong]}>{value}</Text>;
+  const breakdownCell = (value: string | number, width: number, first = false, emphasized = false) => <Text style={[s.scoreTableCell, s.scoreBreakdownCell, { width }, first && s.scoreBreakdownFirstCell, emphasized && s.scoreTableCellStrong]}>{value}</Text>;
   const strikeRate = (runs: number, balls: number) => balls ? (runs * 100 / balls).toFixed(2) : "—";
   const economyRate = (runs: number, balls: number) => balls ? (runs * 6 / balls).toFixed(2) : "—";
 
@@ -1128,6 +1134,8 @@ function HumanScorePreview({ preview, fixture }: { preview: ScoreIngestionArtifa
       const didNotBat = batters.filter(player => player.dismissalText === "did not bat");
       const bowlers = preview.players.filter(player => player.team === item.bowlingTeam && (player.ballsBowled > 0 || player.wickets > 0 || player.bowlingPoints !== 0))
         .sort((left, right) => left.bowlingOrder - right.bowlingOrder || left.name.localeCompare(right.name));
+      const inningsBattingPoints = batters.reduce((sum, player) => sum + player.battingPoints, 0);
+      const inningsBowlingPoints = bowlers.reduce((sum, player) => sum + player.bowlingPoints, 0);
       return <View key={item.number} style={s.scoreInnings}>
         <View style={s.scoreInningsHeader}>
           <View style={s.scoreInningsNumber}><Text style={s.scoreInningsNumberText}>{item.number}</Text></View>
@@ -1137,26 +1145,31 @@ function HumanScorePreview({ preview, fixture }: { preview: ScoreIngestionArtifa
 
         <View style={s.scoreDisciplineHeader}><IplTeamBadge code={item.battingTeam} /><View><Text style={s.scoreDisciplineTitle}>{item.battingTeam} batting</Text><Text style={s.scoreDisciplineSubtitle}>Dismissal details are copied from the verified scorecard</Text></View></View>
         <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={s.scoreTableScroll}>
-          <View style={s.scoreTable}>
-            <View style={[s.scoreTableRow, s.scoreTableHeaderRow]}><Text style={[s.scoreTableHeader, { width: 190 }]}>BATTING</Text><Text style={[s.scoreTableHeader, { width: 250 }]}></Text>{["R", "B", "4s", "6s", "SR"].map((label, index) => <Text key={label} style={[s.scoreTableHeader, { width: index > 3 ? 66 : 48 }]}>{label}</Text>)}</View>
+          <View style={[s.scoreTable, s.scoreBattingBreakdownTable]}>
+            <View style={[s.scoreTableRow, s.scoreTableHeaderRow, s.scoreTableGroupRow]}><Text style={[s.scoreTableGroupHeader, { width: 698 }]}>CRICKET SCORECARD</Text><Text style={[s.scoreTableGroupHeader, s.scoreBreakdownGroupHeader, { width: 484 }]}>FANTASY POINT BREAKDOWN</Text></View>
+            <View style={[s.scoreTableRow, s.scoreTableHeaderRow]}><Text style={[s.scoreTableHeader, { width: 190 }]}>BATTING</Text><Text style={[s.scoreTableHeader, { width: 250 }]}>OUT / NOT OUT</Text>{["R", "B", "4s", "6s", "SR"].map((label, index) => <Text key={label} style={[s.scoreTableHeader, { width: index > 3 ? 66 : 48 }]}>{label}</Text>)}{[["RUN PTS", 64], ["FOUR PTS", 64], ["SIX PTS", 64], ["SR PTS", 64], ["RUN MS", 76], ["OUT / DUCK", 76], ["BAT TOTAL", 76]].map(([label, width], index) => <Text key={String(label)} style={[s.scoreTableHeader, s.scoreBreakdownHeader, { width: Number(width) }, index === 0 && s.scoreBreakdownFirstCell]}>{label}</Text>)}</View>
             {displayedBatters.map(player => <View key={`${item.number}:bat:${player.playerId}`} style={s.scoreTableRow}>
               <View style={{ width: 190 }}><View style={s.scoreTablePlayerRow}><Text numberOfLines={1} style={s.scoreTablePlayer}>{player.name}</Text><Text style={s.scoreTableRole}>{player.role}</Text>{player.playerOfMatch ? <View style={s.scorePreviewBadge}><Text style={s.scorePreviewBadgeText}>POTM</Text></View> : null}</View></View>
               <Text numberOfLines={2} style={[s.scoreTableDismissal, { width: 250 }]}>{player.dismissalText || (player.runs || player.balls ? "Dismissal detail unavailable" : "did not bat")}</Text>
               {numberCell(player.runs)}{numberCell(player.balls)}{numberCell(player.fours)}{numberCell(player.sixes)}{numberCell(strikeRate(player.runs, player.balls), 66)}
+              {breakdownCell(player.battingBreakdown.runs, 64, true)}{breakdownCell(player.battingBreakdown.fours, 64)}{breakdownCell(player.battingBreakdown.sixes, 64)}{breakdownCell(player.battingBreakdown.strikeRate, 64)}{breakdownCell(player.battingBreakdown.runMilestone, 76)}{breakdownCell(player.battingBreakdown.dismissal, 76)}{breakdownCell(player.battingPoints, 76, false, true)}
             </View>)}
-            <View style={[s.scoreTableRow, s.scoreTableTotalRow]}><Text style={[s.scoreTableTotalLabel, { width: 440 }]}>TOTAL</Text><Text style={s.scoreTableTotalScore}>{item.score}</Text></View>
+            <View style={[s.scoreTableRow, s.scoreTableTotalRow]}><Text style={[s.scoreTableTotalLabel, { width: 600 }]}>INNINGS TOTAL</Text><Text style={[s.scoreTableTotalScore, { width: 98 }]}>{item.score}</Text><Text style={[s.scoreTableTotalLabel, s.scoreBreakdownFirstCell, { width: 408, textAlign: "right", paddingRight: 10 }]}>BATTING POINTS</Text>{breakdownCell(inningsBattingPoints, 76, false, true)}</View>
           </View>
         </ScrollView>
         {didNotBat.length ? <Text style={s.scoreDidNotBat}><Text style={s.scoreDidNotBatLabel}>Did not bat: </Text>{didNotBat.map(player => player.name).join(", ")}</Text> : null}
 
         <View style={s.scoreDisciplineHeader}><IplTeamBadge code={item.bowlingTeam} /><View><Text style={s.scoreDisciplineTitle}>{item.bowlingTeam} bowling</Text><Text style={s.scoreDisciplineSubtitle}>Overs, maidens, runs, wickets and dot balls</Text></View></View>
         <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={s.scoreTableScroll}>
-          <View style={[s.scoreTable, s.scoreBowlingTable]}>
-            <View style={[s.scoreTableRow, s.scoreTableHeaderRow]}><Text style={[s.scoreTableHeader, { width: 190 }]}>BOWLING</Text>{["O", "M", "R", "W", "ECON", "0s"].map(label => <Text key={label} style={[s.scoreTableHeader, { width: 56 }]}>{label}</Text>)}</View>
+          <View style={[s.scoreTable, s.scoreBowlingTable, s.scoreBowlingBreakdownTable]}>
+            <View style={[s.scoreTableRow, s.scoreTableHeaderRow, s.scoreTableGroupRow]}><Text style={[s.scoreTableGroupHeader, { width: 526 }]}>CRICKET SCORECARD</Text><Text style={[s.scoreTableGroupHeader, s.scoreBreakdownGroupHeader, { width: 674 }]}>FANTASY POINT BREAKDOWN</Text></View>
+            <View style={[s.scoreTableRow, s.scoreTableHeaderRow]}><Text style={[s.scoreTableHeader, { width: 190 }]}>BOWLING</Text>{["O", "M", "R", "W", "ECON", "0s"].map(label => <Text key={label} style={[s.scoreTableHeader, { width: 56 }]}>{label}</Text>)}{[["DOT PTS", 66], ["BOWLER WKT", 82], ["NON-BOWLER WKT", 92], ["DIRECT WKT", 70], ["MAIDEN PTS", 70], ["ECON PTS", 70], ["WKT MS", 82], ["NO WKT", 64], ["BOWL TOTAL", 78]].map(([label, width], index) => <Text key={String(label)} style={[s.scoreTableHeader, s.scoreBreakdownHeader, { width: Number(width) }, index === 0 && s.scoreBreakdownFirstCell]}>{label}</Text>)}</View>
             {bowlers.length ? bowlers.map(player => <View key={`${item.number}:bowl:${player.playerId}`} style={s.scoreTableRow}>
               <View style={{ width: 190 }}><View style={s.scoreTablePlayerRow}><Text numberOfLines={1} style={s.scoreTablePlayer}>{player.name}</Text><Text style={s.scoreTableRole}>{player.role}</Text></View></View>
               {numberCell(formatScorecardOvers(player.ballsBowled), 56)}{numberCell(player.maidens, 56)}{numberCell(player.runsConceded, 56)}{numberCell(player.wickets, 56, player.wickets > 0)}{numberCell(economyRate(player.runsConceded, player.ballsBowled), 56)}{numberCell(player.dots, 56)}
+              {breakdownCell(player.bowlingBreakdown.dotBalls, 66, true)}{breakdownCell(player.bowlingBreakdown.bowlerWickets, 82)}{breakdownCell(player.bowlingBreakdown.nonBowlerWickets, 92)}{breakdownCell(player.bowlingBreakdown.directWickets, 70)}{breakdownCell(player.bowlingBreakdown.maidens, 70)}{breakdownCell(player.bowlingBreakdown.economy, 70)}{breakdownCell(player.bowlingBreakdown.wicketMilestone, 82)}{breakdownCell(player.bowlingBreakdown.noWicket, 64)}{breakdownCell(player.bowlingPoints, 78, false, true)}
             </View>) : <Text style={s.scoreTableEmpty}>No bowling figures were recorded for this innings.</Text>}
+            {bowlers.length ? <View style={[s.scoreTableRow, s.scoreTableTotalRow]}><Text style={[s.scoreTableTotalLabel, { width: 1122, textAlign: "right", paddingRight: 10 }]}>BOWLING POINTS</Text>{breakdownCell(inningsBowlingPoints, 78, false, true)}</View> : null}
           </View>
         </ScrollView>
       </View>;
@@ -1209,6 +1222,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [scorePublishConfirming, setScorePublishConfirming] = useState(false);
   const [scorePublicationComplete, setScorePublicationComplete] = useState(false);
   const [showScoreRawJson, setShowScoreRawJson] = useState(false);
+  const [scoreImportExpanded, setScoreImportExpanded] = useState(false);
   const [scoreImportError, setScoreImportError] = useState("");
   const [scoreImportConflict, setScoreImportConflict] = useState(false);
   const [scoreSourceUrl, setScoreSourceUrl] = useState("");
@@ -1228,6 +1242,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [scoreCricbuzzUrl, setScoreCricbuzzUrl] = useState("");
   const [scoreFielderValidationRequired, setScoreFielderValidationRequired] = useState(false);
   const [scoreFielderValidation, setScoreFielderValidation] = useState<ScoreReviewSource["fielderValidation"]>();
+  const unresolvedScoreRunOut = unresolvedRunOutPlayer(scoreImportPreview);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const runAction = useActionGuard();
@@ -1328,6 +1343,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setScorePublishConfirming(false);
     setScorePublicationComplete(false);
     setShowScoreRawJson(false);
+    setScoreImportExpanded(false);
     setScoreImportError("");
     setScoreImportConflict(false);
     setScoreSourceUrl("");
@@ -1356,6 +1372,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setScorePublishConfirming(false);
     setScorePublicationComplete(false);
     setShowScoreRawJson(false);
+    setScoreImportExpanded(false);
     setScoreImportError("");
     setScoreImportConflict(false);
     setScoreSourceUrl("");
@@ -1373,6 +1390,40 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setScoreFielderValidationRequired(false);
     setScoreFielderValidation(undefined);
     setScoreImportMode("url");
+  };
+  const loadSavedScorecardForFielderValidation = (artifactValue: unknown) => {
+    const saved = extractSavedCricinfoScorecard(artifactValue);
+    setScoreSourceUrl(saved.sourceUrl);
+    setScorePasteFirstTeam(saved.firstInningsTeam);
+    setScorePasteWinner(saved.winnerTeam);
+    setScorePasteResult(saved.resultSummary);
+    setScorePastePlayerOfMatch(saved.playerOfMatchName);
+    setScorePasteAliases(saved.aliases);
+    setScorePasteFirstBatting(saved.firstInningsBatting);
+    setScorePasteFirstBowling(saved.firstInningsBowling);
+    setScorePasteSecondBatting(saved.secondInningsBatting);
+    setScorePasteSecondBowling(saved.secondInningsBowling);
+    setScoreCricbuzzUrl(saved.fielderValidation?.sourceUrl ?? "");
+    setScoreFielderValidation(saved.fielderValidation);
+    setScoreFielderValidationRequired(true);
+    setScoreImportSummary(null);
+    setScoreImportPreview(null);
+    setScoreImportStaged(false);
+    setScoreImportMode("paste");
+    setScoreSourceStatus("This saved Cricinfo review has an incomplete run-out. Enter the matching Cricbuzz scorecard URL below to verify the fielder before staging or publishing.");
+  };
+  const resolvePreviewRunOutWithCricbuzz = () => {
+    if (!unresolvedScoreRunOut) return false;
+    const message = `Run-out fielder is missing for ${unresolvedScoreRunOut.name}. Use the matching Cricbuzz scorecard to verify the fielder before this review can be staged or published.`;
+    try {
+      loadSavedScorecardForFielderValidation(JSON.parse(scoreArtifactText));
+    } catch {
+      setScoreImportSummary(null);
+      setScoreImportPreview(null);
+      setScoreImportStaged(false);
+    }
+    setScoreImportError(message);
+    return true;
   };
   const openStagedScoreReview = (fixture: any, batch?: any) => {
     const batches = Array.isArray(fixture.score_ingestion_batches) ? [...fixture.score_ingestion_batches] : [];
@@ -1400,6 +1451,13 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       setScoreImportConflict(false);
       setScoreImportError("");
     } catch (error) {
+      if (isFielderValidationError(error)) {
+        try {
+          loadSavedScorecardForFielderValidation(selected.review_artifact);
+        } catch {
+          // Keep the artifact validation error when its captured source cannot be restored.
+        }
+      }
       setScoreImportError(error instanceof Error ? error.message : "The staged score review could not be loaded.");
     }
   };
@@ -1538,9 +1596,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
         fielderValidation: scoreFielderValidation,
       }, "Scorecard parsed locally. Verify the review summary, then stage it for final publication review.");
     } catch (error) {
-      if (error instanceof ScorecardPasteError && error.code === "fielder-name-unresolved") {
+      if (isFielderValidationError(error)) {
         setScoreFielderValidationRequired(true);
-        setScoreSourceStatus("Cricinfo scorecard captured. Enter the matching Cricbuzz scorecard URL below so the app can validate only the ambiguous fielder names.");
+        setScoreSourceStatus("Cricinfo scorecard captured. Enter the matching Cricbuzz scorecard URL below so the app can validate the missing or ambiguous fielder names.");
       } else {
         setScoreSourceStatus("");
       }
@@ -1609,13 +1667,13 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       setScoreSourceStatus("Scorecard captured. Resolving every player and calculating the review preview…");
       await generateScoreReview(reviewSource, "Browser capture completed. Verify the innings, dismissals and fantasy totals below; nothing has been staged or published.");
     } catch (error) {
-      if (error instanceof ScorecardPasteError && error.code === "fielder-name-unresolved") {
+      if (isFielderValidationError(error)) {
         setScoreFielderValidationRequired(true);
-        setScoreSourceStatus("Cricinfo scorecard captured. Enter the matching Cricbuzz scorecard URL below so the app can validate only the ambiguous fielder names.");
+        setScoreSourceStatus("Cricinfo scorecard captured. Enter the matching Cricbuzz scorecard URL below so the app can validate the missing or ambiguous fielder names.");
       }
       const details = error instanceof ScorecardPasteError && error.details.length ? `\n${error.details.join("\n")}` : "";
       setScoreImportError(`${error instanceof Error ? error.message : "The browser extension could not prepare the score review."}${details}`);
-      if (!(error instanceof ScorecardPasteError && error.code === "fielder-name-unresolved")) {
+      if (!isFielderValidationError(error)) {
         setScoreSourceStatus(captureLoaded ? "The captured scorecard is available in Scorecard capture for correction and retry." : "");
       }
       if (captureLoaded) setScoreImportMode("paste");
@@ -1640,7 +1698,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     }
     setBusy(true);
     setScoreImportError("");
-    setScoreSourceStatus("Opening Cricbuzz to validate the ambiguous fielder names…");
+    setScoreSourceStatus("Opening Cricbuzz to validate the missing or ambiguous fielder names…");
     try {
       const capture = await captureCricbuzzDismissalsWithBrowserExtension(validationUrl, setScoreSourceStatus);
       const fixtureCodes = [scoreImportFixture.home?.code, scoreImportFixture.away?.code].filter(Boolean).map((code: string) => code.toUpperCase());
@@ -1771,9 +1829,15 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       setScoreReviewNotes("");
       setScoreSourceStatus("Saved scorecard regenerated with the rules for this match. Review every total before staging; nothing has been published.");
     } catch (error) {
+      if (isFielderValidationError(error)) {
+        setScoreFielderValidationRequired(true);
+        setScoreImportMode("paste");
+        setScoreSourceStatus("Saved Cricinfo scorecard loaded. Enter the matching Cricbuzz scorecard URL below so the app can validate the missing or ambiguous fielder names.");
+      } else {
+        setScoreSourceStatus("");
+      }
       const details = error instanceof ScorecardPasteError && error.details.length ? `\n${error.details.join("\n")}` : "";
       setScoreImportError(`${error instanceof Error ? error.message : "The saved scorecard could not be regenerated."}${details}`);
-      setScoreSourceStatus("");
     } finally {
       setBusy(false);
     }
@@ -1849,6 +1913,13 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
           setShowScoreRawJson(false);
           setScoreImportMode("json");
         } catch (artifactError) {
+          if (isFielderValidationError(artifactError)) {
+            try {
+              loadSavedScorecardForFielderValidation(result.reviewArtifact);
+            } catch {
+              // Keep the artifact validation error when its captured source cannot be restored.
+            }
+          }
           setScoreImportError(artifactError instanceof Error ? artifactError.message : "The generated review artifact could not be validated.");
         }
       }
@@ -1877,12 +1948,20 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       setScoreImportSummary(null);
       setScoreImportPreview(null);
       setScoreImportStaged(false);
+      if (isFielderValidationError(error)) {
+        try {
+          loadSavedScorecardForFielderValidation(JSON.parse(scoreArtifactText));
+        } catch {
+          // Keep the artifact validation error when its captured source cannot be restored.
+        }
+      }
       setScoreImportError(error instanceof Error ? error.message : "Review artifact could not be validated.");
       return null;
     }
   };
   const stageScoreArtifact = async () => {
     if (!scoreImportFixture) return;
+    if (resolvePreviewRunOutWithCricbuzz()) return;
     const parsed = validateScoreArtifact();
     if (!parsed) return;
     if (parsed.summary.warningCount > 0 && !scoreReviewNotes.trim()) {
@@ -2283,10 +2362,11 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <Text style={s.adminFootnote}>{section === "special" ? "Changes apply only from the selected unlocked match. Historical scoring remains pinned to its original version." : section === "phases" ? "Changing phases updates fixture assignments and phase-wise ranking." : section === "transfers" ? "Transfer periods apply immediately to future submissions; recorded usage is regrouped by the published match ranges." : "Milestone, strike-rate and economy tables remain preserved when these headline values are updated."}</Text>
 </ScrollView>
 <Modal visible={!!scoreImportFixture} transparent animationType="fade" statusBarTranslucent onRequestClose={closeScoreImport}>
-  <KeyboardAvoidingView style={s.scoreImportOverlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-    <View nativeID="score-ingestion-dialog" accessibilityViewIsModal accessibilityRole="alert" accessibilityLabel={scoreImportFixture ? `Import scores for Match ${scoreImportFixture.match_number}` : "Import scores"} style={s.scoreImportModal}>
+  <KeyboardAvoidingView style={[s.scoreImportOverlay, scoreImportExpanded && s.scoreImportOverlayExpanded]} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <View nativeID="score-ingestion-dialog" accessibilityViewIsModal accessibilityRole="alert" accessibilityLabel={scoreImportFixture ? `Import scores for Match ${scoreImportFixture.match_number}` : "Import scores"} style={[s.scoreImportModal, scoreImportExpanded && s.scoreImportModalExpanded]}>
       <View style={s.scoreImportHeader}>
         <View style={{ flex: 1 }}><Text style={s.scoreImportEyebrow}>VERIFIED SCORE INGESTION</Text><Text style={s.scoreImportTitle}>Match {scoreImportFixture?.match_number} score import</Text>{scoreImportFixture ? <View style={s.adminFixtureTeams}><IplTeamBadge code={scoreImportFixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={scoreImportFixture.away?.code} /></View> : null}</View>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreImportExpanded ? "Restore score import window" : "Expand score import to full screen"} accessibilityState={{ expanded: scoreImportExpanded }} style={s.scoreImportExpand} onPress={() => setScoreImportExpanded(current => !current)}><Text style={s.scoreImportExpandIcon}>{scoreImportExpanded ? "↙" : "↗"}</Text><Text style={s.scoreImportExpandText}>{scoreImportExpanded ? "RESTORE" : "EXPAND"}</Text></TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close score import" style={s.scoreImportClose} onPress={closeScoreImport}><Text style={s.scoreImportCloseText}>×</Text></TouchableOpacity>
       </View>
       <ScrollView style={s.scoreImportScroll} contentContainerStyle={s.scoreImportBody} keyboardShouldPersistTaps="handled">
@@ -2331,7 +2411,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
           <TextInput accessibilityLabel="Player name aliases" multiline textAlignVertical="top" autoCapitalize="words" autoCorrect={false} editable={!busy} placeholder={'Cricinfo name = Exact league player name\nN Reddy = Nitish Kumar Reddy'} placeholderTextColor="#819089" style={s.scorePasteAliasesInput} value={scorePasteAliases} onChangeText={setScorePasteAliases} />
           {scoreFielderValidationRequired ? <View style={s.scoreFielderValidation}>
             <Text style={s.scoreFielderValidationTitle}>Fielder name needs validation</Text>
-            <Text style={s.scoreFielderValidationText}>Cricinfo remains the primary scorecard. Paste the matching Cricbuzz scorecard URL; the app will verify the fixture and correct only ambiguous catch, stumping or run-out names.</Text>
+            <Text style={s.scoreFielderValidationText}>Cricinfo remains the primary scorecard. Paste the matching Cricbuzz scorecard URL; the app will verify the fixture and correct only missing or ambiguous catch, stumping or run-out names.</Text>
             <Text style={s.scoreImportLabel}>MATCHING CRICBUZZ SCORECARD URL</Text>
             <TextInput accessibilityLabel="Matching Cricbuzz scorecard URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="https://www.cricbuzz.com/live-cricket-scorecard/..." placeholderTextColor="#819089" style={s.scoreSourceInput} value={scoreCricbuzzUrl} onChangeText={value => { setScoreCricbuzzUrl(value); setScoreImportError(""); }} />
             <Text style={s.scoreFielderValidationFootnote}>{scoreCaptureExtensionAvailable ? "The browser extension will open Cricbuzz, read both innings and return the full dismissal names." : "Reload extension version 0.2.0 and this admin page, or enter a manual alias above."}</Text>
@@ -2346,7 +2426,10 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
         </>}
         {scoreImportMode !== "url" && scoreSourceStatus ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreSourceStatus}</Text></View> : null}
         {scoreImportError ? <View accessibilityRole={scoreImportConflict ? undefined : "alert"} accessibilityLiveRegion={scoreImportConflict ? "polite" : undefined} style={scoreImportConflict ? s.scoreSourceStatus : s.scoreImportError}><Text style={scoreImportConflict ? s.scoreSourceStatusText : s.scoreImportErrorText}>{scoreImportError}</Text></View> : null}
-        {scoreImportMode === "json" && scoreImportSummary ? <View style={s.scoreImportValidated}>
+        {scoreImportMode === "json" && unresolvedScoreRunOut ? <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={s.scoreImportError}>
+          <Text style={s.scoreImportErrorText}>Run-out fielder is missing for {unresolvedScoreRunOut.name}. This review cannot be staged. Validate the matching Cricbuzz scorecard first.</Text>
+        </View> : null}
+        {scoreImportMode === "json" && scoreImportSummary && !unresolvedScoreRunOut ? <View style={s.scoreImportValidated}>
           <View style={s.scoreImportValidatedHeader}><View style={s.scoreImportCheck}><Text style={s.scoreImportCheckText}>✓</Text></View><View style={{ flex: 1 }}><Text style={s.scoreImportValidatedTitle}>Artifact checks passed</Text><Text style={s.scoreImportValidatedText}>{scoreImportSummary.playerCount} player rows · {scoreImportSummary.totalPoints} total fantasy points</Text></View></View>
           <View style={s.scoreImportMetaGrid}><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>SOURCE</Text><Text numberOfLines={2} style={s.scoreImportMetaValue}>{scoreImportSummary.provider}</Text></View><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>EXTERNAL MATCH</Text><Text numberOfLines={2} style={s.scoreImportMetaValue}>{scoreImportSummary.externalMatchId}</Text></View><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>EXPECTED</Text><Text style={s.scoreImportMetaValue}>{scoreImportSummary.expectedPlayerCount} players</Text></View><View style={s.scoreImportMeta}><Text style={s.scoreImportMetaLabel}>WARNINGS</Text><Text style={s.scoreImportMetaValue}>{scoreImportSummary.warningCount}</Text></View></View>
           <Text style={s.scoreImportFingerprint}>SHA-256 · {scoreImportSummary.sourceFingerprint}</Text>
@@ -2365,7 +2448,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={scorePublishConfirming ? "Keep reviewing scores" : scorePublicationComplete || scoreImportStaged || scoreImportConflict ? "Close score import" : "Cancel score import"} disabled={busy} style={s.scoreImportCancel} onPress={scorePublishConfirming ? () => setScorePublishConfirming(false) : closeScoreImport}>
           <Text style={s.scoreImportCancelText}>{scorePublishConfirming ? "Keep reviewing" : scorePublicationComplete || scoreImportStaged || scoreImportConflict ? "Close" : "Cancel"}</Text>
         </TouchableOpacity>
-        {!scorePublicationComplete && scoreImportStaged && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scorePublishConfirming ? `Confirm publication for match ${scoreImportFixture?.match_number}` : `Publish scores for match ${scoreImportFixture?.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => scorePublishConfirming ? runAction(publishConfirmedScores) : setScorePublishConfirming(true)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scorePublishConfirming ? "Confirm publish now" : "Publish scores"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportConflict ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Review existing staged score batch" disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={reviewLatestStagedBatch}>
+        {!scorePublicationComplete && unresolvedScoreRunOut ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Resolve missing run-out fielder with Cricbuzz" disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={resolvePreviewRunOutWithCricbuzz}>
+          <Text style={s.scoreImportStageText}>Resolve run-out with Cricbuzz</Text>
+        </TouchableOpacity> : !scorePublicationComplete && scoreImportStaged && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scorePublishConfirming ? `Confirm publication for match ${scoreImportFixture?.match_number}` : `Publish scores for match ${scoreImportFixture?.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => scorePublishConfirming ? runAction(publishConfirmedScores) : setScorePublishConfirming(true)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scorePublishConfirming ? "Confirm publish now" : "Publish scores"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportConflict ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Review existing staged score batch" disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={reviewLatestStagedBatch}>
           <Text style={s.scoreImportStageText}>Review staged batch</Text>
         </TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "url" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard and generate preview" : "Prepare score review from URL"} accessibilityState={{ disabled: busy || !scoreSourceUrl.trim(), busy }} disabled={busy || !scoreSourceUrl.trim()} style={[s.scoreImportStage, (busy || !scoreSourceUrl.trim()) && s.disabled]} onPress={() => runAction(scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? captureScorecardReview : importScoreSourceUrl)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard & generate preview" : scoreSourceRequiresBrowserCapture(scoreSourceUrl) ? "Continue to scorecard capture" : "Prepare review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "paste" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreFielderValidationRequired ? "Validate fielder names with Cricbuzz and generate preview" : "Generate review from copied scorecard"} accessibilityState={{ disabled: busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim()), busy }} disabled={busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim())} style={[s.scoreImportStage, (busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim())) && s.disabled]} onPress={() => runAction(scoreFielderValidationRequired ? validateFieldersWithCricbuzz : preparePastedScoreReview)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scoreFielderValidationRequired ? "Validate with Cricbuzz & generate preview" : "Generate review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Stage reviewed score artifact" accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => runAction(stageScoreArtifact)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>Stage for review</Text>}</TouchableOpacity> : !scorePublicationComplete ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Validate score review artifact" accessibilityState={{ disabled: busy || !scoreArtifactText.trim() }} disabled={busy || !scoreArtifactText.trim()} style={[s.scoreImportStage, (busy || !scoreArtifactText.trim()) && s.disabled]} onPress={validateScoreArtifact}><Text style={s.scoreImportStageText}>Validate artifact</Text></TouchableOpacity> : null}
       </View>
@@ -3723,12 +3808,17 @@ const s = StyleSheet.create(normalizeUiStyles({
   scorePublishAction: { minHeight: 42, backgroundColor: "#174D3D", borderRadius: 10, paddingHorizontal: 14, alignItems: "center", justifyContent: "center" },
   scorePublishActionText: { color: "#DDFB72", fontSize: 9, fontWeight: "900" },
   scoreImportOverlay: { flex: 1, backgroundColor: "rgba(0, 24, 19, 0.78)", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, paddingVertical: 24 },
+  scoreImportOverlayExpanded: { paddingHorizontal: 0, paddingVertical: 0 },
   scoreImportModal: { width: "100%", maxWidth: 900, maxHeight: "92%", backgroundColor: "#FFFFFF", borderRadius: 20, overflow: "hidden", borderWidth: 1, borderColor: "#BDD0C7", ...CARD_SHADOW },
+  scoreImportModalExpanded: { maxWidth: "100%", maxHeight: "100%", height: "100%", borderRadius: 0, borderWidth: 0 },
   scoreImportHeader: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#0B2748", paddingHorizontal: 18, paddingVertical: 16 },
   scoreImportEyebrow: { color: "#AFC5D9", fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
   scoreImportTitle: { color: "#FFFFFF", fontSize: 17, lineHeight: 22, fontWeight: "900", marginTop: 3 },
   scoreImportClose: { width: 44, height: 44, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.1)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
   scoreImportCloseText: { color: "#FFFFFF", fontSize: 25, lineHeight: 27, fontWeight: "500" },
+  scoreImportExpand: { minWidth: 76, height: 44, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", flexDirection: "row", gap: 5, paddingHorizontal: 10, alignItems: "center", justifyContent: "center" },
+  scoreImportExpandIcon: { color: "#DDFB72", fontSize: 16, lineHeight: 18, fontWeight: "900" },
+  scoreImportExpandText: { color: "#FFFFFF", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
   scoreImportScroll: { flexShrink: 1 },
   scoreImportBody: { padding: 16, paddingBottom: 20 },
   scoreImportTabs: { flexDirection: "row", gap: 7, backgroundColor: "#EDF2F0", borderRadius: 11, padding: 4, marginBottom: 13 },
@@ -3807,9 +3897,17 @@ const s = StyleSheet.create(normalizeUiStyles({
   scoreTableScroll: { paddingHorizontal: 12, paddingBottom: 3 },
   scoreTable: { minWidth: 698, borderWidth: 1, borderColor: "#D9E3DE", borderRadius: 10, overflow: "hidden" },
   scoreBowlingTable: { minWidth: 526 },
+  scoreBattingBreakdownTable: { minWidth: 1182 },
+  scoreBowlingBreakdownTable: { minWidth: 1200 },
   scoreTableRow: { minHeight: 43, flexDirection: "row", alignItems: "center", paddingHorizontal: 9, borderTopWidth: 1, borderTopColor: "#E8EEEB", backgroundColor: "#FFFFFF" },
   scoreTableHeaderRow: { minHeight: 32, borderTopWidth: 0, backgroundColor: "#EEF3F1" },
+  scoreTableGroupRow: { minHeight: 25, backgroundColor: "#E5EDE9", borderBottomWidth: 1, borderBottomColor: "#D0DDD7" },
+  scoreTableGroupHeader: { color: "#536A61", fontSize: 7, fontWeight: "900", letterSpacing: 0.7, paddingHorizontal: 4 },
+  scoreBreakdownGroupHeader: { color: "#6F3B91", borderLeftWidth: 2, borderLeftColor: "#C4A1DA", paddingLeft: 10 },
   scoreTableHeader: { color: "#64776F", fontSize: 7, fontWeight: "900", letterSpacing: 0.4, paddingHorizontal: 4, textAlign: "right" },
+  scoreBreakdownHeader: { color: "#6F3B91", backgroundColor: "#F5EEFA" },
+  scoreBreakdownCell: { color: "#664079", backgroundColor: "#FBF8FD" },
+  scoreBreakdownFirstCell: { borderLeftWidth: 2, borderLeftColor: "#D5BDE3", paddingLeft: 8 },
   scoreTablePlayerRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5, paddingRight: 7 },
   scoreTablePlayer: { maxWidth: 128, color: "#17352C", fontSize: 9, fontWeight: "900" },
   scoreTableRole: { color: "#6B7C75", fontSize: 7, fontWeight: "800" },

@@ -40,6 +40,24 @@ export type ScoreIngestionPlayerPreview = {
   sharedRunOuts: number;
   battingPoints: number;
   bowlingPoints: number;
+  battingBreakdown: {
+    runs: number;
+    fours: number;
+    sixes: number;
+    strikeRate: number;
+    runMilestone: number;
+    dismissal: number;
+  };
+  bowlingBreakdown: {
+    bowlerWickets: number;
+    nonBowlerWickets: number;
+    directWickets: number;
+    wicketMilestone: number;
+    maidens: number;
+    dotBalls: number;
+    economy: number;
+    noWicket: number;
+  };
   fieldingPoints: number;
   bonusPoints: number;
   totalPoints: number;
@@ -74,6 +92,13 @@ export type ParsedScoreIngestionArtifact = {
   summary: ScoreIngestionArtifactSummary;
   preview: ScoreIngestionArtifactPreview;
 };
+
+export class ScoreIngestionArtifactError extends Error {
+  constructor(message: string, readonly code: "fielder-name-unresolved") {
+    super(message);
+    this.name = "ScoreIngestionArtifactError";
+  }
+}
 
 export type SavedCricinfoScorecard = {
   sourceUrl: string;
@@ -178,7 +203,32 @@ const optionalText = (value: unknown, fallback = "") =>
 const optionalNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
 
+const pointDetail = (
+  breakdown: Record<string, unknown>,
+  category: "batting" | "bowling",
+  label: string,
+  legacyKeys: string[] = [],
+) => {
+  const details = record(breakdown.details);
+  const detailRows = details?.[category];
+  if (Array.isArray(detailRows)) {
+    const row = detailRows.find(value => Array.isArray(value) && value[0] === label);
+    if (Array.isArray(row) && typeof row[1] === "number" && Number.isFinite(row[1])) return row[1];
+  }
+  const legacy = record(breakdown[category]);
+  for (const key of [label, ...legacyKeys]) {
+    if (typeof legacy?.[key] === "number" && Number.isFinite(legacy[key])) return legacy[key] as number;
+  }
+  return 0;
+};
+
 const optionalBoolean = (value: unknown) => value === true;
+
+export const dismissalRequiresFielderValidation = (value: string) =>
+  /\brun\s*out\b/i.test(value) && !/\brun\s*out\s*\(\s*[^)]+\s*\)/i.test(value);
+
+export const unresolvedRunOutPlayer = (preview: ScoreIngestionArtifactPreview | null | undefined) =>
+  preview?.players.find(player => dismissalRequiresFielderValidation(player.dismissalText)) ?? null;
 
 type CapturedScorecardRow = { name: string; detail: string; order: number };
 
@@ -406,7 +456,8 @@ export const parseScoreIngestionArtifact = (
     if (seenPlayers.has(playerId)) throw new Error("Artifact contains duplicate player score rows.");
     seenPlayers.add(playerId);
     const rawStats = record(item.raw_stats);
-    if (!rawStats || !record(item.breakdown)) {
+    const breakdown = record(item.breakdown);
+    if (!rawStats || !breakdown) {
       throw new Error(`Player row ${index + 1} requires raw stats and a point breakdown.`);
     }
     const normalizedStats = record(rawStats.normalized_stats) ?? {};
@@ -430,6 +481,13 @@ export const parseScoreIngestionArtifact = (
       : battingInnings === 1 ? 2 : 1;
     const battingRow = capturedRowForPlayer(battingInnings === 1 ? firstBattingRows : secondBattingRows, playerName);
     const bowlingRow = capturedRowForPlayer(battingInnings === 1 ? secondBowlingRows : firstBowlingRows, playerName);
+    const dismissalText = optionalText(rawStats.dismissal_text) || battingRow?.detail || "";
+    if (dismissalRequiresFielderValidation(dismissalText)) {
+      throw new ScoreIngestionArtifactError(
+        `Run-out fielder is missing for ${playerName}. Use the matching Cricbuzz scorecard to verify the fielder before this review can be staged or published.`,
+        "fielder-name-unresolved",
+      );
+    }
     players.push({
       playerId,
       name: playerName,
@@ -452,6 +510,24 @@ export const parseScoreIngestionArtifact = (
       sharedRunOuts: optionalNumber(normalizedStats.sharedRunOuts),
       battingPoints: rowBatting,
       bowlingPoints: rowBowling,
+      battingBreakdown: {
+        runs: pointDetail(breakdown, "batting", "Runs", ["run_points"]),
+        fours: pointDetail(breakdown, "batting", "Fours", ["four_points"]),
+        sixes: pointDetail(breakdown, "batting", "Sixes", ["six_points"]),
+        strikeRate: pointDetail(breakdown, "batting", "Strike rate", ["strike_rate_points"]),
+        runMilestone: pointDetail(breakdown, "batting", "Run milestone", ["run_milestone_points"]),
+        dismissal: pointDetail(breakdown, "batting", "Dismissal", ["dismissal_points", "duck_points"]),
+      },
+      bowlingBreakdown: {
+        bowlerWickets: pointDetail(breakdown, "bowling", "Bowler wickets", ["bowler_wicket_points", "wicket_points"]),
+        nonBowlerWickets: pointDetail(breakdown, "bowling", "Non-bowler wickets", ["non_bowler_wicket_points"]),
+        directWickets: pointDetail(breakdown, "bowling", "Direct wickets", ["direct_wicket_points"]),
+        wicketMilestone: pointDetail(breakdown, "bowling", "Wicket milestone", ["wicket_milestone_points"]),
+        maidens: pointDetail(breakdown, "bowling", "Maidens", ["maiden_points"]),
+        dotBalls: pointDetail(breakdown, "bowling", "Dot balls", ["dot_ball_points"]),
+        economy: pointDetail(breakdown, "bowling", "Economy", ["economy_points"]),
+        noWicket: pointDetail(breakdown, "bowling", "No-wicket adjustment", ["no_wicket_points"]),
+      },
       fieldingPoints: rowFielding,
       bonusPoints: rowBonus,
       totalPoints: rowBatting + rowBowling + rowFielding + rowBonus,
@@ -461,7 +537,7 @@ export const parseScoreIngestionArtifact = (
       bowlingInnings,
       battingOrder: typeof rawStats.batting_order === "number" ? rawStats.batting_order : battingRow?.order ?? Number.MAX_SAFE_INTEGER,
       bowlingOrder: typeof rawStats.bowling_order === "number" ? rawStats.bowling_order : bowlingRow?.order ?? Number.MAX_SAFE_INTEGER,
-      dismissalText: optionalText(rawStats.dismissal_text) || battingRow?.detail || "",
+      dismissalText,
       wicketDetails: [],
     });
     return totals;

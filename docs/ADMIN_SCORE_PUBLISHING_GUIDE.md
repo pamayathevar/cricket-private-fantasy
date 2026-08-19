@@ -85,7 +85,7 @@ Preferred validation:
 4. Allow Chrome to open Cricbuzz and return to the admin tab.
 5. Review the corrected dismissal name in the preview.
 
-ESPNcricinfo remains the primary scoring source. Cricbuzz is used only to expand ambiguous catch, stumping, or run-out names, and the correction is retained in the review audit data.
+ESPNcricinfo remains the primary scoring source. Cricbuzz is used only to supply missing or ambiguous catch, stumping, or run-out names—including a dismissal shown only as `run out`—and the correction is retained in the review audit data.
 
 If Cricbuzz still cannot resolve the name, use **Player name aliases** in the **Scorecard capture** tab:
 

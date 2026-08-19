@@ -377,6 +377,12 @@ export const fieldersFromDismissal = (dismissal: string) => {
   return { catches: [], stumpings: [], directRunOuts: [], sharedRunOuts: [] };
 };
 
+export const dismissalRequiresFielderValidation = (dismissal: string) => {
+  if (!/\brun\s*out\b/i.test(dismissal)) return false;
+  const fielders = fieldersFromDismissal(dismissal);
+  return fielders.directRunOuts.length === 0 && fielders.sharedRunOuts.length === 0;
+};
+
 export const isDirectBowlerWicket = (dismissal: string) => {
   const bowler = bowlerFromDismissal(dismissal);
   if (!bowler) return false;
@@ -486,6 +492,13 @@ export const buildCricinfoPasteImport = (input: CricinfoPasteImportInput): Norma
 
   innings.forEach((item, inningsIndex) => {
     item.batting.rows.forEach((row, battingOrder) => {
+      if (dismissalRequiresFielderValidation(row.dismissalText)) {
+        throw new ScorecardPasteError(
+          `Run-out fielder is missing for ${row.name}.`,
+          [`Cricinfo dismissal: ${row.dismissalText}`, `Use the matching Cricbuzz scorecard to verify and add the run-out fielder before generating the preview.`],
+          "fielder-name-unresolved",
+        );
+      }
       const player = ensurePlayer(resolve(row.name, item.battingTeam));
       player.batting = { runs: row.runs, balls: row.balls, fours: row.fours, sixes: row.sixes, dismissal: dismissalKind(row), dismissalText: row.dismissalText, innings: inningsIndex === 0 ? 1 : 2, order: battingOrder };
       const bowlerName = bowlerFromDismissal(row.dismissalText);

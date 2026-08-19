@@ -93,6 +93,7 @@ const {
 
 const {
   buildCricinfoPasteImport,
+  dismissalRequiresFielderValidation,
   fieldersFromDismissal,
   isDirectBowlerWicket,
   oversToBalls,
@@ -265,6 +266,16 @@ const tests = [
     assert.match(result.secondInningsBatting, /c Rinku Singh b Kartik Tyagi/);
     assert.equal(result.corrections.length, 2);
     assert.equal(result.corrections[1].batterName, "Suryakumar Yadav");
+
+    const bareRunOutCapture = structuredClone(capture);
+    bareRunOutCapture.innings[0].batters[0].dismissalText = "run out (Tilak Varma)";
+    const bareRunOut = applyCricbuzzFielderValidation(
+      ["BATTING\t\tR\tB\t4s\t6s\tSR", "Finn Allen\trun out\t37\t17\t6\t2\t217.64"].join("\n"),
+      ["BATTING\t\tR\tB\t4s\t6s\tSR", "Suryakumar Yadav\tc Singh b Kartik Tyagi\t16\t8\t3\t0\t200.00"].join("\n"),
+      bareRunOutCapture,
+    );
+    assert.match(bareRunOut.firstInningsBatting, /run out \(Tilak Varma\)/);
+    assert.equal(bareRunOut.corrections[0].originalDismissal, "run out");
   }],
   ["provider-page URLs use the guided browser capture workflow", () => {
     assert.equal(scoreSourceRequiresBrowserCapture("https://www.espncricinfo.com/series/example/full-scorecard"), true);
@@ -781,7 +792,16 @@ const tests = [
     assert.equal(compiled.stagingPayload.length, 0);
   }],
   ["score review artifacts validate fixture identity and reconciliation", () => {
-    const parsed = parseScoreIngestionArtifact(JSON.stringify(reviewArtifact()), {
+    const artifact = reviewArtifact();
+    artifact.stagingPayload[0].breakdown.details = {
+      batting: [["Runs", 4], ["Fours", 4], ["Sixes", 0], ["Run milestone", 5], ["Strike rate", 1], ["Dismissal", -2]],
+      bowling: [],
+    };
+    artifact.stagingPayload[1].breakdown.details = {
+      batting: [],
+      bowling: [["Bowler wickets", 10], ["Non-bowler wickets", 0], ["Direct wickets", 10], ["Wicket milestone", 0], ["Maidens", 0], ["Dot balls", 0], ["Economy", 0], ["No-wicket adjustment", 0]],
+    };
+    const parsed = parseScoreIngestionArtifact(JSON.stringify(artifact), {
       leagueId: "11111111-1111-4111-8111-111111111111",
       fixtureId: "22222222-2222-4222-8222-222222222222",
       matchNumber: 11,
@@ -803,7 +823,9 @@ const tests = [
     assert.equal(parsed.preview.playerOfMatchName, "Batter One");
     assert.equal(parsed.preview.players[0].dismissalText, "c Bowler Two b Bowler Two");
     assert.equal(parsed.preview.players[0].battingInnings, 1);
+    assert.deepEqual(parsed.preview.players[0].battingBreakdown, { runs: 4, fours: 4, sixes: 0, strikeRate: 1, runMilestone: 5, dismissal: -2 });
     assert.equal(parsed.preview.players[1].bowlingInnings, 1);
+    assert.deepEqual(parsed.preview.players[1].bowlingBreakdown, { bowlerWickets: 10, nonBowlerWickets: 0, directWickets: 10, wicketMilestone: 0, maidens: 0, dotBalls: 0, economy: 0, noWicket: 0 });
     assert.deepEqual(parsed.preview.players[1].wicketDetails, ["Batter One · c Bowler Two b Bowler Two"]);
     assert.equal(parsed.preview.players[1].name, "Bowler Two");
     assert.equal(parsed.preview.players[1].wickets, 1);
@@ -831,6 +853,51 @@ const tests = [
     });
     assert.equal(legacyParsed.preview.firstInningsScore, "12/1");
     assert.equal(legacyParsed.preview.secondInningsScore, "0/0");
+    assert.equal(legacyParsed.preview.players[0].battingBreakdown.runs, 12);
+    assert.equal(legacyParsed.preview.players[1].bowlingBreakdown.bowlerWickets, 20);
+    assert.equal(legacyParsed.preview.players[1].bowlingBreakdown.nonBowlerWickets, 0);
+  }],
+  ["human scoreboard exposes batting and bowling point components", () => {
+    const source = fs.readFileSync("App.tsx", "utf8");
+    assert.match(source, /FANTASY POINT BREAKDOWN/);
+    assert.match(source, /RUN PTS/);
+    assert.match(source, /OUT \/ DUCK/);
+    assert.match(source, /DIRECT WKT/);
+    assert.match(source, /BOWLER WKT/);
+    assert.match(source, /NON-BOWLER WKT/);
+    assert.match(source, /NO WKT/);
+    assert.match(source, /player\.battingBreakdown\.runMilestone/);
+    assert.match(source, /player\.bowlingBreakdown\.wicketMilestone/);
+    assert.match(source, /Expand score import to full screen/);
+    assert.match(source, /scoreImportModalExpanded/);
+    assert.match(source, /Saved Cricinfo scorecard loaded\. Enter the matching Cricbuzz scorecard URL below/);
+    assert.match(source, /setScoreFielderValidationRequired\(true\);\s*setScoreImportMode\("paste"\);/);
+  }],
+  ["legacy review artifacts cannot stage a run out without a verified fielder", () => {
+    const artifact = reviewArtifact();
+    artifact.stagingPayload[0].raw_stats.dismissal_text = "run out";
+    assert.throws(() => parseScoreIngestionArtifact(JSON.stringify(artifact), {
+      leagueId: artifact.leagueId,
+      fixtureId: artifact.fixtureId,
+      matchNumber: artifact.matchNumber,
+    }), error => error?.code === "fielder-name-unresolved" && /Run-out fielder is missing for Batter One/.test(error.message));
+  }],
+  ["captured Match 5 style scorecards cannot stage a bare run out", () => {
+    const artifact = reviewArtifact();
+    artifact.stagingPayload[0].raw_stats.player_name = "Rishabh Pant";
+    artifact.stagingPayload[0].raw_stats.scorecard.raw.firstInningsBatting = "BATTING\t\tR\tB\t4s\t6s\tSR\nRishabh Pant\trun out\t7\t9\t1\t0\t77.78\nTOTAL\t20 Ov\t141";
+    assert.throws(() => parseScoreIngestionArtifact(JSON.stringify(artifact), {
+      leagueId: artifact.leagueId,
+      fixtureId: artifact.fixtureId,
+      matchNumber: artifact.matchNumber,
+    }), error => error?.code === "fielder-name-unresolved" && /Run-out fielder is missing for Rishabh Pant/.test(error.message));
+  }],
+  ["visible previews block staging until a missing run-out fielder is resolved", () => {
+    const source = fs.readFileSync("App.tsx", "utf8");
+    assert.match(source, /const unresolvedScoreRunOut = unresolvedRunOutPlayer\(scoreImportPreview\)/);
+    assert.match(source, /if \(resolvePreviewRunOutWithCricbuzz\(\)\) return;/);
+    assert.match(source, /Resolve run-out with Cricbuzz/);
+    assert.match(source, /scoreImportSummary && !unresolvedScoreRunOut/);
   }],
   ["saved Cricinfo reviews can be regenerated without a local capture file", () => {
     const artifact = reviewArtifact();
@@ -1001,6 +1068,12 @@ const tests = [
     assert.deepEqual(fieldersFromDismissal("c †Sharma b Duffy").catches, ["†Sharma"]);
     assert.equal(resolveScorecardPlayer("†Sharma", "RCB", players).playerId, "wk");
     assert.equal(resolveScorecardPlayer("Sharma", "RCB", players).playerId, "bo");
+  }],
+  ["Cricinfo bare run outs require Cricbuzz fielder validation", () => {
+    assert.equal(dismissalRequiresFielderValidation("run out"), true);
+    assert.equal(dismissalRequiresFielderValidation("run out (Axar Patel)"), false);
+    assert.equal(dismissalRequiresFielderValidation("run out (Axar Patel/Rishabh Pant)"), false);
+    assert.equal(dismissalRequiresFielderValidation("c Pant b Shami"), false);
   }],
   ["Cricinfo paste import reconciles two complete XIs before review", () => {
     const homeNames = ["Home One", "Home Two", "Home Three", "Home Four", "Home Five", "Home Six", "Home Seven", "Home Eight", "Home Nine", "Home Ten", "Home Eleven"];
