@@ -2,6 +2,8 @@
 
 This Chrome Manifest V3 extension reads a visible ESPNcricinfo Full Scorecard and returns the four rendered tables to the Cricket Rivalries admin review screen. When Cricinfo supplies an ambiguous fielder surname, it can also read the matching Cricbuzz scorecard to validate that dismissal. It cannot access Supabase, stage a score or publish a score.
 
+For the complete administrator workflow—including installation, capture, human review, staging, publication, verification, corrections, and troubleshooting—see [Administrator guide: capture, review, and publish match scores](../docs/ADMIN_SCORE_PUBLISHING_GUIDE.md).
+
 ## One-time local installation
 
 1. Open `chrome://extensions` in Google Chrome.

@@ -141,7 +141,9 @@ Before staging, an administrator must compare the review artifact with the offic
 - category totals and overall reconciliation;
 - warnings have written resolution notes.
 
-In League Admin → Match Scoring, choose **Import score source**. The preferred **Match URL** tab submits an authorized URL to the protected backend; the **Review JSON** tab remains the manual fallback. A URL request creates an audited job and, when a configured adapter returns a valid artifact, opens that artifact for administrator review. Artifacts with warnings require written review notes. **Stage for review** creates a calculation version and an immutable ingestion-ledger row. Publishing remains a separate admin action and must continue through `publish_match_scores_safe`; never update public totals directly.
+In League Admin → Match Scoring, choose **Import score source**. The preferred **Provider URL** tab submits an authorized URL to the protected backend or restricted Chrome extension; **Scorecard capture** is the guided manual fallback, and **Review** exposes the validated artifact. A URL request creates an audited job and, when a configured adapter returns a valid artifact, opens that artifact for administrator review. Artifacts with warnings require written review notes. **Stage for review** creates a calculation version and an immutable ingestion-ledger row. Publishing remains a separate admin action and must continue through `publish_match_scores_safe`; never update public totals directly.
+
+The handoff-ready, step-by-step procedure for league administrators is [Administrator guide: capture, review, and publish match scores](./ADMIN_SCORE_PUBLISHING_GUIDE.md).
 
 ### Local visible-browser ESPNcricinfo capture
 
@@ -160,6 +162,8 @@ For each match:
 3. Select **Capture scorecard & generate preview**. Chrome opens the page visibly and returns to the admin tab after all four tables are rendered.
 4. Independently inspect the match identity, innings totals, dismissals, dot balls, player/category totals, winner and Player of the Match.
 5. Select **Stage for review** only after the preview is correct. Publishing remains a separate action and confirmation.
+
+After staging, select **Publish scores**, review the final warning, and select **Confirm publish now**. Do not close the dialog until **Match _n_ published** confirms that player points, owner totals, and rankings were updated. Then verify the fixture in both **Results** and **Ranking**.
 
 The **Scorecard capture** tab remains the no-terminal manual fallback if the extension is not installed or Cricinfo changes its page structure. The legacy visible-browser command is also available for diagnostics:
 

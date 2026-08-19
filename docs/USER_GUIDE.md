@@ -309,6 +309,8 @@ These are the confirmed defaults for the current IPL 2026 league. The live **Rul
 
 ## 11. League administration and rule versions
 
+Administrators responsible for match scoring should follow [Administrator guide: capture, review, and publish match scores](./ADMIN_SCORE_PUBLISHING_GUIDE.md). It includes the one-time Chrome extension setup, exact capture and publication buttons, Cricbuzz fielder validation, the required review checklist, correction flow, and troubleshooting.
+
 - Only an active `league_admin` can publish rule/configuration changes or settle scoring.
 - Owners have read-only access to active Rules.
 - League format, ownership, lineup limits, scoring, phases, transfer periods, boosters, Unique/Marquee, royalty, and automatic-Unique settings are league-specific.
@@ -318,7 +320,7 @@ These are the confirmed defaults for the current IPL 2026 league. The live **Rul
 - Transfer periods must cover the configured sequence without overlaps or gaps.
 - Administrative publications and No Result settlements write audit records.
 - For a match that already has a saved Cricinfo review, choose **Regenerate saved scorecard** on its Match Scoring card. The admin screen reuses the four captured tables stored in the immutable batch, applies the rules effective for that fixture, and opens a new human-readable preview. No terminal or local capture file is required, and nothing is staged or published automatically.
-- For the first Cricinfo import, use **Import score source → Local capture** and paste the four Full Scorecard tables. The optional desktop capture helper can still prefill those fields when needed. Verify every total and use the alias field if a source name differs from the league player record.
+- For the first Cricinfo import, use **Import score source → Provider URL** with the Chrome extension. If the extension is unavailable, use **Scorecard capture** and paste the four Full Scorecard tables. Verify every total and use the alias field only when the app reports an unresolved source name.
 - An Impact or concussion substitute who appears in the official batting or bowling table receives the normal points for those contributions. A fielding-only substitute receives catch, stumping, or run-out points only when **Playing Rules → Substitute fielder points** is enabled; the default is OFF.
 - If an official scorecard resolves 13 or more participants for one team, preview generation continues with a warning. The administrator must verify the extra participant, explain the exception in the required approval notes, and then explicitly stage the review. Fewer than 11 core participants remain an import error.
 - If the app was not running when capture finished, start it and retry from the saved file: `npm run score:fetch -- --capture ".local/score-imports/<capture-file>.json" --app-url http://localhost:8081`. Use the port printed by Expo if it is not `8081`.

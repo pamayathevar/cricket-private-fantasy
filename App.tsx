@@ -784,7 +784,7 @@ function OwnerTabContent({ leagueId, currentOwner, roster }: { leagueId: string;
   </>;
 }
 
-type HelpTopicId = "navigation" | "community" | "lineup" | "ownership" | "transfers" | "submission" | "roles" | "boosters" | "special" | "scoring" | "results" | "noresult" | "defaults" | "administration";
+type HelpTopicId = "navigation" | "community" | "lineup" | "ownership" | "transfers" | "submission" | "roles" | "boosters" | "special" | "scoring" | "results" | "noresult" | "defaults" | "administration" | "admin-scoring";
 type HelpTopic = { id: HelpTopicId; icon: string; title: string; summary: string; bullets: string[] };
 
 const helpTopics: HelpTopic[] = [
@@ -944,6 +944,21 @@ const helpTopics: HelpTopic[] = [
       "The values shown on the selected fixture's League sheet and live Rules page override generic examples in this guide.",
     ],
   },
+  {
+    id: "admin-scoring", icon: "✓", title: "Admin score capture and publication", summary: "Install the Chrome extension, review a scorecard and publish it safely.",
+    bullets: [
+      "One-time setup: in desktop Chrome open chrome://extensions, enable Developer mode, choose Load unpacked and select the supplied browser-extension folder. Reload the app and confirm Browser capture extension connected in Rules → Match Scoring → Import score source.",
+      "For a completed match, open its Match Scoring card, select Import score source, keep Provider URL selected, paste the ESPNcricinfo Full Scorecard HTTPS URL and choose Capture scorecard & generate preview.",
+      "Chrome opens the source visibly and returns to the admin tab after both batting and both bowling tables are rendered. The extension has no database credentials and cannot stage or publish anything.",
+      "If a fielder name is ambiguous, paste the matching Cricbuzz scorecard URL and select Validate with Cricbuzz & generate preview. Cricinfo remains the scoring source; Cricbuzz corrects only ambiguous dismissal names.",
+      "Before staging, verify the fixture, innings order, team totals, winner, Player of the Match, dismissals, wickets, dot balls, fielders and every BAT/BOWL/FIELD/BONUS/TOTAL player row. Explain every warning in the admin approval notes.",
+      "Select Stage for review only after the human-readable preview is correct. Staging creates an immutable calculation version but does not change Results or Ranking.",
+      "Select Publish scores, read the final warning and then select Confirm publish now. Do not close the dialog until Match n published confirms that player points, owner totals and rankings were updated.",
+      "After publication, verify the match in Results—including Scorecard, Fantasy points, owner adjustments and ROY—and confirm that Ranking includes it. Refresh once if those screens were already open.",
+      "For a correction, use Import correction or Regenerate saved scorecard, review the complete new preview, stage and confirm publication again. Never edit published points or standings directly.",
+      "If the extension is unavailable, use Scorecard capture as the no-terminal fallback. Copy all four tables and retain Did not bat rows plus the bowling dot-ball column; screenshots cannot be parsed.",
+    ],
+  },
 ];
 
 function HelpScreen({ openTeam, openFixtures, openHistory, openRules }: { openTeam: () => void; openFixtures: () => void; openHistory: () => void; openRules: () => void }) {
@@ -965,6 +980,7 @@ function HelpScreen({ openTeam, openFixtures, openHistory, openRules }: { openTe
     ["Does a booster carry to the next match?", "No. Players may carry forward, but every fixture starts with no booster selected. A booster must be explicitly selected and submitted for that match."],
     ["Why did an other-owner player score negative points?", "In a Unique/fee league, the configured minimum borrowing fee may apply even when the player's contribution is zero. With a 15-point minimum, zero becomes −15."],
     ["Does a substitute player receive fantasy points?", "Yes when the substitute bats or bowls: those recorded contributions score normally. A fielding-only substitute scores only when the live Substitute fielder points rule is enabled. If the official scorecard produces 13 or more participants for a team, an administrator must verify the exception and enter approval notes before staging."],
+    ["How does an admin publish a captured score?", "In Rules → Match Scoring, capture and verify the human-readable preview, select Stage for review, then select Publish scores → Confirm publish now. Publication is complete only after Match n published appears; verify Results and Ranking before closing the task."],
     ["When can other owners see my team?", "When lineup privacy is enabled, other owners cannot see it until that fixture locks."],
     ["What happens if I do not submit a new XI?", "At lock, your latest eligible valid XI carries forward automatically with zero match transfers and no booster. Results marks it AUTO / CARRIED. If you have never submitted a valid XI, there is no team to carry."],
     ["Why can’t I submit a later fixture?", "An earlier open fixture may need a submitted XI first. Open the indicated prior match and submit it before continuing."],
