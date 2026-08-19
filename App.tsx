@@ -2197,7 +2197,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <Text style={s.adminGroupTitle}>Bowling</Text>
 <AdminNumberField label="Dismissed bowler wicket" value={points.bowler_wicket} onChange={value => updatePoints("bowler_wicket", value)} />
 <AdminNumberField label="Dismissed non-bowler wicket" value={points.non_bowler_wicket} onChange={value => updatePoints("non_bowler_wicket", value)} />
-<AdminNumberField label="Bowled / hit-wicket bonus" detail="Not awarded for LBW, catches (including caught-and-bowled), or stumpings" value={points.direct_wicket_bonus} onChange={value => updatePoints("direct_wicket_bonus", value)} />
+<AdminNumberField label="Direct wicket bonus" detail="Awarded when no fielder assists. Not awarded for catches (including caught-and-bowled) or stumpings" value={points.direct_wicket_bonus} onChange={value => updatePoints("direct_wicket_bonus", value)} />
 <AdminNumberField label="Maiden over" value={points.maiden} onChange={value => updatePoints("maiden", value)} />
 <AdminNumberField label="Dot ball" value={points.dot_ball} onChange={value => updatePoints("dot_ball", value)} />
 <Text style={s.adminGroupTitle}>Fielding and bonus</Text>

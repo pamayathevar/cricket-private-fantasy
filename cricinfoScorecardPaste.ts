@@ -378,9 +378,10 @@ export const fieldersFromDismissal = (dismissal: string) => {
 };
 
 export const isDirectBowlerWicket = (dismissal: string) => {
-  const normalized = dismissal.trim();
-  if (!bowlerFromDismissal(normalized)) return false;
-  return /^b\s+/i.test(normalized) || /^hit\s+wicket\s+b\s+/i.test(normalized);
+  const bowler = bowlerFromDismissal(dismissal);
+  if (!bowler) return false;
+  const fielders = fieldersFromDismissal(dismissal);
+  return fielders.catches.length === 0 && fielders.stumpings.length === 0;
 };
 
 export type CricinfoPasteImportInput = {

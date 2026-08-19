@@ -7,7 +7,7 @@
 - Captain: complete score ×2. Vice-captain: complete score ×1.5.
 - BAI: doubled batting points only. BOI: doubled bowling points only. Fielding and bonus points are excluded for Impact selections.
 - A wicket is worth 15 points when the dismissed player is a bowler and 20 points when the dismissed player is a non-bowler. The wicket-taker's own role does not change this value.
-- An additional 10-point direct-wicket bonus applies only to bowled and hit-wicket dismissals. It does not apply to LBW, any caught dismissal (including caught-and-bowled), or stumpings. A caught-and-bowled dismissal receives the normal wicket value plus the configured catch points only.
+- An additional 10-point direct-wicket bonus applies when no fielder assists the bowler, including bowled, LBW and hit-wicket dismissals. It does not apply to any caught dismissal (including caught-and-bowled) or to stumpings. A caught-and-bowled dismissal receives the normal wicket value plus the configured catch points only.
 - Duck and golden/diamond-duck deductions apply only to batters, wicketkeepers and all-rounders. A player classified as a bowler receives no duck deduction.
 - League exception: `retired out` is treated exactly like `retired hurt`. The batter retains earned batting points, is not charged a duck/dismissal penalty, and no bowler or fielder receives wicket points.
 - Publish totals only after the Cricinfo scorecard is final, retaining the match ID and calculation timestamp for auditing.
