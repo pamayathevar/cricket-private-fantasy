@@ -276,6 +276,17 @@ const tests = [
     );
     assert.match(bareRunOut.firstInningsBatting, /run out \(Tilak Varma\)/);
     assert.equal(bareRunOut.corrections[0].originalDismissal, "run out");
+
+    const matchFiveCapture = structuredClone(capture);
+    matchFiveCapture.sourceUrl = "https://www.cricbuzz.com/live-cricket-scorecard/149662/lsg-vs-dc-5th-match-indian-premier-league-2026";
+    matchFiveCapture.match = { matchNumber: 5, homeTeam: "LSG", awayTeam: "DC" };
+    matchFiveCapture.innings[0] = { innings: 1, teamCode: "LSG", batters: [{ batterName: "Rishabh Pant", dismissalText: "run out (Mukesh Kumar)", runs: 7 }] };
+    const matchFive = applyCricbuzzFielderValidation(
+      ["BATTING\t\tR\tB\t4s\t6s\tSR", "Rishabh Pant\trun out\t7\t9\t1\t0\t77.78"].join("\n"),
+      ["BATTING\t\tR\tB\t4s\t6s\tSR", "Suryakumar Yadav\tc Singh b Kartik Tyagi\t16\t8\t3\t0\t200.00"].join("\n"),
+      matchFiveCapture,
+    );
+    assert.match(matchFive.firstInningsBatting, /Rishabh Pant\trun out \(Mukesh Kumar\)/);
   }],
   ["provider-page URLs use the guided browser capture workflow", () => {
     assert.equal(scoreSourceRequiresBrowserCapture("https://www.espncricinfo.com/series/example/full-scorecard"), true);
@@ -872,6 +883,29 @@ const tests = [
     assert.match(source, /scoreImportModalExpanded/);
     assert.match(source, /Saved Cricinfo scorecard loaded\. Enter the matching Cricbuzz scorecard URL below/);
     assert.match(source, /setScoreFielderValidationRequired\(true\);\s*setScoreImportMode\("paste"\);/);
+  }],
+  ["Cricbuzz run-out recovery remains visible until the corrected review succeeds", () => {
+    const appSource = fs.readFileSync("App.tsx", "utf8");
+    const bridgeSource = fs.readFileSync("browser-extension/admin-bridge.js", "utf8");
+    const manifest = JSON.parse(fs.readFileSync("browser-extension/manifest.json", "utf8"));
+    assert.match(appSource, /const fielderValidationPending = scoreFielderValidationRequired/);
+    assert.match(appSource, /await generateScoreReview\([\s\S]+setScoreFielderValidationRequired\(false\);/);
+    assert.doesNotMatch(appSource, /setScoreFielderValidationRequired\(false\);\s*await generateScoreReview/);
+    assert.match(appSource, /catch \(error\) \{\s*setScoreFielderValidationRequired\(true\);\s*setScoreImportMode\("paste"\);/);
+    assert.match(appSource, /fielderValidationPending \? "Validate with Cricbuzz & generate preview"/);
+    assert.match(bridgeSource, /chrome\.runtime\.getManifest\(\)\.version/);
+    assert.equal(manifest.version, "0.2.1");
+  }],
+  ["Admin displays build-stamped release metadata in Eastern Time", () => {
+    const appSource = fs.readFileSync("App.tsx", "utf8");
+    const configSource = fs.readFileSync("app.config.js", "utf8");
+    assert.match(configSource, /process\.env\.COMMIT_REF/);
+    assert.match(configSource, /git.*rev-parse.*HEAD/s);
+    assert.match(configSource, /builtAt: new Date\(\)\.toISOString\(\)/);
+    assert.match(appSource, /RELEASE DATE · EASTERN TIME/);
+    assert.match(appSource, /GIT COMMIT/);
+    assert.match(appSource, /timeZone: "America\/Toronto"/);
+    assert.match(appSource, /releaseCommit\.slice\(0, 12\)/);
   }],
   ["legacy review artifacts cannot stage a run out without a verified fielder", () => {
     const artifact = reviewArtifact();

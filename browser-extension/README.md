@@ -12,6 +12,8 @@ For the complete administrator workflow—including installation, capture, human
 4. Choose this repository's `browser-extension` folder.
 5. Reload the Cricket Rivalries web app.
 
+After updating the repository, return to `chrome://extensions`, confirm version **0.2.1** (or newer), and select **Reload**. Deploying the web app does not automatically reload an unpacked local extension.
+
 The Match Scoring dialog will show **Browser capture extension connected**. Paste an ESPNcricinfo Full Scorecard URL and select **Capture scorecard & generate preview**.
 
 If the app finds a missing or ambiguous catcher, wicketkeeper or run-out fielder—including a Cricinfo dismissal shown only as `run out`—it asks for the matching Cricbuzz scorecard URL. Select **Validate with Cricbuzz & generate preview**. Cricinfo remains the primary source; Cricbuzz changes only the incomplete fielder names, and those corrections are saved in the review audit data. Manual aliases remain available as a fallback when a name is present.

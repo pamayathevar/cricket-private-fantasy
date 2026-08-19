@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, AppState, BackHandler, ImageBackground, KeyboardAvoidingView, Linking, Modal, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import Constants from "expo-constants";
 import type { Session } from "@supabase/supabase-js";
 import { Player, Role, squadPlayers as players } from "./squadData";
 import { completedMatchPoints, completedMatchStats } from "./completedMatchPoints";
@@ -19,12 +20,31 @@ import { extractSavedCricinfoScorecard, parseScoreIngestionArtifact, ScoreIngest
 import { buildCricinfoPasteImport, ScorecardPasteError, type LeagueScorecardPlayer } from "./cricinfoScorecardPaste";
 import { buildScoreIngestionArtifact } from "./scoreIngestionArtifactBuilder";
 import { browserCaptureStatus, scoreSourceRequiresBrowserCapture } from "./scoreSourceWorkflow";
-import { applyCricbuzzFielderValidation, captureCricbuzzDismissalsWithBrowserExtension, captureScorecardWithBrowserExtension, detectScorecardBrowserExtension, type CricbuzzFielderCorrection, type ScorecardBrowserCapture } from "./scorecardBrowserExtension";
+import { applyCricbuzzFielderValidation, captureCricbuzzDismissalsWithBrowserExtension, captureScorecardWithBrowserExtension, detectScorecardBrowserExtensionStatus, SCORECARD_EXTENSION_MIN_VERSION, type CricbuzzFielderCorrection, type ScorecardBrowserCapture } from "./scorecardBrowserExtension";
 
 const isFielderValidationError = (error: unknown) => (
   (error instanceof ScorecardPasteError || error instanceof ScoreIngestionArtifactError)
   && error.code === "fielder-name-unresolved"
 );
+
+type ReleaseMetadata = { commit?: string; builtAt?: string };
+const releaseMetadata = (Constants.expoConfig?.extra?.release ?? {}) as ReleaseMetadata;
+const releaseCommit = releaseMetadata.commit?.trim() || "local-development";
+const releaseVersion = Constants.expoConfig?.version ?? "development";
+const releaseDateEastern = (() => {
+  const value = releaseMetadata.builtAt ? new Date(releaseMetadata.builtAt) : null;
+  if (!value || Number.isNaN(value.getTime())) return "Local development build";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Toronto",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  }).format(value);
+})();
 
 type Tab = "Home" | "Auction" | "Team" | "Matches" | "Ranking" | "PlayerSquad" | "Squads" | "History" | "Community" | "Help" | "Admin";
 type ImpactType = "BAI" | "BOI" | "";
@@ -1228,6 +1248,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [scoreSourceUrl, setScoreSourceUrl] = useState("");
   const [scoreSourceStatus, setScoreSourceStatus] = useState("");
   const [scoreCaptureExtensionAvailable, setScoreCaptureExtensionAvailable] = useState(false);
+  const [scoreCaptureExtensionVersion, setScoreCaptureExtensionVersion] = useState("");
   const [scoreCaptureExtensionChecking, setScoreCaptureExtensionChecking] = useState(false);
   const [scoreImportMode, setScoreImportMode] = useState<"url" | "paste" | "json">("url");
   const [scorePasteFirstTeam, setScorePasteFirstTeam] = useState("");
@@ -1243,6 +1264,8 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [scoreFielderValidationRequired, setScoreFielderValidationRequired] = useState(false);
   const [scoreFielderValidation, setScoreFielderValidation] = useState<ScoreReviewSource["fielderValidation"]>();
   const unresolvedScoreRunOut = unresolvedRunOutPlayer(scoreImportPreview);
+  const fielderValidationPending = scoreFielderValidationRequired
+    || (scoreImportMode === "paste" && /run-out fielder is missing/i.test(scoreImportError));
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const runAction = useActionGuard();
@@ -1252,9 +1275,10 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     if (!scoreImportFixture || Platform.OS !== "web") return;
     let mounted = true;
     setScoreCaptureExtensionChecking(true);
-    detectScorecardBrowserExtension().then(available => {
+    detectScorecardBrowserExtensionStatus().then(status => {
       if (!mounted) return;
-      setScoreCaptureExtensionAvailable(available);
+      setScoreCaptureExtensionAvailable(status.current);
+      setScoreCaptureExtensionVersion(status.version);
       setScoreCaptureExtensionChecking(false);
     });
     return () => { mounted = false; };
@@ -1722,7 +1746,6 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       setScorePasteFirstBatting(corrected.firstInningsBatting);
       setScorePasteSecondBatting(corrected.secondInningsBatting);
       setScoreFielderValidation(audit);
-      setScoreFielderValidationRequired(false);
       await generateScoreReview({
         sourceUrl: scoreSourceUrl.trim(),
         firstInningsTeam: scorePasteFirstTeam,
@@ -1736,7 +1759,10 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
         aliases: scorePasteAliases,
         fielderValidation: audit,
       }, `Cricbuzz validated ${corrections.length} fielder name${corrections.length === 1 ? "" : "s"}. Verify the human-readable preview before staging.`);
+      setScoreFielderValidationRequired(false);
     } catch (error) {
+      setScoreFielderValidationRequired(true);
+      setScoreImportMode("paste");
       const details = error instanceof ScorecardPasteError && error.details.length ? `\n${error.details.join("\n")}` : "";
       setScoreImportError(`${error instanceof Error ? error.message : "Cricbuzz could not validate the fielder names."}${details}`);
       setScoreSourceStatus(error instanceof ScorecardPasteError && error.code !== "fielder-name-unresolved"
@@ -2205,6 +2231,11 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   return <AdminEditContext.Provider value={canEdit}><ScrollView ref={adminScrollRef} contentContainerStyle={[s.content, s.pageSurface]} keyboardShouldPersistTaps="handled">
 <Text style={s.greeting}>League Rules</Text>
 <Text style={s.subtitle}>{leagueName} · {canEdit ? "editable league configuration" : "read-only league configuration"}</Text>
+<View accessible accessibilityLabel={`Current release version ${releaseVersion}, Git commit ${releaseCommit}, released ${releaseDateEastern}`} style={s.adminRelease}>
+<View style={s.adminReleaseItem}><Text style={s.adminReleaseLabel}>APP VERSION</Text><Text selectable style={s.adminReleaseValue}>v{releaseVersion}</Text></View>
+<View style={s.adminReleaseItem}><Text style={s.adminReleaseLabel}>GIT COMMIT</Text><Text selectable style={s.adminReleaseValue}>{releaseCommit.slice(0, 12)}</Text></View>
+<View style={[s.adminReleaseItem, s.adminReleaseDate]}><Text style={s.adminReleaseLabel}>RELEASE DATE · EASTERN TIME</Text><Text selectable style={s.adminReleaseValue}>{releaseDateEastern}</Text></View>
+</View>
 <View style={s.adminNotice}>
 <Text style={s.adminNoticeTitle}>{canEdit ? "League administrator" : "Read only"}</Text>
 <Text style={s.adminNoticeText}>{canEdit ? "You can publish rule changes. Published match calculations keep their original rule version." : "Only a league administrator can publish changes. You can review every active rule and scoring status."}</Text>
@@ -2380,7 +2411,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
           <Text style={s.scoreImportLabel}>AUTHORIZED SCORE SOURCE URL</Text>
           <TextInput accessibilityLabel="Live or completed match score URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="https://authorized-score-provider.example/match/..." placeholderTextColor="#819089" style={s.scoreSourceInput} value={scoreSourceUrl} onChangeText={value => { setScoreSourceUrl(value); setScoreImportError(""); setScoreSourceStatus(""); }} />
           <View style={s.scoreSourceNotice}><Text style={s.scoreSourceNoticeTitle}>Automatic or browser capture</Text><Text style={s.scoreSourceNoticeText}>Connected providers generate the review automatically. With the local Chrome capture extension, ESPNcricinfo opens in a visible tab and returns the four rendered tables directly to this review. Nothing is staged or published automatically.</Text></View>
-          {scoreSourceSupportsExtension(scoreSourceUrl) ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreCaptureExtensionChecking ? "Checking for the local scorecard capture extension…" : scoreCaptureExtensionAvailable ? "Browser capture extension connected. One click will capture this scorecard and generate the human-readable preview." : "Browser capture extension not detected. Install it once from the browser-extension folder and reload this page, or continue with the manual Scorecard capture form."}</Text></View> : null}
+          {scoreSourceSupportsExtension(scoreSourceUrl) ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreCaptureExtensionChecking ? "Checking for the local scorecard capture extension…" : scoreCaptureExtensionAvailable ? `Browser capture extension v${scoreCaptureExtensionVersion} connected. One click will capture this scorecard and generate the human-readable preview.` : `Browser capture extension is missing or outdated. Reload v${SCORECARD_EXTENSION_MIN_VERSION} from the browser-extension folder, then reload this page; the manual Scorecard capture form remains available.`}</Text></View> : null}
           {scoreSourceStatus ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreSourceStatus}</Text></View> : null}
         </> : scoreImportMode === "paste" ? <>
           <Text style={s.scoreImportHelp}>Open the Cricinfo Full Scorecard, copy the four rendered tables into the matching fields, then generate the review. This guided form is the complete fallback workflow—no terminal or background command is needed. Nothing is staged or published automatically.</Text>
@@ -2409,12 +2440,12 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
           <Text style={s.scoreImportLabel}>PLAYER NAME ALIASES (ONLY WHEN NEEDED)</Text>
           <Text style={s.scoreImportHelp}>Wicketkeeper shorthand such as †Sharma is matched automatically to the unique wicketkeeper on the fielding team. Add an alias only when the app reports more than one possible player.</Text>
           <TextInput accessibilityLabel="Player name aliases" multiline textAlignVertical="top" autoCapitalize="words" autoCorrect={false} editable={!busy} placeholder={'Cricinfo name = Exact league player name\nN Reddy = Nitish Kumar Reddy'} placeholderTextColor="#819089" style={s.scorePasteAliasesInput} value={scorePasteAliases} onChangeText={setScorePasteAliases} />
-          {scoreFielderValidationRequired ? <View style={s.scoreFielderValidation}>
+          {fielderValidationPending ? <View style={s.scoreFielderValidation}>
             <Text style={s.scoreFielderValidationTitle}>Fielder name needs validation</Text>
             <Text style={s.scoreFielderValidationText}>Cricinfo remains the primary scorecard. Paste the matching Cricbuzz scorecard URL; the app will verify the fixture and correct only missing or ambiguous catch, stumping or run-out names.</Text>
             <Text style={s.scoreImportLabel}>MATCHING CRICBUZZ SCORECARD URL</Text>
-            <TextInput accessibilityLabel="Matching Cricbuzz scorecard URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="https://www.cricbuzz.com/live-cricket-scorecard/..." placeholderTextColor="#819089" style={s.scoreSourceInput} value={scoreCricbuzzUrl} onChangeText={value => { setScoreCricbuzzUrl(value); setScoreImportError(""); }} />
-            <Text style={s.scoreFielderValidationFootnote}>{scoreCaptureExtensionAvailable ? "The browser extension will open Cricbuzz, read both innings and return the full dismissal names." : "Reload extension version 0.2.0 and this admin page, or enter a manual alias above."}</Text>
+            <TextInput accessibilityLabel="Matching Cricbuzz scorecard URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={!busy} placeholder="https://www.cricbuzz.com/live-cricket-scorecard/..." placeholderTextColor="#819089" style={s.scoreSourceInput} value={scoreCricbuzzUrl} onChangeText={value => { setScoreCricbuzzUrl(value); setScoreFielderValidationRequired(true); setScoreImportError(""); }} />
+            <Text style={s.scoreFielderValidationFootnote}>{scoreCaptureExtensionAvailable ? `Browser extension v${scoreCaptureExtensionVersion} will open Cricbuzz, read both innings and return the full dismissal names.` : scoreCaptureExtensionVersion ? `Extension v${scoreCaptureExtensionVersion} is outdated. Reload v${SCORECARD_EXTENSION_MIN_VERSION} from chrome://extensions, then reload this admin page.` : `Load extension v${SCORECARD_EXTENSION_MIN_VERSION}, then reload this admin page. Manual aliases remain available as a fallback.`}</Text>
           </View> : null}
         </> : <>
           <Text style={s.scoreImportHelp}>Review the readable scoreboard below. Raw JSON remains available for audit or correction, and every fixture, player and point total is validated again before staging.</Text>
@@ -2452,7 +2483,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
           <Text style={s.scoreImportStageText}>Resolve run-out with Cricbuzz</Text>
         </TouchableOpacity> : !scorePublicationComplete && scoreImportStaged && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scorePublishConfirming ? `Confirm publication for match ${scoreImportFixture?.match_number}` : `Publish scores for match ${scoreImportFixture?.match_number}`} accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => scorePublishConfirming ? runAction(publishConfirmedScores) : setScorePublishConfirming(true)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scorePublishConfirming ? "Confirm publish now" : "Publish scores"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportConflict ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Review existing staged score batch" disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={reviewLatestStagedBatch}>
           <Text style={s.scoreImportStageText}>Review staged batch</Text>
-        </TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "url" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard and generate preview" : "Prepare score review from URL"} accessibilityState={{ disabled: busy || !scoreSourceUrl.trim(), busy }} disabled={busy || !scoreSourceUrl.trim()} style={[s.scoreImportStage, (busy || !scoreSourceUrl.trim()) && s.disabled]} onPress={() => runAction(scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? captureScorecardReview : importScoreSourceUrl)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard & generate preview" : scoreSourceRequiresBrowserCapture(scoreSourceUrl) ? "Continue to scorecard capture" : "Prepare review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "paste" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreFielderValidationRequired ? "Validate fielder names with Cricbuzz and generate preview" : "Generate review from copied scorecard"} accessibilityState={{ disabled: busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim()), busy }} disabled={busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim())} style={[s.scoreImportStage, (busy || (scoreFielderValidationRequired && !scoreCricbuzzUrl.trim())) && s.disabled]} onPress={() => runAction(scoreFielderValidationRequired ? validateFieldersWithCricbuzz : preparePastedScoreReview)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scoreFielderValidationRequired ? "Validate with Cricbuzz & generate preview" : "Generate review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Stage reviewed score artifact" accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => runAction(stageScoreArtifact)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>Stage for review</Text>}</TouchableOpacity> : !scorePublicationComplete ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Validate score review artifact" accessibilityState={{ disabled: busy || !scoreArtifactText.trim() }} disabled={busy || !scoreArtifactText.trim()} style={[s.scoreImportStage, (busy || !scoreArtifactText.trim()) && s.disabled]} onPress={validateScoreArtifact}><Text style={s.scoreImportStageText}>Validate artifact</Text></TouchableOpacity> : null}
+        </TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "url" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard and generate preview" : "Prepare score review from URL"} accessibilityState={{ disabled: busy || !scoreSourceUrl.trim(), busy }} disabled={busy || !scoreSourceUrl.trim()} style={[s.scoreImportStage, (busy || !scoreSourceUrl.trim()) && s.disabled]} onPress={() => runAction(scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? captureScorecardReview : importScoreSourceUrl)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{scoreSourceSupportsExtension(scoreSourceUrl) && scoreCaptureExtensionAvailable ? "Capture scorecard & generate preview" : scoreSourceRequiresBrowserCapture(scoreSourceUrl) ? "Continue to scorecard capture" : "Prepare review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportMode === "paste" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={fielderValidationPending ? "Validate fielder names with Cricbuzz and generate preview" : "Generate review from copied scorecard"} accessibilityState={{ disabled: busy || (fielderValidationPending && (!scoreCricbuzzUrl.trim() || !scoreCaptureExtensionAvailable)), busy }} disabled={busy || (fielderValidationPending && (!scoreCricbuzzUrl.trim() || !scoreCaptureExtensionAvailable))} style={[s.scoreImportStage, (busy || (fielderValidationPending && (!scoreCricbuzzUrl.trim() || !scoreCaptureExtensionAvailable))) && s.disabled]} onPress={() => runAction(fielderValidationPending ? validateFieldersWithCricbuzz : preparePastedScoreReview)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>{fielderValidationPending ? "Validate with Cricbuzz & generate preview" : "Generate review"}</Text>}</TouchableOpacity> : !scorePublicationComplete && scoreImportSummary ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Stage reviewed score artifact" accessibilityState={{ disabled: busy, busy }} disabled={busy} style={[s.scoreImportStage, busy && s.disabled]} onPress={() => runAction(stageScoreArtifact)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreImportStageText}>Stage for review</Text>}</TouchableOpacity> : !scorePublicationComplete ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Validate score review artifact" accessibilityState={{ disabled: busy || !scoreArtifactText.trim() }} disabled={busy || !scoreArtifactText.trim()} style={[s.scoreImportStage, (busy || !scoreArtifactText.trim()) && s.disabled]} onPress={validateScoreArtifact}><Text style={s.scoreImportStageText}>Validate artifact</Text></TouchableOpacity> : null}
       </View>
     </View>
   </KeyboardAvoidingView>
@@ -3731,6 +3762,11 @@ const s = StyleSheet.create(normalizeUiStyles({
   adminLoading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
   adminLoadingText: { color: UI_TOKENS.colors.muted, fontSize: 11, fontWeight: "800" },
   adminNotice: { backgroundColor: "#EAF2EE", borderRadius: 13, padding: 12, marginTop: 12 },
+  adminRelease: { flexDirection: "row", flexWrap: "wrap", gap: 8, backgroundColor: "#0B2748", borderRadius: 13, padding: 12, marginTop: 12 },
+  adminReleaseItem: { minWidth: 112, flexGrow: 1 },
+  adminReleaseDate: { minWidth: 220, flexGrow: 2 },
+  adminReleaseLabel: { color: "#AFC5D9", fontSize: 7, fontWeight: "900", letterSpacing: 0.8 },
+  adminReleaseValue: { color: "#FFFFFF", fontSize: 10, lineHeight: 15, fontWeight: "900", marginTop: 2 },
   adminNoticeTitle: { color: "#174D3D", fontSize: 11, fontWeight: "900" },
   adminNoticeText: { color: UI_TOKENS.colors.muted, fontSize: 9, lineHeight: 14, marginTop: 3 },
   adminTabs: { flexDirection: "row", gap: 4, backgroundColor: "#E2E8E4", borderRadius: 12, padding: 4, marginTop: 12 },

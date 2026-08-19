@@ -1,4 +1,5 @@
 const CHANNEL = "cricket-rivalries-scorecard-capture-v1";
+export const SCORECARD_EXTENSION_MIN_VERSION = "0.2.1";
 
 export type ScorecardBrowserCapture = {
   schemaVersion: 1;
@@ -61,6 +62,25 @@ type ExtensionResponse = {
   ok?: boolean;
   capture?: unknown;
   error?: string;
+  version?: string;
+};
+
+export type ScorecardExtensionStatus = {
+  available: boolean;
+  current: boolean;
+  version: string;
+};
+
+const versionAtLeast = (value: string, minimum: string) => {
+  const parts = value.split(".").map(part => Number(part));
+  const required = minimum.split(".").map(part => Number(part));
+  if (parts.some(part => !Number.isFinite(part)) || parts.length < 3) return false;
+  for (let index = 0; index < Math.max(parts.length, required.length); index += 1) {
+    const actual = parts[index] ?? 0;
+    const expected = required[index] ?? 0;
+    if (actual !== expected) return actual > expected;
+  }
+  return true;
 };
 
 const requestId = () => globalThis.crypto?.randomUUID?.()
@@ -228,13 +248,16 @@ const sendRequest = <T>(
   window.postMessage({ channel: CHANNEL, direction: "app-to-extension", type, requestId: id, ...payload }, window.location.origin);
 });
 
-export const detectScorecardBrowserExtension = async () => {
+export const detectScorecardBrowserExtensionStatus = async (): Promise<ScorecardExtensionStatus> => {
   try {
-    return await sendRequest("ping", {}, 900, response => response.type === "ready" ? true : undefined);
+    const version = await sendRequest("ping", {}, 900, response => response.type === "ready" ? String(response.version ?? "") : undefined);
+    return { available: true, current: versionAtLeast(version, SCORECARD_EXTENSION_MIN_VERSION), version };
   } catch {
-    return false;
+    return { available: false, current: false, version: "" };
   }
 };
+
+export const detectScorecardBrowserExtension = async () => (await detectScorecardBrowserExtensionStatus()).current;
 
 export const captureScorecardWithBrowserExtension = async (
   sourceUrl: string,

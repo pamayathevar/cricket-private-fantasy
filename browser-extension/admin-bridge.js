@@ -1,5 +1,6 @@
 (() => {
   const CHANNEL = "cricket-rivalries-scorecard-capture-v1";
+  const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 
   const reply = payload => window.postMessage({
     channel: CHANNEL,
@@ -14,7 +15,7 @@
     if (typeof request.requestId !== "string" || !request.requestId) return;
 
     if (request.type === "ping") {
-      reply({ type: "ready", requestId: request.requestId });
+      reply({ type: "ready", requestId: request.requestId, version: EXTENSION_VERSION });
       return;
     }
     if (request.type !== "capture" || typeof request.sourceUrl !== "string") return;
