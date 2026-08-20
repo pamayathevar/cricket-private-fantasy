@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Cricket Rivalries Scorecard Capture",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Captures ESPNcricinfo scorecards and validates missing or ambiguous fielder names with Cricbuzz.",
   "permissions": [
     "scripting"

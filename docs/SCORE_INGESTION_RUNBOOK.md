@@ -161,7 +161,7 @@ One-time league configuration:
 
 1. In **Rules → Match Scoring**, paste the ESPNcricinfo series schedule URL and Cricbuzz series matches URL under **Automatic scorecard URLs**.
 2. Select **Discover & save fixture URLs**. The extension opens both series pages visibly and returns their match links.
-3. The app maps only exact match-number and two-team identities, optionally verifies the provider date, and saves the URLs through `configure_scorecard_series_sources` with an audit event. Ambiguous mappings fail closed.
+3. The app maps league-stage links by exact match number and playoff links by the fixed labels Qualifier 1 (71), Eliminator (72), Qualifier 2 (73) and Final (74). It always verifies both teams, optionally verifies the provider date, and saves the URLs through `configure_scorecard_series_sources` with an audit event. Ambiguous mappings fail closed.
 4. Verify the per-fixture **CRICINFO READY** and **CRICBUZZ READY** indicators. Rerun discovery later for links that were not yet listed.
 
 For each match:

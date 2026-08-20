@@ -30,7 +30,7 @@ Repeat this section on every computer or Chrome profile that an administrator wi
 3. Turn on **Developer mode** in the top-right corner.
 4. Select **Load unpacked**.
 5. Choose the `browser-extension` folder itself, not the repository root or an individual file.
-6. Confirm that **Cricket Rivalries Scorecard Capture** appears and is enabled. The current released manifest version is `0.3.0`.
+6. Confirm that **Cricket Rivalries Scorecard Capture** appears and is enabled. The current released manifest version is `0.3.1`.
 7. Open or reload [Cricket Rivalries League](https://cricketrivalriesleague.com), sign in, and open the correct league.
 8. Go to **Rules → Match Scoring**, open a match with **Import score source**, and paste an ESPNcricinfo URL.
 9. Confirm that the dialog says **Browser capture extension connected**.
@@ -59,7 +59,7 @@ Do this once when a league is created, or repeat it when a provider changes its 
 4. Select **Discover & save fixture URLs**. Chrome visibly opens each provider page and returns to Cricket Rivalries.
 5. Review the saved count and each match card's **CRICINFO READY** and **CRICBUZZ READY** indicators.
 
-The app accepts a link only when its match number and both teams match the fixture; it also checks the date when the provider exposes a machine-readable date. Ambiguous links are rejected instead of guessed. The configuration and exact fixture mappings are league-scoped and audited. You can rerun discovery safely to pick up provider links that were not available earlier.
+The app accepts a league-stage link only when its match number and both teams match the fixture. Playoff labels map explicitly as Qualifier 1 → Match 71, Eliminator → Match 72, Qualifier 2 → Match 73 and Final → Match 74, and both teams must still match. It also checks the date when the provider exposes a machine-readable date. Ambiguous links are rejected instead of guessed. The configuration and exact fixture mappings are league-scoped and audited. You can rerun discovery safely to pick up provider links that were not available earlier.
 
 Importing a match now prefills both URLs. If one provider is missing, paste that match's exact URL manually; this does not change any other fixture.
 

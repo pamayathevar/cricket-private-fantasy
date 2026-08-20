@@ -254,7 +254,7 @@ const tests = [
     assert.equal(manifest.host_permissions.every(value => /(?:espncricinfo|cricinfo|cricbuzz)\.com/.test(value)), true);
     assert.equal(manifest.host_permissions.some(value => /cricbuzz\.com/.test(value)), true);
   }],
-  ["series discovery maps only exact match-number and team-pair scorecards", () => {
+  ["series discovery maps exact league-stage and playoff identities", () => {
     const capture = {
       schemaVersion: 1,
       captureMethod: "cricket-rivalries-series-scorecard-discovery",
@@ -264,6 +264,10 @@ const tests = [
       matches: [
         { matchNumber: 1, teamTokens: ["royal-challengers-bengaluru", "sunrisers-hyderabad"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/royal-challengers-bengaluru-vs-sunrisers-hyderabad-1st-match-1527674/full-scorecard" },
         { matchNumber: 2, teamTokens: ["mumbai-indians", "kolkata-knight-riders"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/mumbai-indians-vs-kolkata-knight-riders-2nd-match-1527675/full-scorecard" },
+        { matchNumber: 71, teamTokens: ["royal-challengers-bengaluru", "gujarat-titans"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/royal-challengers-bengaluru-vs-gujarat-titans-qualifier-1-1527744/full-scorecard" },
+        { matchNumber: 72, teamTokens: ["rajasthan-royals", "sunrisers-hyderabad"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/rajasthan-royals-vs-sunrisers-hyderabad-eliminator-1527745/full-scorecard" },
+        { matchNumber: 73, teamTokens: ["rajasthan-royals", "gujarat-titans"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/rajasthan-royals-vs-gujarat-titans-qualifier-2-1527746/full-scorecard" },
+        { matchNumber: 74, teamTokens: ["gujarat-titans", "royal-challengers-bengaluru"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/gujarat-titans-vs-royal-challengers-bengaluru-final-1527747/full-scorecard" },
       ],
     };
     assert.equal(isScorecardSeriesCapture(capture), true);
@@ -271,9 +275,13 @@ const tests = [
       { id: "m1", match_number: 1, home: { code: "SRH", name: "Sunrisers Hyderabad" }, away: { code: "RCB", name: "Royal Challengers Bengaluru" } },
       { id: "m2", match_number: 2, home: { code: "KKR", name: "Kolkata Knight Riders" }, away: { code: "MI", name: "Mumbai Indians" } },
       { id: "m3", match_number: 3, home: { code: "CSK", name: "Chennai Super Kings" }, away: { code: "RR", name: "Rajasthan Royals" } },
+      { id: "m71", match_number: 71, home: { code: "RCB", name: "Royal Challengers Bengaluru" }, away: { code: "GT", name: "Gujarat Titans" } },
+      { id: "m72", match_number: 72, home: { code: "SRH", name: "Sunrisers Hyderabad" }, away: { code: "RR", name: "Rajasthan Royals" } },
+      { id: "m73", match_number: 73, home: { code: "GT", name: "Gujarat Titans" }, away: { code: "RR", name: "Rajasthan Royals" } },
+      { id: "m74", match_number: 74, home: { code: "RCB", name: "Royal Challengers Bengaluru" }, away: { code: "GT", name: "Gujarat Titans" } },
     ];
     const matched = matchSeriesScorecardsToFixtures(fixtures, capture);
-    assert.deepEqual(matched.assignments.map(item => item.fixtureId), ["m1", "m2"]);
+    assert.deepEqual(matched.assignments.map(item => item.fixtureId), ["m1", "m2", "m71", "m72", "m73", "m74"]);
     assert.deepEqual(matched.unresolved, [3]);
     assert.deepEqual(matched.ambiguous, []);
   }],
@@ -935,7 +943,12 @@ const tests = [
     assert.match(appSource, /catch \(error\) \{\s*setScoreFielderValidationRequired\(true\);\s*setScoreImportMode\("paste"\);/);
     assert.match(appSource, /fielderValidationPending \? "Validate with Cricbuzz & generate preview"/);
     assert.match(bridgeSource, /chrome\.runtime\.getManifest\(\)\.version/);
-    assert.equal(manifest.version, "0.3.0");
+    assert.equal(manifest.version, "0.3.1");
+    const captureSource = fs.readFileSync("browser-extension/capture-scorecard.js", "utf8");
+    assert.match(captureSource, /qualifier-1[\s\S]+return 71/);
+    assert.match(captureSource, /eliminator[\s\S]+return 72/);
+    assert.match(captureSource, /qualifier-2[\s\S]+return 73/);
+    assert.match(captureSource, /final[\s\S]+return 74/);
   }],
   ["Admin displays build-stamped release metadata in Eastern Time", () => {
     const appSource = fs.readFileSync("App.tsx", "utf8");

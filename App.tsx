@@ -2466,7 +2466,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 <View style={s.scoreSeriesCard}>
   <Text style={s.scoreSeriesEyebrow}>ONE-TIME SOURCE SETUP</Text>
   <Text style={s.scoreSeriesTitle}>Automatic fixture scorecard URLs</Text>
-  <Text style={s.scoreSeriesText}>Configure each provider's series page once. The Chrome extension discovers every match scorecard, cross-checks match number and both teams, and saves the exact URLs to the matching fixture. You can still correct an individual URL inside the import dialog.</Text>
+  <Text style={s.scoreSeriesText}>Configure each provider's series page once. The Chrome extension discovers every match scorecard, cross-checks the league-stage match number or playoff label and both teams, and saves the exact URLs to the matching fixture. You can still correct an individual URL inside the import dialog.</Text>
   <Text style={s.adminFieldDetail}>ESPNCRICINFO SERIES SCHEDULE URL</Text>
   <TextInput accessibilityLabel="ESPNcricinfo series schedule URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={canEdit && !busy} placeholder="https://www.espncricinfo.com/series/.../match-schedule-fixtures-and-results" placeholderTextColor="#819089" style={s.scoreSourceInput} value={cricinfoSeriesUrl} onChangeText={value => { setCricinfoSeriesUrl(value); setScoreSeriesStatus(""); }} />
   <Text style={s.adminFieldDetail}>CRICBUZZ SERIES MATCHES URL</Text>

@@ -1,6 +1,19 @@
 (() => {
   try {
     const compact = value => String(value ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    const playoffMatchNumber = value => {
+      const normalized = compact(value).toLowerCase().replace(/[\s_]+/g, "-");
+      if (/(?:^|[-/])qualifier-1(?:[-/]|$)/.test(normalized)) return 71;
+      if (/(?:^|[-/])eliminator(?:[-/]|$)/.test(normalized)) return 72;
+      if (/(?:^|[-/])qualifier-2(?:[-/]|$)/.test(normalized)) return 73;
+      if (/(?:^|[-/])final(?:[-/]|$)/.test(normalized)) return 74;
+      return null;
+    };
+    const matchNumberForValue = value => {
+      const regularMatch = compact(value).match(/(?:^|[-/\s])(\d+)(?:st|nd|rd|th)[-/\s]+match(?:[-/\s]|$)/i);
+      return regularMatch ? Number(regularMatch[1]) : playoffMatchNumber(value);
+    };
+    const providerMatchLabel = "(?:\\d+(?:st|nd|rd|th)-match|qualifier-1|eliminator|qualifier-2|final)";
     const hostname = location.hostname.toLowerCase();
     const isCricbuzz = hostname === "cricbuzz.com" || hostname.endsWith(".cricbuzz.com");
     const isSeriesPage = isCricbuzz
@@ -13,10 +26,10 @@
           const url = new URL(link.href, location.href);
           if (provider === "cricbuzz") {
             const pathMatch = url.pathname.match(/\/(?:live-cricket-scores|live-cricket-scorecard)\/(\d+)\/([^/?#]+)/i);
-            if (!pathMatch || !/\d+(?:st|nd|rd|th)-match/i.test(pathMatch[2])) return null;
+            if (!pathMatch || !new RegExp(`(?:^|-)${providerMatchLabel}(?:-|$)`, "i").test(pathMatch[2])) return null;
             return new URL(`/live-cricket-scorecard/${pathMatch[1]}/${pathMatch[2]}`, url.origin).toString();
           }
-          const pathMatch = url.pathname.match(/^(.*\/[^/]*-vs-[^/]*-\d+(?:st|nd|rd|th)-match-\d+)(?:\/[^/]+)?\/?$/i);
+          const pathMatch = url.pathname.match(new RegExp(`^(.*\\/[^/]*-vs-[^/]*-${providerMatchLabel}-\\d+)(?:\\/[^/]+)?\\/?$`, "i"));
           if (!pathMatch) return null;
           return new URL(`${pathMatch[1]}/full-scorecard`, url.origin).toString();
         } catch {
@@ -25,10 +38,10 @@
       };
       const detailsForUrl = scorecardUrl => {
         const path = new URL(scorecardUrl).pathname;
-        const matchNumber = Number(path.match(/(?:^|[-/])(\d+)(?:st|nd|rd|th)-match(?:[-/]|$)/i)?.[1]);
+        const matchNumber = matchNumberForValue(path);
         const teams = provider === "cricbuzz"
-          ? path.match(/\/([a-z0-9-]+)-vs-([a-z0-9-]+)-\d+(?:st|nd|rd|th)-match/i)?.slice(1, 3)
-          : path.match(/\/([^/]+?)-vs-([^/]+?)-\d+(?:st|nd|rd|th)-match-\d+/i)?.slice(1, 3);
+          ? path.match(new RegExp(`\\/([a-z0-9-]+)-vs-([a-z0-9-]+)-${providerMatchLabel}(?:-|$)`, "i"))?.slice(1, 3)
+          : path.match(new RegExp(`\\/([^/]+?)-vs-([^/]+?)-${providerMatchLabel}-\\d+`, "i"))?.slice(1, 3);
         return Number.isInteger(matchNumber) && matchNumber > 0 && teams?.length === 2
           ? { matchNumber, teamTokens: teams }
           : null;
@@ -95,8 +108,8 @@
 
       const title = compact(document.title);
       const heading = compact(document.querySelector("h1")?.textContent);
-      const matchNumberMatch = `${location.pathname} ${title}`.match(/(?:^|[-\s])(\d+)(?:st|nd|rd|th)[-\s]+match\b/i);
-      const slugTeams = location.pathname.match(/\/([a-z0-9]+)-vs-([a-z0-9]+)-\d+(?:st|nd|rd|th)-match/i);
+      const matchNumber = matchNumberForValue(`${location.pathname} ${title} ${heading}`);
+      const slugTeams = location.pathname.match(new RegExp(`\\/([a-z0-9]+)-vs-([a-z0-9]+)-${providerMatchLabel}(?:-|$)`, "i"));
       return {
         ok: true,
         capture: {
@@ -106,7 +119,7 @@
           capturedAt: new Date().toISOString(),
           page: { title, heading },
           match: {
-            matchNumber: matchNumberMatch ? Number(matchNumberMatch[1]) : null,
+            matchNumber,
             homeTeam: String(slugTeams?.[1] || "").toUpperCase(),
             awayTeam: String(slugTeams?.[2] || "").toUpperCase(),
           },
@@ -188,8 +201,7 @@
       || title.match(/^(.+?)\s+vs\s+(.+?)(?:,|\s+-\s+|$)/i))?.slice(1, 3) || [];
     const homeTeam = teamCode(headingTeams[0] || "");
     const awayTeam = teamCode(headingTeams[1] || "");
-    const matchNumberMatch = h1.match(/\b(\d+)(?:st|nd|rd|th)\s+Match\b/i)
-      || title.match(/\b(\d+)(?:st|nd|rd|th)\s+Match\b/i);
+    const matchNumber = matchNumberForValue(`${location.pathname} ${h1} ${title}`);
     const bodyLines = (document.body.innerText || "").split("\n").map(compact).filter(Boolean);
     const resultSummary = bodyLines.find(line => /\b(?:won by|won the Super Over|match tied)\b/i.test(line) && Boolean(teamCode(line))) || "";
     const playerOfMatchIndex = bodyLines.findIndex(line => line.toUpperCase() === "PLAYER OF THE MATCH");
@@ -205,7 +217,7 @@
         capturedAt: new Date().toISOString(),
         page: { title, heading: h1 },
         match: {
-          matchNumber: matchNumberMatch ? Number(matchNumberMatch[1]) : null,
+          matchNumber,
           homeTeam,
           awayTeam,
           firstInningsTeamName: teamName(selected[0].table),

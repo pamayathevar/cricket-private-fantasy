@@ -1,7 +1,7 @@
 import { isScorecardSeriesCapture, type ScorecardSeriesCapture } from "./scorecardSeriesDiscovery";
 
 const CHANNEL = "cricket-rivalries-scorecard-capture-v1";
-export const SCORECARD_EXTENSION_MIN_VERSION = "0.3.0";
+export const SCORECARD_EXTENSION_MIN_VERSION = "0.3.1";
 
 export type ScorecardBrowserCapture = {
   schemaVersion: 1;
