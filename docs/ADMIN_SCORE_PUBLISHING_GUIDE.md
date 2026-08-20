@@ -17,8 +17,7 @@ You need:
 - desktop Google Chrome;
 - the released `browser-extension` folder supplied by the league operator;
 - an active Cricket Rivalries account with the `league_admin` role;
-- the ESPNcricinfo **Full Scorecard** URL for the correct match;
-- the matching Cricbuzz scorecard URL only if the app asks for fielder-name validation.
+- the ESPNcricinfo and Cricbuzz series pages, configured once for the league; or the exact match URLs as a manual fallback.
 
 Wait until the official scorecard is complete before publishing. Do not publish a live, incomplete, or provisional scorecard.
 
@@ -31,7 +30,7 @@ Repeat this section on every computer or Chrome profile that an administrator wi
 3. Turn on **Developer mode** in the top-right corner.
 4. Select **Load unpacked**.
 5. Choose the `browser-extension` folder itself, not the repository root or an individual file.
-6. Confirm that **Cricket Rivalries Scorecard Capture** appears and is enabled. The current released manifest version is `0.2.0`.
+6. Confirm that **Cricket Rivalries Scorecard Capture** appears and is enabled. The current released manifest version is `0.3.0`.
 7. Open or reload [Cricket Rivalries League](https://cricketrivalriesleague.com), sign in, and open the correct league.
 8. Go to **Rules → Match Scoring**, open a match with **Import score source**, and paste an ESPNcricinfo URL.
 9. Confirm that the dialog says **Browser capture extension connected**.
@@ -50,7 +49,21 @@ When the league operator supplies a newer extension folder:
 
 Do not install an extension folder received from an untrusted source and do not add database keys or passwords to its files.
 
-## 2. Open the correct fixture
+## 2. Configure both series once
+
+Do this once when a league is created, or repeat it when a provider changes its series page.
+
+1. Go to **Rules → Match Scoring** and find **Automatic scorecard URLs**.
+2. Paste the ESPNcricinfo series schedule URL and the Cricbuzz series matches URL.
+3. Confirm **Browser capture extension connected**.
+4. Select **Discover & save fixture URLs**. Chrome visibly opens each provider page and returns to Cricket Rivalries.
+5. Review the saved count and each match card's **CRICINFO READY** and **CRICBUZZ READY** indicators.
+
+The app accepts a link only when its match number and both teams match the fixture; it also checks the date when the provider exposes a machine-readable date. Ambiguous links are rejected instead of guessed. The configuration and exact fixture mappings are league-scoped and audited. You can rerun discovery safely to pick up provider links that were not available earlier.
+
+Importing a match now prefills both URLs. If one provider is missing, paste that match's exact URL manually; this does not change any other fixture.
+
+## 3. Open the correct fixture
 
 1. Sign in to the production web app using the administrator account.
 2. Open the correct league.
@@ -61,7 +74,7 @@ Do not install an extension folder received from an untrusted source and do not 
 
 Stop if the match number or teams do not match the official scorecard.
 
-## 3. Capture the ESPNcricinfo scorecard
+## 4. Capture the ESPNcricinfo scorecard
 
 1. Open the match's ESPNcricinfo **Full Scorecard** page and copy its HTTPS URL. Use a URL ending in, or resolving to, `/full-scorecard`.
 2. Paste the URL into **Authorized score source URL**.
@@ -73,7 +86,7 @@ Stop if the match number or teams do not match the official scorecard.
 
 Nothing is staged or published during capture.
 
-## 4. Resolve a fielder-name warning
+## 5. Resolve a fielder-name warning
 
 ESPNcricinfo sometimes shows only a surname or wicketkeeper shorthand in a dismissal. If the app cannot identify exactly one league player, it displays **Fielder name needs validation**.
 
@@ -96,7 +109,7 @@ N Reddy = Nitish Kumar Reddy
 
 Add only the alias reported by the app. Do not use aliases to change runs, wickets, or other score facts.
 
-## 5. Review the human-readable scoreboard
+## 6. Review the human-readable scoreboard
 
 Do not stage until every check below passes.
 
@@ -134,7 +147,7 @@ Use **Show raw JSON** only for an audit or an approved correction. The readable 
 - A team with 13 or more verified participants produces a warning. Confirm the extra player's role and enter a clear explanation under **Admin approval required** before staging.
 - Never dismiss a warning without checking the official scorecard.
 
-## 6. Stage the reviewed calculation
+## 7. Stage the reviewed calculation
 
 1. After the preview is correct, select **Stage for review**.
 2. Wait for the staged confirmation. The footer changes to **Publish scores**.
@@ -144,7 +157,7 @@ Staging creates an immutable calculation version and audit record. It does not u
 
 If the app says the scorecard is already staged, select **Review staged batch**, inspect it, and continue only if it is the intended calculation.
 
-## 7. Publish the scores
+## 8. Publish the scores
 
 Publication is intentionally a separate confirmation.
 
@@ -162,7 +175,7 @@ Publication is intentionally a separate confirmation.
 
 Do not click repeatedly while the button is busy. If publication is blocked, keep the modal open and record the complete error message.
 
-## 8. Verify publication
+## 9. Verify publication
 
 After closing the dialog:
 
@@ -177,7 +190,7 @@ After closing the dialog:
 
 The scoring task is complete only after Results and Ranking both reflect the publication.
 
-## 9. Correct a published score
+## 10. Correct a published score
 
 Never edit published player points or standings directly.
 
@@ -192,7 +205,7 @@ Never edit published player points or standings directly.
 
 The earlier artifact and publication remain in the audit history.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### Browser capture extension not detected
 

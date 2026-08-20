@@ -20,7 +20,12 @@ function loadTypeScriptModule(relativePath) {
   assert.equal(errors.length, 0, `Unable to transpile ${relativePath}`);
 
   const module = { exports: {} };
-  new Function("exports", "module", result.outputText)(module.exports, module);
+  const localRequire = specifier => {
+    if (!specifier.startsWith(".")) throw new Error(`Unsupported test module dependency: ${specifier}`);
+    const dependency = path.resolve(path.dirname(filename), specifier.endsWith(".ts") ? specifier : `${specifier}.ts`);
+    return loadTypeScriptModule(dependency);
+  };
+  new Function("exports", "module", "require", result.outputText)(module.exports, module, localRequire);
   return module.exports;
 }
 
@@ -90,6 +95,11 @@ const {
   isCricbuzzDismissalCapture,
   isScorecardBrowserCapture,
 } = loadTypeScriptModule("scorecardBrowserExtension.ts");
+
+const {
+  isScorecardSeriesCapture,
+  matchSeriesScorecardsToFixtures,
+} = loadTypeScriptModule("scorecardSeriesDiscovery.ts");
 
 const {
   buildCricinfoPasteImport,
@@ -243,6 +253,29 @@ const tests = [
     assert.equal(manifest.host_permissions.some(value => /supabase/i.test(value)), false);
     assert.equal(manifest.host_permissions.every(value => /(?:espncricinfo|cricinfo|cricbuzz)\.com/.test(value)), true);
     assert.equal(manifest.host_permissions.some(value => /cricbuzz\.com/.test(value)), true);
+  }],
+  ["series discovery maps only exact match-number and team-pair scorecards", () => {
+    const capture = {
+      schemaVersion: 1,
+      captureMethod: "cricket-rivalries-series-scorecard-discovery",
+      provider: "espncricinfo",
+      sourceUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/match-schedule-fixtures-and-results",
+      capturedAt: "2026-08-20T00:00:00Z",
+      matches: [
+        { matchNumber: 1, teamTokens: ["royal-challengers-bengaluru", "sunrisers-hyderabad"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/royal-challengers-bengaluru-vs-sunrisers-hyderabad-1st-match-1527674/full-scorecard" },
+        { matchNumber: 2, teamTokens: ["mumbai-indians", "kolkata-knight-riders"], scorecardUrl: "https://www.espncricinfo.com/series/ipl-2026-1510719/mumbai-indians-vs-kolkata-knight-riders-2nd-match-1527675/full-scorecard" },
+      ],
+    };
+    assert.equal(isScorecardSeriesCapture(capture), true);
+    const fixtures = [
+      { id: "m1", match_number: 1, home: { code: "SRH", name: "Sunrisers Hyderabad" }, away: { code: "RCB", name: "Royal Challengers Bengaluru" } },
+      { id: "m2", match_number: 2, home: { code: "KKR", name: "Kolkata Knight Riders" }, away: { code: "MI", name: "Mumbai Indians" } },
+      { id: "m3", match_number: 3, home: { code: "CSK", name: "Chennai Super Kings" }, away: { code: "RR", name: "Rajasthan Royals" } },
+    ];
+    const matched = matchSeriesScorecardsToFixtures(fixtures, capture);
+    assert.deepEqual(matched.assignments.map(item => item.fixtureId), ["m1", "m2"]);
+    assert.deepEqual(matched.unresolved, [3]);
+    assert.deepEqual(matched.ambiguous, []);
   }],
   ["Cricbuzz capture scopes each batting table to its innings container", () => {
     const source = fs.readFileSync("browser-extension/capture-scorecard.js", "utf8");
@@ -902,7 +935,7 @@ const tests = [
     assert.match(appSource, /catch \(error\) \{\s*setScoreFielderValidationRequired\(true\);\s*setScoreImportMode\("paste"\);/);
     assert.match(appSource, /fielderValidationPending \? "Validate with Cricbuzz & generate preview"/);
     assert.match(bridgeSource, /chrome\.runtime\.getManifest\(\)\.version/);
-    assert.equal(manifest.version, "0.2.2");
+    assert.equal(manifest.version, "0.3.0");
   }],
   ["Admin displays build-stamped release metadata in Eastern Time", () => {
     const appSource = fs.readFileSync("App.tsx", "utf8");

@@ -23,7 +23,7 @@ const approvedScorecardUrl = value => {
   const url = new URL(value);
   const hostname = url.hostname.toLowerCase();
   if (url.protocol !== "https:" || !SCORECARD_HOSTS.some(root => hostname === root || hostname.endsWith(`.${root}`))) {
-    throw new Error("Only HTTPS ESPNcricinfo or Cricbuzz scorecard URLs are supported.");
+    throw new Error("Only HTTPS ESPNcricinfo or Cricbuzz scorecard and series URLs are supported.");
   }
   url.hash = "";
   return url.toString();

@@ -1,6 +1,6 @@
 # Cricket Rivalries scorecard capture extension
 
-This Chrome Manifest V3 extension reads a visible ESPNcricinfo Full Scorecard and returns the four rendered tables to the Cricket Rivalries admin review screen. When Cricinfo omits a run-out fielder or supplies an ambiguous fielder surname, it can also read the matching Cricbuzz scorecard to validate that dismissal. It cannot access Supabase, stage a score or publish a score.
+This Chrome Manifest V3 extension can discover match scorecards from visible ESPNcricinfo and Cricbuzz series pages, then reads a visible ESPNcricinfo Full Scorecard and returns the four rendered tables to the Cricket Rivalries admin review screen. When Cricinfo omits a run-out fielder or supplies an ambiguous fielder surname, it can also read the matching Cricbuzz scorecard to validate that dismissal. It cannot access Supabase, stage a score or publish a score.
 
 For the complete administrator workflow—including installation, capture, human review, staging, publication, verification, corrections, and troubleshooting—see [Administrator guide: capture, review, and publish match scores](../docs/ADMIN_SCORE_PUBLISHING_GUIDE.md).
 
@@ -12,9 +12,9 @@ For the complete administrator workflow—including installation, capture, human
 4. Choose this repository's `browser-extension` folder.
 5. Reload the Cricket Rivalries web app.
 
-After updating the repository, return to `chrome://extensions`, confirm version **0.2.2** (or newer), and select **Reload**. Deploying the web app does not automatically reload an unpacked local extension.
+After updating the repository, return to `chrome://extensions`, confirm version **0.3.0** (or newer), and select **Reload**. Deploying the web app does not automatically reload an unpacked local extension.
 
-The Match Scoring dialog will show **Browser capture extension connected**. Paste an ESPNcricinfo Full Scorecard URL and select **Capture scorecard & generate preview**.
+The Match Scoring screen will show **Browser capture extension connected**. An administrator can paste both provider series URLs once and select **Discover & save fixture URLs**; the app opens each series page, matches links by match number and both teams, and saves the exact URLs against each fixture. Import dialogs then prefill both URLs. Manual per-match URLs remain available as a fallback.
 
 If the app finds a missing or ambiguous catcher, wicketkeeper or run-out fielder—including a Cricinfo dismissal shown only as `run out`—it asks for the matching Cricbuzz scorecard URL. Select **Validate with Cricbuzz & generate preview**. Cricinfo remains the primary source; Cricbuzz changes only the incomplete fielder names, and those corrections are saved in the review audit data. Manual aliases remain available as a fallback when a name is present.
 

@@ -2,7 +2,64 @@
   try {
     const compact = value => String(value ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
     const hostname = location.hostname.toLowerCase();
-    if (hostname === "cricbuzz.com" || hostname.endsWith(".cricbuzz.com")) {
+    const isCricbuzz = hostname === "cricbuzz.com" || hostname.endsWith(".cricbuzz.com");
+    const isSeriesPage = isCricbuzz
+      ? /\/cricket-series\/\d+(?:\/|$)/i.test(location.pathname)
+      : !/\/full-scorecard\/?$/i.test(location.pathname);
+    if (isSeriesPage) {
+      const provider = isCricbuzz ? "cricbuzz" : "espncricinfo";
+      const scorecardForLink = link => {
+        try {
+          const url = new URL(link.href, location.href);
+          if (provider === "cricbuzz") {
+            const pathMatch = url.pathname.match(/\/(?:live-cricket-scores|live-cricket-scorecard)\/(\d+)\/([^/?#]+)/i);
+            if (!pathMatch || !/\d+(?:st|nd|rd|th)-match/i.test(pathMatch[2])) return null;
+            return new URL(`/live-cricket-scorecard/${pathMatch[1]}/${pathMatch[2]}`, url.origin).toString();
+          }
+          const pathMatch = url.pathname.match(/^(.*\/[^/]*-vs-[^/]*-\d+(?:st|nd|rd|th)-match-\d+)(?:\/[^/]+)?\/?$/i);
+          if (!pathMatch) return null;
+          return new URL(`${pathMatch[1]}/full-scorecard`, url.origin).toString();
+        } catch {
+          return null;
+        }
+      };
+      const detailsForUrl = scorecardUrl => {
+        const path = new URL(scorecardUrl).pathname;
+        const matchNumber = Number(path.match(/(?:^|[-/])(\d+)(?:st|nd|rd|th)-match(?:[-/]|$)/i)?.[1]);
+        const teams = provider === "cricbuzz"
+          ? path.match(/\/([a-z0-9-]+)-vs-([a-z0-9-]+)-\d+(?:st|nd|rd|th)-match/i)?.slice(1, 3)
+          : path.match(/\/([^/]+?)-vs-([^/]+?)-\d+(?:st|nd|rd|th)-match-\d+/i)?.slice(1, 3);
+        return Number.isInteger(matchNumber) && matchNumber > 0 && teams?.length === 2
+          ? { matchNumber, teamTokens: teams }
+          : null;
+      };
+      const discovered = new Map();
+      for (const link of Array.from(document.querySelectorAll("a[href]"))) {
+        const scorecardUrl = scorecardForLink(link);
+        if (!scorecardUrl) continue;
+        const details = detailsForUrl(scorecardUrl);
+        if (!details) continue;
+        const contextElement = link.closest("article, li, [class*='match'], [class*='fixture']") || link.parentElement;
+        const machineDate = contextElement?.querySelector?.("time[datetime], [datetime]")?.getAttribute("datetime");
+        const context = compact(contextElement?.textContent || link.textContent);
+        discovered.set(scorecardUrl, { ...details, scorecardUrl, scheduledText: machineDate || context });
+      }
+      if (!discovered.size) {
+        return { ok: false, errorCode: "scorecard-not-ready", message: `Waiting for ${provider === "cricbuzz" ? "Cricbuzz" : "ESPNcricinfo"} series match links…` };
+      }
+      return {
+        ok: true,
+        capture: {
+          schemaVersion: 1,
+          captureMethod: "cricket-rivalries-series-scorecard-discovery",
+          provider,
+          sourceUrl: location.href,
+          capturedAt: new Date().toISOString(),
+          matches: Array.from(discovered.values()).sort((left, right) => left.matchNumber - right.matchNumber),
+        },
+      };
+    }
+    if (isCricbuzz) {
       const inningsControls = Array.from(document.querySelectorAll("div"))
         .map(element => ({ element, label: compact(element.textContent) }))
         .filter(item => /^[A-Z0-9]+\s+\((?:1st|2nd) Inn\)$/i.test(item.label));

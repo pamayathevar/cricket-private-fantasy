@@ -1,5 +1,7 @@
+import { isScorecardSeriesCapture, type ScorecardSeriesCapture } from "./scorecardSeriesDiscovery";
+
 const CHANNEL = "cricket-rivalries-scorecard-capture-v1";
-export const SCORECARD_EXTENSION_MIN_VERSION = "0.2.2";
+export const SCORECARD_EXTENSION_MIN_VERSION = "0.3.0";
 
 export type ScorecardBrowserCapture = {
   schemaVersion: 1;
@@ -276,5 +278,15 @@ export const captureCricbuzzDismissalsWithBrowserExtension = async (
   if (response.type !== "result") return undefined;
   if (!response.ok) throw new Error(response.error || "The browser extension could not validate Cricbuzz dismissals.");
   if (!isCricbuzzDismissalCapture(response.capture)) throw new Error("The browser extension returned incomplete Cricbuzz dismissal data.");
+  return response.capture;
+}, onProgress);
+
+export const discoverScorecardSeriesWithBrowserExtension = async (
+  sourceUrl: string,
+  onProgress?: (message: string) => void,
+): Promise<ScorecardSeriesCapture> => sendRequest("capture", { sourceUrl }, 130_000, response => {
+  if (response.type !== "result") return undefined;
+  if (!response.ok) throw new Error(response.error || "The browser extension could not discover series scorecards.");
+  if (!isScorecardSeriesCapture(response.capture)) throw new Error("The browser extension returned incomplete series scorecard links.");
   return response.capture;
 }, onProgress);

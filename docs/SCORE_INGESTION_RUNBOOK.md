@@ -157,10 +157,17 @@ One-time installation:
 2. Select **Load unpacked** and choose this repository's `browser-extension` folder.
 3. Reload the Cricket Rivalries app. The Provider URL screen must say **Browser capture extension connected**.
 
+One-time league configuration:
+
+1. In **Rules → Match Scoring**, paste the ESPNcricinfo series schedule URL and Cricbuzz series matches URL under **Automatic scorecard URLs**.
+2. Select **Discover & save fixture URLs**. The extension opens both series pages visibly and returns their match links.
+3. The app maps only exact match-number and two-team identities, optionally verifies the provider date, and saves the URLs through `configure_scorecard_series_sources` with an audit event. Ambiguous mappings fail closed.
+4. Verify the per-fixture **CRICINFO READY** and **CRICBUZZ READY** indicators. Rerun discovery later for links that were not yet listed.
+
 For each match:
 
 1. In **Rules → Match Scoring**, select **Import score source** for the correct fixture.
-2. Paste the ESPNcricinfo **Full Scorecard** URL.
+2. Confirm the prefilled ESPNcricinfo **Full Scorecard** URL, or paste it manually if series discovery did not find that fixture.
 3. Select **Capture scorecard & generate preview**. Chrome opens the page visibly and returns to the admin tab after all four tables are rendered.
 4. Independently inspect the match identity, innings totals, dismissals, dot balls, player/category totals, winner and Player of the Match.
 5. Select **Stage for review** only after the preview is correct. Publishing remains a separate action and confirmation.

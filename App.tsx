@@ -20,11 +20,19 @@ import { extractSavedCricinfoScorecard, parseScoreIngestionArtifact, ScoreIngest
 import { buildCricinfoPasteImport, ScorecardPasteError, type LeagueScorecardPlayer } from "./cricinfoScorecardPaste";
 import { buildScoreIngestionArtifact } from "./scoreIngestionArtifactBuilder";
 import { browserCaptureStatus, scoreSourceRequiresBrowserCapture } from "./scoreSourceWorkflow";
-import { applyCricbuzzFielderValidation, captureCricbuzzDismissalsWithBrowserExtension, captureScorecardWithBrowserExtension, detectScorecardBrowserExtensionStatus, SCORECARD_EXTENSION_MIN_VERSION, type CricbuzzFielderCorrection, type ScorecardBrowserCapture } from "./scorecardBrowserExtension";
+import { applyCricbuzzFielderValidation, captureCricbuzzDismissalsWithBrowserExtension, captureScorecardWithBrowserExtension, detectScorecardBrowserExtensionStatus, discoverScorecardSeriesWithBrowserExtension, SCORECARD_EXTENSION_MIN_VERSION, type CricbuzzFielderCorrection, type ScorecardBrowserCapture } from "./scorecardBrowserExtension";
+import { matchSeriesScorecardsToFixtures, type ScorecardDiscoveryFixture } from "./scorecardSeriesDiscovery";
 
 const isFielderValidationError = (error: unknown) => (
   (error instanceof ScorecardPasteError || error instanceof ScoreIngestionArtifactError)
   && error.code === "fielder-name-unresolved"
+);
+
+const hasDiscoveredCricinfoScorecardUrl = (value: unknown) => (
+  /^https:\/\/([^/]+\.)?(espncricinfo\.com|cricinfo\.com)\/series\/.*\/full-scorecard(?:[?#].*)?$/i.test(String(value ?? "").trim())
+);
+const hasDiscoveredCricbuzzScorecardUrl = (value: unknown) => (
+  /^https:\/\/([^/]+\.)?cricbuzz\.com\/(?:live-cricket-scorecard|live-cricket-scores)\/\d+\//i.test(String(value ?? "").trim())
 );
 
 type ReleaseMetadata = { commit?: string; builtAt?: string };
@@ -1233,6 +1241,9 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const [phases, setPhases] = useState<PhaseForm[]>([]);
   const [transferPeriods, setTransferPeriods] = useState<TransferPeriodForm[]>([]);
   const [scoringFixtures, setScoringFixtures] = useState<any[]>([]);
+  const [cricinfoSeriesUrl, setCricinfoSeriesUrl] = useState("");
+  const [cricbuzzSeriesUrl, setCricbuzzSeriesUrl] = useState("");
+  const [scoreSeriesStatus, setScoreSeriesStatus] = useState("");
   const [scoreImportFixture, setScoreImportFixture] = useState<any | null>(null);
   const [scoreArtifactText, setScoreArtifactText] = useState("");
   const [scoreReviewNotes, setScoreReviewNotes] = useState("");
@@ -1272,7 +1283,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   useWebModalFocus(!!scoreImportFixture, "score-ingestion-dialog");
 
   useEffect(() => {
-    if (!scoreImportFixture || Platform.OS !== "web") return;
+    if (Platform.OS !== "web" || (section !== "scoring" && !scoreImportFixture)) return;
     let mounted = true;
     setScoreCaptureExtensionChecking(true);
     detectScorecardBrowserExtensionStatus().then(status => {
@@ -1282,11 +1293,24 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       setScoreCaptureExtensionChecking(false);
     });
     return () => { mounted = false; };
-  }, [scoreImportFixture?.id]);
+  }, [section, scoreImportFixture?.id]);
 
   useEffect(() => {
     adminScrollRef.current?.scrollTo({ y: 0, animated: false });
   }, [section]);
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.from("leagues").select("cricinfo_series_url,cricbuzz_series_url").eq("id", leagueId).single().then(({ data, error }) => {
+      if (!mounted) return;
+      if (error) setMessage(userActionError(error, "Scorecard series configuration"));
+      else {
+        setCricinfoSeriesUrl(String((data as any)?.cricinfo_series_url ?? ""));
+        setCricbuzzSeriesUrl(String((data as any)?.cricbuzz_series_url ?? ""));
+      }
+    });
+    return () => { mounted = false; };
+  }, [leagueId]);
 
   useEffect(() => {
     let mounted = true;
@@ -1343,7 +1367,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const loadScoringFixtures = async () => {
     const lifecycleResult = await supabase.rpc("reconcile_due_fixture_lifecycle", { p_league_id: leagueId });
     if (lifecycleResult.error) setMessage(userActionError(lifecycleResult.error, "Fixture lifecycle update"));
-    const { data, error } = await supabase.from("fixtures").select("id,match_number,status,scoring_status,home:cricket_teams!fixtures_home_team_id_fkey(code),away:cricket_teams!fixtures_away_team_id_fkey(code),score_ingestion_batches(id,status,calculation_version,source_provider,external_match_id,source_fingerprint,warning_count,review_artifact,created_at)").eq("league_id", leagueId).in("status", ["live", "completed", "abandoned", "cancelled"]).order("match_number", { ascending: false });
+    const { data, error } = await supabase.from("fixtures").select("id,match_number,scheduled_start,status,scoring_status,scorecard_source_url,cricbuzz_scorecard_url,home:cricket_teams!fixtures_home_team_id_fkey(code,name),away:cricket_teams!fixtures_away_team_id_fkey(code,name),score_ingestion_batches(id,status,calculation_version,source_provider,external_match_id,source_fingerprint,warning_count,review_artifact,created_at)").eq("league_id", leagueId).in("status", ["live", "completed", "abandoned", "cancelled"]).order("match_number", { ascending: false });
     if (error) setMessage(userActionError(error, "Completed matches"));
     else {
       const fixtureRows = data ?? [];
@@ -1355,7 +1379,79 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
       if (jobsResult.error && !String(jobsResult.error.message ?? "").includes("score_ingestion_jobs")) setMessage(userActionError(jobsResult.error, "Score import jobs"));
     }
   };
-  useEffect(() => { if (section === "scoring") loadScoringFixtures(); }, [section]);
+  useEffect(() => { if (section === "scoring") loadScoringFixtures(); }, [section, leagueId]);
+
+  const discoverAndSaveScorecardSeries = async () => {
+    const cricinfoUrl = cricinfoSeriesUrl.trim();
+    const cricbuzzUrl = cricbuzzSeriesUrl.trim();
+    if (!/^https:\/\/([^/]+\.)?(espncricinfo\.com|cricinfo\.com)\/series\//i.test(cricinfoUrl)) {
+      setMessage("Enter the HTTPS ESPNcricinfo series schedule URL.");
+      return;
+    }
+    if (!/^https:\/\/([^/]+\.)?cricbuzz\.com\/cricket-series\//i.test(cricbuzzUrl)) {
+      setMessage("Enter the HTTPS Cricbuzz series matches URL.");
+      return;
+    }
+    if (!scoreCaptureExtensionAvailable) {
+      setMessage(`Reload browser capture extension v${SCORECARD_EXTENSION_MIN_VERSION} before discovering series scorecards.`);
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+    setScoreSeriesStatus("Opening ESPNcricinfo and reading its series match links…");
+    try {
+      const fixturesResult = await supabase
+        .from("fixtures")
+        .select("id,match_number,scheduled_start,home:cricket_teams!fixtures_home_team_id_fkey(code,name),away:cricket_teams!fixtures_away_team_id_fkey(code,name)")
+        .eq("league_id", leagueId)
+        .order("match_number");
+      if (fixturesResult.error) throw fixturesResult.error;
+      const fixtures = (fixturesResult.data ?? []) as unknown as ScorecardDiscoveryFixture[];
+      if (!fixtures.length) throw new Error("This league has no fixtures to match against the configured series.");
+
+      const cricinfoCapture = await discoverScorecardSeriesWithBrowserExtension(cricinfoUrl, setScoreSeriesStatus);
+      setScoreSeriesStatus("ESPNcricinfo links found. Opening Cricbuzz and cross-checking the same fixtures…");
+      const cricbuzzCapture = await discoverScorecardSeriesWithBrowserExtension(cricbuzzUrl, setScoreSeriesStatus);
+      const cricinfoMatches = matchSeriesScorecardsToFixtures(fixtures, cricinfoCapture);
+      const cricbuzzMatches = matchSeriesScorecardsToFixtures(fixtures, cricbuzzCapture);
+      if (cricinfoMatches.ambiguous.length || cricbuzzMatches.ambiguous.length) {
+        const ambiguous = [...new Set([...cricinfoMatches.ambiguous, ...cricbuzzMatches.ambiguous])].sort((a, b) => a - b);
+        throw new Error(`Series discovery found more than one scorecard for Match ${ambiguous.join(", ")}. No ambiguous URL was saved.`);
+      }
+
+      const cricinfoByFixture = new Map(cricinfoMatches.assignments.map(item => [item.fixtureId, item.scorecardUrl]));
+      const cricbuzzByFixture = new Map(cricbuzzMatches.assignments.map(item => [item.fixtureId, item.scorecardUrl]));
+      const fixtureSources = fixtures.flatMap(fixture => {
+        const cricinfoScorecard = cricinfoByFixture.get(fixture.id);
+        const cricbuzzScorecard = cricbuzzByFixture.get(fixture.id);
+        return cricinfoScorecard || cricbuzzScorecard ? [{
+          fixtureId: fixture.id,
+          cricinfoUrl: cricinfoScorecard ?? null,
+          cricbuzzUrl: cricbuzzScorecard ?? null,
+        }] : [];
+      });
+      if (!fixtureSources.length) throw new Error("No provider scorecard matched a fixture by match number and both teams. Check both series URLs.");
+
+      const { data, error } = await supabase.rpc("configure_scorecard_series_sources", {
+        p_league_id: leagueId,
+        p_cricinfo_series_url: cricinfoUrl,
+        p_cricbuzz_series_url: cricbuzzUrl,
+        p_fixture_sources: fixtureSources,
+      });
+      if (error) throw error;
+      await loadScoringFixtures();
+      const bothCount = fixtures.filter(fixture => cricinfoByFixture.has(fixture.id) && cricbuzzByFixture.has(fixture.id)).length;
+      const missing = [...new Set([...cricinfoMatches.unresolved, ...cricbuzzMatches.unresolved])].sort((a, b) => a - b);
+      setScoreSeriesStatus(`Saved ${Number((data as any)?.fixtureSourceCount ?? fixtureSources.length)} fixture mappings; ${bothCount} have both providers.${missing.length ? ` Provider links are not yet available for Match ${missing.join(", ")}.` : " All configured fixtures are ready."}`);
+      setMessage("Scorecard series configuration saved.");
+    } catch (error) {
+      setScoreSeriesStatus("");
+      setMessage(error instanceof Error ? error.message : userActionError(error as any, "Series scorecard discovery"));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const closeScoreImport = () => {
     setScoreImportFixture(null);
@@ -1399,7 +1495,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setScoreImportExpanded(false);
     setScoreImportError("");
     setScoreImportConflict(false);
-    setScoreSourceUrl("");
+    setScoreSourceUrl(String(fixture.scorecard_source_url ?? ""));
     setScoreSourceStatus("");
     setScorePasteFirstTeam(fixture.home?.code ?? "");
     setScorePasteWinner(fixture.home?.code ?? "");
@@ -1410,7 +1506,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setScorePasteFirstBowling("");
     setScorePasteSecondBatting("");
     setScorePasteSecondBowling("");
-    setScoreCricbuzzUrl("");
+    setScoreCricbuzzUrl(String(fixture.cricbuzz_scorecard_url ?? ""));
     setScoreFielderValidationRequired(false);
     setScoreFielderValidation(undefined);
     setScoreImportMode("url");
@@ -1427,7 +1523,8 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
     setScorePasteFirstBowling(saved.firstInningsBowling);
     setScorePasteSecondBatting(saved.secondInningsBatting);
     setScorePasteSecondBowling(saved.secondInningsBowling);
-    setScoreCricbuzzUrl(saved.fielderValidation?.sourceUrl ?? "");
+    const configuredFixture = scoringFixtures.find(fixture => fixture.id === scoreImportFixture?.id) ?? scoreImportFixture;
+    setScoreCricbuzzUrl(saved.fielderValidation?.sourceUrl ?? configuredFixture?.cricbuzz_scorecard_url ?? "");
     setScoreFielderValidation(saved.fielderValidation);
     setScoreFielderValidationRequired(true);
     setScoreImportSummary(null);
@@ -2366,6 +2463,18 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
 </View>; })}<TouchableOpacity accessibilityRole="button" disabled={!canEdit} style={[s.adminAddPhase, !canEdit && s.disabled]} onPress={addTransferPeriod}><Text style={s.adminAddPhaseText}>＋ Add transfer period</Text></TouchableOpacity>
 </View> : section === "owners" ? <OwnerManagement leagueId={leagueId} canEdit={canEdit} onMembersChanged={onLeaguesChanged} /> : section === "templates" ? <LeagueTemplateManagement leagueId={leagueId} leagueName={leagueName} canEdit={canEdit} onLeaguesChanged={onLeaguesChanged} /> : <View>
 <View style={s.adminPhaseHelp}><Text style={s.adminNoticeTitle}>Score review and publication</Text><Text style={s.adminNoticeText}>{canEdit ? "Validate a compiler review artifact, stage one immutable calculation version, then publish only after a final review. A substitute who bats or bowls scores normally. A 13+ participant team creates a warning and requires written admin approval notes before staging." : "Match scoring status and source batches are visible here. Substitute batting and bowling contributions score normally; 13+ participant exceptions require administrator approval before staging."}</Text></View>
+<View style={s.scoreSeriesCard}>
+  <Text style={s.scoreSeriesEyebrow}>ONE-TIME SOURCE SETUP</Text>
+  <Text style={s.scoreSeriesTitle}>Automatic fixture scorecard URLs</Text>
+  <Text style={s.scoreSeriesText}>Configure each provider's series page once. The Chrome extension discovers every match scorecard, cross-checks match number and both teams, and saves the exact URLs to the matching fixture. You can still correct an individual URL inside the import dialog.</Text>
+  <Text style={s.adminFieldDetail}>ESPNCRICINFO SERIES SCHEDULE URL</Text>
+  <TextInput accessibilityLabel="ESPNcricinfo series schedule URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={canEdit && !busy} placeholder="https://www.espncricinfo.com/series/.../match-schedule-fixtures-and-results" placeholderTextColor="#819089" style={s.scoreSourceInput} value={cricinfoSeriesUrl} onChangeText={value => { setCricinfoSeriesUrl(value); setScoreSeriesStatus(""); }} />
+  <Text style={s.adminFieldDetail}>CRICBUZZ SERIES MATCHES URL</Text>
+  <TextInput accessibilityLabel="Cricbuzz series matches URL" keyboardType="url" autoCapitalize="none" autoCorrect={false} editable={canEdit && !busy} placeholder="https://www.cricbuzz.com/cricket-series/.../matches" placeholderTextColor="#819089" style={s.scoreSourceInput} value={cricbuzzSeriesUrl} onChangeText={value => { setCricbuzzSeriesUrl(value); setScoreSeriesStatus(""); }} />
+  <View style={s.scoreSeriesExtension}><Text style={s.scoreSeriesExtensionText}>{scoreCaptureExtensionChecking ? "Checking the browser extension…" : scoreCaptureExtensionAvailable ? `Browser capture extension v${scoreCaptureExtensionVersion} is ready.` : `Browser capture extension v${SCORECARD_EXTENSION_MIN_VERSION} is required for series discovery.`}</Text></View>
+  {scoreSeriesStatus ? <View accessibilityLiveRegion="polite" style={s.scoreSourceStatus}><Text style={s.scoreSourceStatusText}>{scoreSeriesStatus}</Text></View> : null}
+  {canEdit ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Discover and save fixture scorecard URLs" accessibilityState={{ disabled: busy || !scoreCaptureExtensionAvailable, busy }} disabled={busy || !scoreCaptureExtensionAvailable} style={[s.scoreSeriesAction, (busy || !scoreCaptureExtensionAvailable) && s.disabled]} onPress={() => runAction(discoverAndSaveScorecardSeries)}>{busy ? <ActivityIndicator color="#10251F" /> : <Text style={s.scoreSeriesActionText}>Discover & save fixture URLs</Text>}</TouchableOpacity> : null}
+</View>
 {scoringFixtures.length ? scoringFixtures.map((fixture: any) => {
   const noResult = isNoResultFixture(fixture.status);
   const batches = Array.isArray(fixture.score_ingestion_batches) ? [...fixture.score_ingestion_batches] : [];
@@ -2375,7 +2484,7 @@ function LeagueAdminScreen({ leagueId, leagueName, canEdit, onLeaguesChanged }: 
   const jobs = Array.isArray(fixture.score_ingestion_jobs) ? [...fixture.score_ingestion_jobs] : [];
   const latestJob = jobs.sort((left: any, right: any) => String(right.created_at).localeCompare(String(left.created_at)))[0];
   return <View key={fixture.id} style={s.adminPhaseCard}>
-    <View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{noResult ? "NO RESULT" : fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text></View></View>
+    <View style={s.adminPhaseHeader}><View style={{ flex: 1 }}><Text style={s.adminNoticeTitle}>Match {fixture.match_number}</Text><View style={s.adminFixtureTeams}><IplTeamBadge code={fixture.home?.code} /><Text style={s.fixtureVs}>vs</Text><IplTeamBadge code={fixture.away?.code} /></View><Text style={s.adminNoticeText}>{noResult ? "NO RESULT" : fixture.status.toUpperCase()} · {fixture.scoring_status.toUpperCase()}</Text><Text style={s.scoreFixtureSourceStatus}>{hasDiscoveredCricinfoScorecardUrl(fixture.scorecard_source_url) ? "CRICINFO READY" : "CRICINFO URL NEEDED"} · {hasDiscoveredCricbuzzScorecardUrl(fixture.cricbuzz_scorecard_url) ? "CRICBUZZ READY" : "CRICBUZZ URL NEEDED"}</Text></View></View>
     {latestBatch ? <View style={s.scoreBatchSummary}><View style={{ flex: 1 }}><Text style={s.scoreBatchEyebrow}>LATEST REVIEW BATCH · V{latestBatch.calculation_version}</Text><Text numberOfLines={1} style={s.scoreBatchSource}>{latestBatch.source_provider} · {latestBatch.external_match_id}</Text><Text style={s.scoreBatchFingerprint}>{String(latestBatch.source_fingerprint).slice(0, 12)}… · {latestBatch.warning_count} warning{latestBatch.warning_count === 1 ? "" : "s"}</Text></View><View style={[s.scoreBatchStatus, latestBatch.status === "published" && s.scoreBatchStatusPublished]}><Text style={s.scoreBatchStatusText}>{String(latestBatch.status).toUpperCase()}</Text></View></View> : !noResult ? <><Text style={s.scoreBatchEmpty}>No active score review. Start a fresh import below.</Text>{latestArchivedBatch ? <Text style={s.scoreBatchArchive}>Previous review V{latestArchivedBatch.calculation_version} is preserved in the audit history.</Text> : null}</> : null}
     {latestJob ? <View style={s.scoreJobSummary}><View style={{ flex: 1 }}><Text style={s.scoreBatchEyebrow}>LATEST URL IMPORT · {String(latestJob.status).replaceAll("_", " ").toUpperCase()}</Text><Text numberOfLines={1} style={s.scoreBatchSource}>{latestJob.source_host} · {latestJob.provider_key}</Text><Text style={s.scoreBatchFingerprint}>{latestJob.status_message || latestJob.error_code || "Request recorded"}</Text></View></View> : null}
     {canEdit ? <View style={s.scoreAdminActions}>
@@ -3865,6 +3974,15 @@ const s = StyleSheet.create(normalizeUiStyles({
   scoreImportHelp: { color: "#536760", fontSize: 10, lineHeight: 16 },
   scoreImportLabel: { color: "#60746C", fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 15, marginBottom: 6 },
   scoreSourceInput: { minHeight: 50, borderWidth: 1, borderColor: "#C5D1CB", backgroundColor: "#F8FAF9", borderRadius: 12, paddingHorizontal: 12, color: "#173028", fontSize: 10 },
+  scoreSeriesCard: { backgroundColor: "#F8FBF9", borderWidth: 1, borderColor: "#C9D8D1", borderRadius: 14, padding: 14, marginBottom: 14, gap: 8 },
+  scoreSeriesEyebrow: { color: "#64766F", fontSize: 8, fontWeight: "900", letterSpacing: 1.2 },
+  scoreSeriesTitle: { color: "#173028", fontSize: 14, fontWeight: "900" },
+  scoreSeriesText: { color: "#52645D", fontSize: 9, lineHeight: 15, marginBottom: 4 },
+  scoreSeriesExtension: { backgroundColor: "#EEF5F2", borderRadius: 9, padding: 9 },
+  scoreSeriesExtensionText: { color: "#31584B", fontSize: 8, lineHeight: 13, fontWeight: "800" },
+  scoreSeriesAction: { minHeight: 48, borderRadius: 12, backgroundColor: "#D9FF62", alignItems: "center", justifyContent: "center", marginTop: 4 },
+  scoreSeriesActionText: { color: "#10251F", fontSize: 10, fontWeight: "900" },
+  scoreFixtureSourceStatus: { color: "#315F50", fontSize: 7, fontWeight: "900", letterSpacing: 0.4, marginTop: 5 },
   scoreSourceRow: { flexDirection: "row", alignItems: "stretch", gap: 8 },
   scoreSourceOpen: { minWidth: 84, minHeight: 50, borderRadius: 12, borderWidth: 1, borderColor: "#174D3D", backgroundColor: "#EEF7F3", alignItems: "center", justifyContent: "center", paddingHorizontal: 11 },
   scoreSourceOpenText: { color: "#174D3D", fontSize: 9, fontWeight: "900" },
