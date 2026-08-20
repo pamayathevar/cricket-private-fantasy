@@ -120,7 +120,7 @@ export const isCricbuzzDismissalCapture = (value: unknown): value is CricbuzzDis
 const nameKey = (value: string) => value
   .normalize("NFKD")
   .replace(/[†*‡]/g, "")
-  .replace(/\((?:c|capt|wk|wicketkeeper)\)/gi, "")
+  .replace(/\((?=[^)]*\b(?:c|capt|wk|wicketkeeper)\b)[^)]*\)/gi, "")
   .replace(/^\s*(?:\(sub\)|sub)\s+/i, "")
   .replace(/[^a-zA-Z0-9]+/g, " ")
   .trim()

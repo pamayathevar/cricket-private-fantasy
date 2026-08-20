@@ -280,7 +280,7 @@ const tests = [
     const matchFiveCapture = structuredClone(capture);
     matchFiveCapture.sourceUrl = "https://www.cricbuzz.com/live-cricket-scorecard/149662/lsg-vs-dc-5th-match-indian-premier-league-2026";
     matchFiveCapture.match = { matchNumber: 5, homeTeam: "LSG", awayTeam: "DC" };
-    matchFiveCapture.innings[0] = { innings: 1, teamCode: "LSG", batters: [{ batterName: "Rishabh Pant", dismissalText: "run out (Mukesh Kumar)", runs: 7 }] };
+    matchFiveCapture.innings[0] = { innings: 1, teamCode: "LSG", batters: [{ batterName: "Rishabh Pant (c & wk)", dismissalText: "run out (Mukesh Kumar)", runs: 7 }] };
     const matchFive = applyCricbuzzFielderValidation(
       ["BATTING\t\tR\tB\t4s\t6s\tSR", "Rishabh Pant\trun out\t7\t9\t1\t0\t77.78"].join("\n"),
       ["BATTING\t\tR\tB\t4s\t6s\tSR", "Suryakumar Yadav\tc Singh b Kartik Tyagi\t16\t8\t3\t0\t200.00"].join("\n"),
