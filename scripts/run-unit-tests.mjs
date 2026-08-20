@@ -1102,6 +1102,12 @@ const tests = [
       /No league player matched/,
     );
   }],
+  ["known provider spelling variants resolve without a manual alias", () => {
+    const players = [
+      { playerId: "varun", name: "Varun Chakravarthy", team: "KKR", role: "BO" },
+    ];
+    assert.equal(resolveScorecardPlayer("Varun Chakaravarthy", "KKR", players).playerId, "varun");
+  }],
   ["Cricinfo wicketkeeper shorthand resolves a unique wicketkeeper automatically", () => {
     const players = [
       { playerId: "wk", name: "Jitesh Sharma", team: "RCB", role: "WK" },

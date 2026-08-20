@@ -110,7 +110,9 @@ export const normalizeScorecardPlayerName = (value: string) => value
   .replace(/^\s*(?:\(sub\)|sub)\s+/i, "")
   .replace(/[^a-zA-Z0-9]+/g, " ")
   .trim()
-  .toLowerCase();
+  .toLowerCase()
+  // Cricbuzz uses this established alternate spelling for the same KKR player.
+  .replace(/\bchakaravarthy\b/g, "chakravarthy");
 
 const displayScorecardPlayerName = (value: string) => value
   .replace(/[†*‡]/g, "")
