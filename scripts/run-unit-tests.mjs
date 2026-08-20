@@ -244,6 +244,14 @@ const tests = [
     assert.equal(manifest.host_permissions.every(value => /(?:espncricinfo|cricinfo|cricbuzz)\.com/.test(value)), true);
     assert.equal(manifest.host_permissions.some(value => /cricbuzz\.com/.test(value)), true);
   }],
+  ["Cricbuzz capture scopes each batting table to its innings container", () => {
+    const source = fs.readFileSync("browser-extension/capture-scorecard.js", "utf8");
+    assert.match(source, /captureInnings = innings/);
+    assert.match(source, /\[id\^="scard-team-"\]\[id\*="-innings-"\]/);
+    assert.match(source, /section\.querySelectorAll\('\[class\*="scorecard-bat-grid"\]'\)/);
+    assert.doesNotMatch(source, /__cricketRivalriesCricbuzzCapture/);
+    assert.doesNotMatch(source, /selectedControl/);
+  }],
   ["Cricbuzz validation corrects only ambiguous fielder names", () => {
     const capture = {
       schemaVersion: 1,
@@ -894,7 +902,7 @@ const tests = [
     assert.match(appSource, /catch \(error\) \{\s*setScoreFielderValidationRequired\(true\);\s*setScoreImportMode\("paste"\);/);
     assert.match(appSource, /fielderValidationPending \? "Validate with Cricbuzz & generate preview"/);
     assert.match(bridgeSource, /chrome\.runtime\.getManifest\(\)\.version/);
-    assert.equal(manifest.version, "0.2.1");
+    assert.equal(manifest.version, "0.2.2");
   }],
   ["Admin displays build-stamped release metadata in Eastern Time", () => {
     const appSource = fs.readFileSync("App.tsx", "utf8");

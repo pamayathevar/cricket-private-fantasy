@@ -12,7 +12,7 @@ For the complete administrator workflow—including installation, capture, human
 4. Choose this repository's `browser-extension` folder.
 5. Reload the Cricket Rivalries web app.
 
-After updating the repository, return to `chrome://extensions`, confirm version **0.2.1** (or newer), and select **Reload**. Deploying the web app does not automatically reload an unpacked local extension.
+After updating the repository, return to `chrome://extensions`, confirm version **0.2.2** (or newer), and select **Reload**. Deploying the web app does not automatically reload an unpacked local extension.
 
 The Match Scoring dialog will show **Browser capture extension connected**. Paste an ESPNcricinfo Full Scorecard URL and select **Capture scorecard & generate preview**.
 

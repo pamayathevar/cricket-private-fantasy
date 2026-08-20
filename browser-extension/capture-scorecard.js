@@ -6,46 +6,34 @@
       const inningsControls = Array.from(document.querySelectorAll("div"))
         .map(element => ({ element, label: compact(element.textContent) }))
         .filter(item => /^[A-Z0-9]+\s+\((?:1st|2nd) Inn\)$/i.test(item.label));
-      const selectedControl = inningsControls.find(item => /(?:^|\s)(?:bg-cbGrnCyn|text-cbWhite)(?:\s|$)/.test(item.element.className || ""))
-        || inningsControls.find(item => item.element.getAttribute("aria-selected") === "true")
-        || inningsControls[0];
-      if (!selectedControl) {
+      if (inningsControls.length < 2) {
         return { ok: false, errorCode: "scorecard-not-ready", message: "Waiting for the Cricbuzz innings scorecard…" };
       }
-      const inningsMatch = selectedControl.label.match(/^([A-Z0-9]+)\s+\((1st|2nd) Inn\)$/i);
-      const inningsNumber = inningsMatch?.[2].toLowerCase() === "2nd" ? 2 : 1;
-      const teamCode = String(inningsMatch?.[1] || "").toUpperCase();
-      const batterRows = Array.from(document.querySelectorAll('[class*="scorecard-bat-grid"]'))
-        .filter(row => !row.closest(".hidden"))
-        .flatMap(row => {
-        const block = row.children?.[0];
-        if (!block || row.children.length < 5) return [];
-        const profileLink = block.querySelector('a[title*="View Profile Of"], a[href*="/profiles/"]');
-        const titledName = compact(profileLink?.getAttribute("title")).replace(/^View Profile Of\s+/i, "");
-        const name = compact(titledName || block.children?.[0]?.textContent || profileLink?.textContent)
-          .replace(/\s*\((?:c|wk)\)\s*/gi, " ").trim();
-        const dismissalText = compact(block.children?.[1]?.textContent || "");
-        const runsText = compact(row.children?.[1]?.textContent);
-        if (!name || !dismissalText || !/^\d+$/.test(runsText)) return [];
-        return [{ batterName: name, dismissalText, runs: Number(runsText) }];
+      const teamCodeForInnings = innings => {
+        const control = inningsControls.find(item => item.label.includes(innings === 1 ? "(1st Inn)" : "(2nd Inn)"));
+        return String(control?.label.match(/^([A-Z0-9]+)\s+/)?.[1] || "").toUpperCase();
+      };
+      const captureInnings = innings => {
+        const section = Array.from(document.querySelectorAll('[id^="scard-team-"][id*="-innings-"]'))
+          .find(element => new RegExp(`-innings-${innings}$`).test(element.id));
+        if (!section) return null;
+        const batters = Array.from(section.querySelectorAll('[class*="scorecard-bat-grid"]')).flatMap(row => {
+          const block = row.children?.[0];
+          if (!block || row.children.length < 5) return [];
+          const profileLink = block.querySelector('a[title*="View Profile Of"], a[href*="/profiles/"]');
+          const titledName = compact(profileLink?.getAttribute("title")).replace(/^View Profile Of\s+/i, "");
+          const name = compact(titledName || block.children?.[0]?.textContent || profileLink?.textContent)
+            .replace(/\s*\((?=[^)]*\b(?:c|capt|wk|wicketkeeper)\b)[^)]*\)\s*/gi, " ").trim();
+          const dismissalText = compact(block.children?.[1]?.textContent || "");
+          const runsText = compact(row.children?.[1]?.textContent);
+          if (!name || !dismissalText || !/^\d+$/.test(runsText)) return [];
+          return [{ batterName: name, dismissalText, runs: Number(runsText) }];
         });
-      if (!batterRows.length) {
-        return { ok: false, errorCode: "scorecard-not-ready", message: `Waiting for Cricbuzz innings ${inningsNumber} batting rows…` };
-      }
-
-      const stateKey = "__cricketRivalriesCricbuzzCapture";
-      const previous = window[stateKey];
-      const state = previous?.sourceUrl === location.href ? previous : { sourceUrl: location.href, innings: {} };
-      state.innings[inningsNumber] = { innings: inningsNumber, teamCode, batters: batterRows };
-      window[stateKey] = state;
-      if (!state.innings[1] || !state.innings[2]) {
-        const missing = state.innings[1] ? 2 : 1;
-        const otherControl = inningsControls.find(item => item.label.includes(missing === 1 ? "(1st Inn)" : "(2nd Inn)"));
-        if (!otherControl) {
-          return { ok: false, errorCode: "scorecard-not-ready", message: `Waiting for Cricbuzz innings ${missing} control…` };
-        }
-        otherControl.element.click();
-        return { ok: false, errorCode: "scorecard-not-ready", message: `Loading Cricbuzz innings ${missing} for fielder validation…` };
+        return batters.length ? { innings, teamCode: teamCodeForInnings(innings), batters } : null;
+      };
+      const innings = [captureInnings(1), captureInnings(2)];
+      if (!innings[0] || !innings[1]) {
+        return { ok: false, errorCode: "scorecard-not-ready", message: "Waiting for both Cricbuzz innings batting tables…" };
       }
 
       const title = compact(document.title);
@@ -65,7 +53,7 @@
             homeTeam: String(slugTeams?.[1] || "").toUpperCase(),
             awayTeam: String(slugTeams?.[2] || "").toUpperCase(),
           },
-          innings: [state.innings[1], state.innings[2]],
+          innings,
         },
       };
     }

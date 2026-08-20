@@ -1,5 +1,5 @@
 const CHANNEL = "cricket-rivalries-scorecard-capture-v1";
-export const SCORECARD_EXTENSION_MIN_VERSION = "0.2.1";
+export const SCORECARD_EXTENSION_MIN_VERSION = "0.2.2";
 
 export type ScorecardBrowserCapture = {
   schemaVersion: 1;
